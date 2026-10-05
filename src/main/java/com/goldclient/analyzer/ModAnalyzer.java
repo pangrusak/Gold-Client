@@ -3,6 +3,7 @@ package com.goldclient.analyzer;
 import com.goldclient.model.*;
 import com.google.gson.*;
 import org.objectweb.asm.*;
+import org.objectweb.asm.util.Printer;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
@@ -234,6 +235,12 @@ public final class ModAnalyzer {
         List<String> methodExceptions = new ArrayList<>();
         List<String> methodAnnotations = new ArrayList<>();
         Set<String> methodReferences = new LinkedHashSet<>();
+        List<InstructionModel> instructions = new ArrayList<>();
+        List<TryCatchModel> tryCatchBlocks = new ArrayList<>();
+        Map<Label, String> labels = new IdentityHashMap<>();
+        int[] nextLabel = {0};
+        int[] maxStack = {0};
+        int[] maxLocals = {0};
 
         collect(descriptor, minecraftApis, referencedClasses);
         collect(methodSignature, minecraftApis, referencedClasses);
@@ -244,6 +251,9 @@ public final class ModAnalyzer {
             collect(exception, minecraftApis, referencedClasses);
           }
 
+        java.util.function.Function<Label, String> labelId =
+            label -> labels.computeIfAbsent(label, ignored -> "L" + nextLabel[0]++);
+
         return new MethodVisitor(Opcodes.ASM9) {
           @Override
           public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
@@ -253,48 +263,126 @@ public final class ModAnalyzer {
             return null;
           }
 
-          @Override
-          public void visitTypeInsn(int opcode, String type) {
+          @Override public void visitInsn(int opcode) {
+            instructions.add(instruction(opcode));
+          }
+
+          @Override public void visitIntInsn(int opcode, int operand) {
+            instructions.add(instruction(opcode, Integer.toString(operand)));
+          }
+
+          @Override public void visitVarInsn(int opcode, int var) {
+            instructions.add(instruction(opcode, Integer.toString(var)));
+          }
+
+          @Override public void visitTypeInsn(int opcode, String type) {
             collect(type, minecraftApis, referencedClasses);
             methodReferences.add(normalizeClassName(type));
+            instructions.add(instruction(opcode, type));
           }
 
-          @Override
-          public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
+          @Override public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
             collect(owner, minecraftApis, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
             methodReferences.add(normalizeClassName(owner));
+            instructions.add(instruction(opcode, owner, name, descriptor));
           }
 
-          @Override
-          public void visitMethodInsn(int opcode, String owner, String name,
-                                      String descriptor, boolean isInterface) {
+          @Override public void visitMethodInsn(int opcode, String owner, String name,
+                                                String descriptor, boolean isInterface) {
             collect(owner, minecraftApis, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
             methodReferences.add(normalizeClassName(owner));
+            instructions.add(instruction(opcode, owner, name, descriptor,
+                Boolean.toString(isInterface)));
           }
 
-          @Override
-          public void visitLdcInsn(Object value) {
+          @Override public void visitInvokeDynamicInsn(String name, String descriptor,
+                                                       Handle bootstrapMethodHandle,
+                                                       Object... bootstrapMethodArguments) {
+            collect(descriptor, minecraftApis, referencedClasses);
+            List<String> operands = new ArrayList<>();
+            operands.add(name);
+            operands.add(descriptor);
+            operands.add(handleText(bootstrapMethodHandle));
+            for (Object argument : bootstrapMethodArguments) operands.add(constantText(argument));
+            instructions.add(instruction(Opcodes.INVOKEDYNAMIC,
+                operands.toArray(String[]::new)));
+          }
+
+          @Override public void visitJumpInsn(int opcode, Label label) {
+            instructions.add(instruction(opcode, labelId.apply(label)));
+          }
+
+          @Override public void visitLabel(Label label) {
+            instructions.add(new InstructionModel(-1, "LABEL",
+                List.of(labelId.apply(label))));
+          }
+
+          @Override public void visitLdcInsn(Object value) {
             if (value instanceof Type type) {
               collect(type.getDescriptor(), minecraftApis, referencedClasses);
               methodReferences.add(normalizeClassName(type.getClassName()));
+            } else if (value instanceof Handle handle) {
+              collect(handle.getOwner(), minecraftApis, referencedClasses);
+              methodReferences.add(normalizeClassName(handle.getOwner()));
+            } else if (value instanceof ConstantDynamic dynamic) {
+              collect(dynamic.getDescriptor(), minecraftApis, referencedClasses);
             }
+            instructions.add(instruction(Opcodes.LDC, constantText(value)));
           }
 
-          @Override
-          public void visitEnd() {
-            methods.add(new MethodModel(
-                name,
-                descriptor,
-                methodSignature,
-                methodAccess,
-                methodExceptions,
-                methodAnnotations,
-                List.copyOf(methodReferences)
-            ));
+          @Override public void visitIincInsn(int var, int increment) {
+            instructions.add(instruction(Opcodes.IINC,
+                Integer.toString(var), Integer.toString(increment)));
           }
-        };
+
+          @Override public void visitTableSwitchInsn(int min, int max, Label dflt, Label... labels) {
+            List<String> operands = new ArrayList<>();
+            operands.add(Integer.toString(min));
+            operands.add(Integer.toString(max));
+            operands.add(labelId.apply(dflt));
+            for (Label label : labels) operands.add(labelId.apply(label));
+            instructions.add(instruction(Opcodes.TABLESWITCH,
+                operands.toArray(String[]::new)));
+          }
+
+          @Override public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels) {
+            List<String> operands = new ArrayList<>();
+            operands.add(labelId.apply(dflt));
+            for (int i = 0; i < keys.length; i++) {
+              operands.add(Integer.toString(keys[i]));
+              operands.add(labelId.apply(labels[i]));
+            }
+            instructions.add(instruction(Opcodes.LOOKUPSWITCH,
+                operands.toArray(String[]::new)));
+          }
+
+          @Override public void visitMultiANewArrayInsn(String descriptor, int dims) {
+            collect(descriptor, minecraftApis, referencedClasses);
+            instructions.add(instruction(Opcodes.MULTIANEWARRAY,
+                descriptor, Integer.toString(dims)));
+          }
+
+          @Override public void visitTryCatchBlock(Label start, Label end, Label handler, String type) {
+            collect(type, minecraftApis, referencedClasses);
+            tryCatchBlocks.add(new TryCatchModel(
+                labelId.apply(start), labelId.apply(end), labelId.apply(handler),
+                normalizeClassName(type)));
+          }
+
+          @Override public void visitMaxs(int stack, int locals) {
+            maxStack[0] = stack;
+            maxLocals[0] = locals;
+          }
+
+          @Override public void visitEnd() {
+            methods.add(new MethodModel(
+                name, descriptor, methodSignature, methodAccess,
+                methodExceptions, methodAnnotations, List.copyOf(methodReferences),
+                instructions, tryCatchBlocks, maxStack[0], maxLocals[0]));
+          }
+        };        };
       }
     }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
 
@@ -309,6 +397,26 @@ public final class ModAnalyzer {
         methods,
         List.copyOf(referencedClasses)
     );
+  }
+
+  private static InstructionModel instruction(int opcode, String... operands) {
+    String name = opcode >= 0 && opcode < Printer.OPCODES.length
+        ? Printer.OPCODES[opcode] : "UNKNOWN";
+    return new InstructionModel(opcode, name, List.of(operands));
+  }
+
+  private static String constantText(Object value) {
+    if (value == null) return "null";
+    if (value instanceof Type type) return "Type(" + type.getDescriptor() + ")";
+    if (value instanceof Handle handle) return handleText(handle);
+    if (value instanceof ConstantDynamic dynamic)
+      return "ConstantDynamic(" + dynamic.getName() + "," + dynamic.getDescriptor() + ")";
+    return String.valueOf(value);
+  }
+
+  private static String handleText(Handle handle) {
+    return "Handle(" + handle.getTag() + "," + handle.getOwner() + ","
+        + handle.getName() + "," + handle.getDesc() + "," + handle.isInterface() + ")";
   }
 
   private void collect(String value, Set<String> minecraftApis, Set<String> referencedClasses) {
