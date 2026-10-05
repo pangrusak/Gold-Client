@@ -15,7 +15,7 @@ public final class ControlFlowAnalyzer {
   );
 
   private static final Set<Integer> TERMINATORS = Set.of(
-      172, 173, 174, 175, 176, 177, 191
+      169, 172, 173, 174, 175, 176, 177, 191
   );
 
   public ControlFlowModel analyze(MethodModel method) {
