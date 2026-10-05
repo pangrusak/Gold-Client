@@ -114,6 +114,15 @@ public final class Main {
           }
         }
 
+        if (!method.intermediateRepresentation().operations().isEmpty()) {
+          System.out.println("    Semantic IR:");
+          method.intermediateRepresentation().operations().forEach(operation ->
+              System.out.printf("      %04d: %-20s %s%n",
+                  operation.sourceInstruction(),
+                  operation.kind(),
+                  operation.operands()));
+        }
+
         for (int i = 0; i < method.instructions().size(); i++) {
           InstructionModel instruction = method.instructions().get(i);
           System.out.printf("    %04d: %s%n", i, formatInstruction(instruction));
