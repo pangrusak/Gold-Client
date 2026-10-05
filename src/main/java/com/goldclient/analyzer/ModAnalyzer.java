@@ -48,7 +48,7 @@ public final class ModAnalyzer {
     JsonElement d=r.get("depends");
     if(d!=null&&d.isJsonObject()){
       d.getAsJsonObject().keySet().forEach(m::addDependency);
-      String mc=text(d.getAsJsonObject(),"minecraft");
+      String mc=dependencyText(d.getAsJsonObject().get("minecraft"));
       if(mc!=null)m.setMinecraftVersion(mc);
     }
     JsonElement x=r.get("mixins");
@@ -93,6 +93,16 @@ public final class ModAnalyzer {
   }
 
   private static String text(JsonObject o,String k){JsonElement e=o.get(k);return e!=null&&e.isJsonPrimitive()?e.getAsString():null;}
+  private static String dependencyText(JsonElement e){
+    if(e==null||e.isJsonNull())return null;
+    if(e.isJsonPrimitive())return e.getAsString();
+    if(e.isJsonArray()){
+      List<String> values=new ArrayList<>();
+      for(JsonElement item:e.getAsJsonArray())if(item.isJsonPrimitive())values.add(item.getAsString());
+      return values.isEmpty()?null:String.join(", ",values);
+    }
+    return null;
+  }
   private static String value(String l){int i=l.indexOf('=');return i<0?null:l.substring(i+1).trim().replaceAll("^\"|\"$","");}
 
   private Stats inspect(ClassReader r,Set<String> apis){
