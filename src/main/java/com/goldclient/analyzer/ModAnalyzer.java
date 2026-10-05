@@ -382,7 +382,7 @@ public final class ModAnalyzer {
                 methodExceptions, methodAnnotations, List.copyOf(methodReferences),
                 instructions, tryCatchBlocks, maxStack[0], maxLocals[0]));
           }
-        };        };
+        };
       }
     }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
 
