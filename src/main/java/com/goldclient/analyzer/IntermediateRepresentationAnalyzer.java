@@ -94,6 +94,28 @@ public final class IntermediateRepresentationAnalyzer {
       return;
     }
 
+    if ("NEWARRAY".equals(opcode) || "ANEWARRAY".equals(opcode)) {
+      String count = pop(stack);
+      String type = instruction.operands().isEmpty() ? "unknown" : instruction.operands().get(0);
+      String array = "new " + type.replace('/', '.') + "[" + count + "]";
+      stack.push(array);
+      operations.add(op("ARRAY_CREATE", List.of(array), sourceInstruction));
+      return;
+    }
+
+    if ("MULTIANEWARRAY".equals(opcode)) {
+      String descriptor = instruction.operands().isEmpty() ? "[?" : instruction.operands().get(0);
+      int dimensions = instruction.operands().size() > 1
+          ? Integer.parseInt(instruction.operands().get(1)) : 1;
+      List<String> dimensionsValues = new ArrayList<>();
+      for (int i = 0; i < dimensions; i++)
+        dimensionsValues.add(0, pop(stack));
+      String array = descriptor + " " + dimensionsValues;
+      stack.push(array);
+      operations.add(op("ARRAY_CREATE", List.of(array), sourceInstruction));
+      return;
+    }
+
     if (isStackOperation(opcode)) {
       translateStackOperation(opcode, stack, operations, sourceInstruction);
       return;
