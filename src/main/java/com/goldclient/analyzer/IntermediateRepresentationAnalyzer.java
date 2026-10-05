@@ -109,6 +109,14 @@ public final class IntermediateRepresentationAnalyzer {
       return;
     }
 
+    if ("IINC".equals(opcode)) {
+      String local = instruction.operands().isEmpty() ? "local?" : "local" + instruction.operands().get(0);
+      String amount = instruction.operands().size() > 1 ? instruction.operands().get(1) : "1";
+      String expression = local + " + " + amount;
+      operations.add(op("LOCAL_WRITE", List.of(local, expression), sourceInstruction));
+      return;
+    }
+
     if (isTypeConversion(opcode)) {
       String value = pop(stack);
       String converted = "(" + conversionType(opcode) + ")" + value;
@@ -239,8 +247,7 @@ public final class IntermediateRepresentationAnalyzer {
     String target = instruction.operands().isEmpty() ? "" : instruction.operands().get(0);
     String condition;
 
-    if (opcode.equals("IFNULL") || opcode.equals("IFNONNULL")
-        || opcode.matches("IF[A-Z]+")) {
+    if (isSingleValueConditional(opcode)) {
       String value = pop(stack);
       condition = switch (opcode) {
         case "IFEQ" -> value + " == 0";
@@ -313,8 +320,10 @@ public final class IntermediateRepresentationAnalyzer {
 
   private static String constantValue(InstructionModel instruction) {
     String opcode = instruction.opcodeName();
-    if (opcode.startsWith("ICONST_"))
-      return opcode.substring("ICONST_".length());
+    if (opcode.startsWith("ICONST_")) {
+      String value = opcode.substring("ICONST_".length());
+      return "M1".equals(value) ? "-1" : value;
+    }
     if (opcode.startsWith("LCONST_"))
       return opcode.substring("LCONST_".length()) + "L";
     if (opcode.startsWith("FCONST_"))
@@ -420,6 +429,13 @@ public final class IntermediateRepresentationAnalyzer {
 
   private static boolean isConditional(String opcode) {
     return opcode.startsWith("IF");
+  }
+
+  private static boolean isSingleValueConditional(String opcode) {
+    return opcode.equals("IFEQ") || opcode.equals("IFNE")
+        || opcode.equals("IFLT") || opcode.equals("IFLE")
+        || opcode.equals("IFGT") || opcode.equals("IFGE")
+        || opcode.equals("IFNULL") || opcode.equals("IFNONNULL");
   }
 
   private static boolean isReturn(String opcode) {
