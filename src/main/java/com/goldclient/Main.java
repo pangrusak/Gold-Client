@@ -1,6 +1,7 @@
 package com.goldclient;
 
 import com.goldclient.analyzer.*;
+import com.goldclient.model.ClassModel;
 import java.nio.file.Path;
 
 public final class Main {
@@ -21,9 +22,11 @@ public final class Main {
       printList("Mixins",a.metadata().getMixins());
       printList("Entrypoints",a.metadata().getEntrypoints());
       System.out.println("\nClasses:");
-      for (ClassInfo i:a.classes()) System.out.printf("  %s (%d methods, %d fields)%n",i.name(),i.methods(),i.fields());
+      for (ClassModel i:a.classes())
+        System.out.printf("  %s (%d methods, %d fields)%n",i.name(),i.methods().size(),i.fields().size());
     } catch(Exception e) { System.err.println("Gold Client analysis failed: "+e.getMessage()); System.exit(1); }
   }
+
   private static void printList(String title, java.util.List<String> values) {
     System.out.println("\n"+title+":");
     if(values.isEmpty()){System.out.println("  (none detected)");return;}
