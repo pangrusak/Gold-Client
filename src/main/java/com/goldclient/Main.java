@@ -1,6 +1,7 @@
 package com.goldclient;
 
 import com.goldclient.analyzer.*;
+import com.goldclient.model.BasicBlockModel;
 import com.goldclient.model.ClassModel;
 import com.goldclient.model.InstructionModel;
 import com.goldclient.model.MethodModel;
@@ -44,9 +45,10 @@ public final class Main {
 
     try {
       ModAnalysis a = new ModAnalyzer().analyze(Path.of(jar));
-      printAnalysis(a);
+      boolean debug = classFilter != null || methodFilter != null;
+      printAnalysis(a, debug);
 
-      if (classFilter != null || methodFilter != null)
+      if (debug)
         printBytecode(a.classes(), classFilter, methodFilter);
     } catch(Exception e) {
       System.err.println("Gold Client analysis failed: " + e.getMessage());
@@ -58,7 +60,7 @@ public final class Main {
     System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--class <class>] [--method <method>]");
   }
 
-  private static void printAnalysis(ModAnalysis a) {
+  private static void printAnalysis(ModAnalysis a, boolean debug) {
     System.out.println("=== Gold Client Mod Analyzer ===\n");
     System.out.println("Mod: " + a.metadata().getName());
     System.out.println("Version: " + a.metadata().getVersion());
@@ -71,10 +73,12 @@ public final class Main {
     printList("Minecraft APIs", a.minecraftApis());
     printList("Mixins", a.metadata().getMixins());
     printList("Entrypoints", a.metadata().getEntrypoints());
-    System.out.println("\nClasses:");
-    for (ClassModel i : a.classes())
-      System.out.printf("  %s (%d methods, %d fields)%n",
-          i.name(), i.methods().size(), i.fields().size());
+    if (!debug) {
+      System.out.println("\nClasses:");
+      for (ClassModel i : a.classes())
+        System.out.printf("  %s (%d methods, %d fields)%n",
+            i.name(), i.methods().size(), i.fields().size());
+    }
   }
 
   private static void printBytecode(
@@ -100,6 +104,15 @@ public final class Main {
         System.out.printf("    Instructions: %d%n", method.instructions().size());
         System.out.printf("    Max stack: %d, Max locals: %d%n",
             method.maxStack(), method.maxLocals());
+
+        if (!method.controlFlow().blocks().isEmpty()) {
+          System.out.println("    Control flow:");
+          for (BasicBlockModel block : method.controlFlow().blocks()) {
+            System.out.printf("      B%d [%d..%d) -> %s%n",
+                block.id(), block.startInstruction(), block.endInstruction(),
+                block.successors());
+          }
+        }
 
         for (int i = 0; i < method.instructions().size(); i++) {
           InstructionModel instruction = method.instructions().get(i);
