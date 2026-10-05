@@ -112,7 +112,46 @@ public final class ControlFlowAnalyzer {
       ));
     }
 
-    return new ControlFlowModel(instructionToBlock.getOrDefault(0, 0), result);
+    List<com.goldclient.model.ControlFlowEdgeModel> edges = new ArrayList<>();
+    for (int from = 0; from < successors.size(); from++) {
+      BasicBlockModel block = blocks.get(from);
+      int last = lastRealInstruction(instructions, block.startInstruction(), block.endInstruction());
+      if (last < block.startInstruction())
+        continue;
+
+      InstructionModel instruction = instructions.get(last);
+      Set<Integer> branchTargets = new LinkedHashSet<>();
+      for (String target : branchTargets(instruction)) {
+        Integer targetInstruction = labels.get(target);
+        if (targetInstruction != null) {
+          Integer targetBlock = instructionToBlock.get(targetInstruction);
+          if (targetBlock != null)
+            branchTargets.add(targetBlock);
+        }
+      }
+
+      for (int to : successors.get(from)) {
+        String kind;
+        if (isExceptionEdge(block, to, method.tryCatchBlocks(), labels, instructionToBlock))
+          kind = "EXCEPTION";
+        else if (isSwitch(instruction))
+          kind = "SWITCH";
+        else if (isUnconditionalBranch(instruction))
+          kind = "GOTO";
+        else if (isConditional(instruction))
+          kind = branchTargets.contains(to) ? "CONDITIONAL_TRUE" : "CONDITIONAL_FALSE";
+        else
+          kind = "FALLTHROUGH";
+
+        edges.add(new com.goldclient.model.ControlFlowEdgeModel(from, to, kind));
+      }
+    }
+
+    return new ControlFlowModel(
+        instructionToBlock.getOrDefault(0, 0),
+        result,
+        edges
+    );
   }
 
   private static Map<String, Integer> findLabels(List<InstructionModel> instructions) {
@@ -208,6 +247,29 @@ public final class ControlFlowAnalyzer {
   private static void addFallthrough(Set<Integer> successors, int block, int blockCount) {
     if (block + 1 < blockCount)
       successors.add(block + 1);
+  }
+
+  private static boolean isExceptionEdge(
+      BasicBlockModel block,
+      int targetBlock,
+      List<TryCatchModel> tryCatchBlocks,
+      Map<String, Integer> labels,
+      Map<Integer, Integer> instructionToBlock) {
+    for (TryCatchModel handler : tryCatchBlocks) {
+      Integer start = labels.get(handler.startLabel());
+      Integer end = labels.get(handler.endLabel());
+      Integer target = labels.get(handler.handlerLabel());
+      if (start == null || end == null || target == null) continue;
+
+      Integer handlerBlock = instructionToBlock.get(target);
+      if (handlerBlock == null || handlerBlock != targetBlock) continue;
+
+      int blockStart = block.startInstruction();
+      int blockEnd = Math.max(blockStart, block.endInstruction() - 1);
+      if (blockStart < end && blockEnd >= start)
+        return true;
+    }
+    return false;
   }
 
   private static void addExceptionSuccessors(
