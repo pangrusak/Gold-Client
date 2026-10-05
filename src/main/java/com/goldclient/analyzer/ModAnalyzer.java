@@ -387,7 +387,8 @@ public final class ModAnalyzer {
                 rawMethod.access(), rawMethod.exceptions(), rawMethod.annotations(),
                 rawMethod.referencedClasses(), rawMethod.instructions(),
                 rawMethod.tryCatchBlocks(), rawMethod.maxStack(), rawMethod.maxLocals(),
-                new ControlFlowAnalyzer().analyze(rawMethod)));
+                new ControlFlowAnalyzer().analyze(rawMethod),
+                new IntermediateRepresentationAnalyzer().analyze(rawMethod)));
           }
         };
       }
