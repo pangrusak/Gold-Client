@@ -112,6 +112,12 @@ public final class Main {
                 block.id(), block.startInstruction(), block.endInstruction(),
                 block.successors());
           }
+          if (!method.controlFlow().edges().isEmpty()) {
+            System.out.println("    Control-flow edges:");
+            method.controlFlow().edges().forEach(edge ->
+                System.out.printf("      B%d -> B%d (%s)%n",
+                    edge.fromBlock(), edge.toBlock(), edge.kind()));
+          }
         }
 
         if (!method.intermediateRepresentation().operations().isEmpty()) {
