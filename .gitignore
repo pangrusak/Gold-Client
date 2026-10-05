@@ -1,0 +1,8 @@
+target/
+.idea/
+.vscode/
+*.class
+*.log
+test-mods/*.jar
+output/*
+!output/.gitkeep
