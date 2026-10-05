@@ -307,7 +307,7 @@ public final class ModAnalyzer {
         annotations,
         fields,
         methods,
-        referencedClasses
+        List.copyOf(referencedClasses)
     );
   }
 
