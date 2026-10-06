@@ -194,7 +194,7 @@ public final class ModAnalyzer {
     char quote = 0;
     for (int i = 0; i < line.length(); i++) {
       char c = line.charAt(i);
-      if ((c == '"' || c == '\\'') && (i == 0 || line.charAt(i - 1) != '\\\\')) {
+      if ((c == '"' || c == '\'') && (i == 0 || line.charAt(i - 1) != '\\')) {
         if (!quoted) {
           quoted = true;
           quote = c;
