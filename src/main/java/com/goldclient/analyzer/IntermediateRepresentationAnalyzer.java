@@ -454,7 +454,7 @@ public final class IntermediateRepresentationAnalyzer {
       if ("LDC".equals(opcode) && !isNumericLiteral(value)
           && !"true".equals(value) && !"false".equals(value)
           && !"null".equals(value) && !isQuoted(value)) {
-        return "\"" + value.replace("\\\\", "\\\\\\\\").replace("\"", "\\\\"") + "\"";
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
       }
       return value;
     }
