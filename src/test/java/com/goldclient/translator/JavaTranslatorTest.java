@@ -49,7 +49,7 @@ class JavaTranslatorTest {
     assertTrue(result.source().contains(
         "if (me.jellysquid.mods.lithium.common.LithiumMod.CONFIG == null) {"));
     assertTrue(result.source().contains(
-        "throw new java.lang.IllegalStateException("The mixin plugin did not initialize the config! Did it not load?");"));
+        "throw new java.lang.IllegalStateException(\"The mixin plugin did not initialize the config! Did it not load?\");"));
     assertTrue(result.source().contains("return;"));
   }
 
@@ -91,7 +91,7 @@ class JavaTranslatorTest {
 
     assertTrue(result.complete());
     assertTrue(result.source().contains(
-        "throw new java.lang.IllegalStateException("hello");"));
+        "throw new java.lang.IllegalStateException(\"hello\");"));
   }
 
   @Test
