@@ -271,6 +271,7 @@ public final class ModAnalyzer {
       public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
         String name = annotationName(descriptor);
         if (name != null) annotations.add(name);
+        addReference(descriptor, referencedClasses);
         collect(descriptor, minecraftApis, referencedClasses);
         return null;
       }
@@ -289,7 +290,6 @@ public final class ModAnalyzer {
           public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
             String annotation = annotationName(descriptor);
             if (annotation != null) fieldAnnotations.add(annotation);
-            addReference(descriptor, referencedClasses);
             addReference(descriptor, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
             return null;
@@ -361,8 +361,6 @@ public final class ModAnalyzer {
           }
 
           @Override public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
-            addReference(owner, referencedClasses);
-            addReference(descriptor, referencedClasses);
             addReference(owner, referencedClasses);
             addReference(descriptor, referencedClasses);
             collect(owner, minecraftApis, referencedClasses);
