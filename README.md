@@ -22,8 +22,7 @@ Translation will be built on top of this structured information.
 Build with Maven:
 
 ```bash
-mvn test
-mvn package
+mvn clean package
 ```
 
 Analyze a mod:
