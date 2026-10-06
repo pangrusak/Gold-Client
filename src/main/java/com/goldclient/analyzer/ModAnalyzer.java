@@ -382,13 +382,20 @@ public final class ModAnalyzer {
                 methodExceptions, methodAnnotations, List.copyOf(methodReferences),
                 instructions, tryCatchBlocks, maxStack[0], maxLocals[0],
                 new ControlFlowModel(0, List.of()));
-            methods.add(new MethodModel(
+            ControlFlowModel controlFlow = new ControlFlowAnalyzer().analyze(rawMethod);
+            MethodModel analyzedMethod = new MethodModel(
                 rawMethod.name(), rawMethod.descriptor(), rawMethod.signature(),
                 rawMethod.access(), rawMethod.exceptions(), rawMethod.annotations(),
                 rawMethod.referencedClasses(), rawMethod.instructions(),
                 rawMethod.tryCatchBlocks(), rawMethod.maxStack(), rawMethod.maxLocals(),
-                new ControlFlowAnalyzer().analyze(rawMethod),
-                new IntermediateRepresentationAnalyzer().analyze(rawMethod)));
+                controlFlow);
+            methods.add(new MethodModel(
+                analyzedMethod.name(), analyzedMethod.descriptor(), analyzedMethod.signature(),
+                analyzedMethod.access(), analyzedMethod.exceptions(), analyzedMethod.annotations(),
+                analyzedMethod.referencedClasses(), analyzedMethod.instructions(),
+                analyzedMethod.tryCatchBlocks(), analyzedMethod.maxStack(), analyzedMethod.maxLocals(),
+                controlFlow,
+                new IntermediateRepresentationAnalyzer().analyze(analyzedMethod)));
           }
         };
       }
