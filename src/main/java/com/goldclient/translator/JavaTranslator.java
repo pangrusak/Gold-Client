@@ -68,6 +68,19 @@ public final class JavaTranslator {
         }
       }
 
+      if ("METHOD_CALL".equals(operation.kind())
+          && i + 1 < end
+          && "THROW".equals(operations.get(i + 1).kind())
+          && !operation.operands().isEmpty()
+          && operation.operands().get(0).trim().startsWith("new ")) {
+        source.append(indent(indent))
+            .append("throw ")
+            .append(normalizeExpression(operation.operands().get(0)))
+            .append(";\n");
+        i++;
+        continue;
+      }
+
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
         String target = operation.operands().get(0);
         Integer targetIndex = labels.get(target);
