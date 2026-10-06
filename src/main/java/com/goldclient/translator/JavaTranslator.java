@@ -16,6 +16,12 @@ public final class JavaTranslator {
     for (int i = 0; i < operations.size(); i++) {
       IrOperationModel operation = operations.get(i);
 
+      if ("FIELD_READ".equals(operation.kind())
+          && i + 1 < operations.size()
+          && "CONDITIONAL_BRANCH".equals(operations.get(i + 1).kind())) {
+        continue;
+      }
+
       if ("CONDITIONAL_BRANCH".equals(operation.kind())
           && operation.operands().size() >= 2) {
         BranchTranslation branch = translateConditionalBlock(operations, i, operation);
