@@ -36,8 +36,22 @@ public final class JavaTranslator {
     for (int i = start; i < end; i++) {
       IrOperationModel operation = operations.get(i);
 
-      if ("LABEL".equals(operation.kind()))
+      if ("LABEL".equals(operation.kind())) {
+        if (!operation.operands().isEmpty()) {
+          int loopBranch = findBackwardConditional(
+              operations, i, end, operation.operands().get(0));
+          if (loopBranch > i) {
+            ConditionalRender loop = renderBackwardLoop(
+                operations, loopBranch, i, end, indent, context,
+                operations.get(loopBranch).operands().get(0));
+            source.append(loop.source());
+            complete &= loop.complete();
+            i = loop.lastIndex();
+            continue;
+          }
+        }
         continue;
+      }
 
       if ("CONDITIONAL_BRANCH".equals(operation.kind())
           && operation.operands().size() >= 2) {
@@ -171,6 +185,21 @@ public final class JavaTranslator {
         .append(");\n");
 
     return new ConditionalRender(source.toString(), body.complete(), branchIndex);
+  }
+
+  private static int findBackwardConditional(
+      List<IrOperationModel> operations,
+      int labelIndex,
+      int end,
+      String label) {
+    for (int i = labelIndex + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("CONDITIONAL_BRANCH".equals(operation.kind())
+          && operation.operands().size() >= 2
+          && label.equals(operation.operands().get(1)))
+        return i;
+    }
+    return -1;
   }
 
   private static int findForwardJoinJump(
