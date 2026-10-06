@@ -135,6 +135,7 @@ class JavaTranslatorTest {
     TranslationResult result = new JavaTranslator().translate(method);
 
     assertTrue(result.complete());
+    assertTrue(result.complete());
     assertTrue(result.source().contains("if (a != 0) {"));
     assertTrue(result.source().contains("if (b != 0) {"));
     assertTrue(result.source().contains("nested();"));
