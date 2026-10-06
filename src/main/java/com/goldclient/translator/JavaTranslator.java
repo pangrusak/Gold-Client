@@ -12,7 +12,20 @@ public final class JavaTranslator {
 
     source.append("void ").append(method.name()).append("() {\n");
 
-    for (IrOperationModel operation : method.operations()) {
+    List<IrOperationModel> operations = method.operations();
+    for (int i = 0; i < operations.size(); i++) {
+      IrOperationModel operation = operations.get(i);
+
+      if ("CONDITIONAL_BRANCH".equals(operation.kind())
+          && operation.operands().size() >= 2) {
+        BranchTranslation branch = translateConditionalBlock(operations, i, operation);
+        if (branch != null) {
+          source.append(branch.source());
+          i = branch.lastIndex();
+          continue;
+        }
+      }
+
       String line = translateOperation(operation, context);
       if (line == null) {
         source.append("  // TODO: ").append(operation.kind())
@@ -27,23 +40,91 @@ public final class JavaTranslator {
     return new TranslationResult(source.toString(), complete);
   }
 
+  private static BranchTranslation translateConditionalBlock(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      IrOperationModel branch) {
+    String condition = branch.operands().get(0);
+    String target = branch.operands().get(1);
+
+    int targetIndex = -1;
+    for (int i = branchIndex + 1; i < operations.size(); i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("LABEL".equals(operation.kind())
+          && !operation.operands().isEmpty()
+          && target.equals(operation.operands().get(0))) {
+        targetIndex = i;
+        break;
+      }
+    }
+
+    if (targetIndex < 0)
+      return null;
+
+    StringBuilder body = new StringBuilder();
+    String pendingConstruction = null;
+
+    for (int i = branchIndex + 1; i < targetIndex; i++) {
+      IrOperationModel operation = operations.get(i);
+
+      switch (operation.kind()) {
+        case "OBJECT_CREATE" -> {
+          if (!operation.operands().isEmpty())
+            pendingConstruction = operation.operands().get(0);
+        }
+        case "CONSTANT" -> {
+          // The constructor call carries the constant argument in the current IR.
+        }
+        case "DUP" -> {
+          // Stack duplication is already represented by the eventual constructor call.
+        }
+        case "METHOD_CALL" -> {
+          if (!operation.operands().isEmpty())
+            pendingConstruction = normalizeExpression(operation.operands().get(0));
+        }
+        case "THROW" -> {
+          String expression = operation.operands().isEmpty()
+              ? pendingConstruction
+              : normalizeExpression(operation.operands().get(0));
+
+          if (expression == null)
+            return null;
+
+          body.append("    throw ").append(expression).append(";\n");
+          pendingConstruction = null;
+        }
+        default -> {
+          return null;
+        }
+      }
+    }
+
+    if (body.isEmpty())
+      return null;
+
+    StringBuilder source = new StringBuilder();
+    source.append("  if (!(").append(normalizeCondition(condition)).append(")) {\n");
+    source.append(body);
+    source.append("  }\n");
+    return new BranchTranslation(source.toString(), targetIndex);
+  }
+
   private static String translateOperation(
       IrOperationModel operation,
       TranslationContext context) {
     List<String> operands = operation.operands();
 
     return switch (operation.kind()) {
-      case "LABEL" -> "";
+      case "LABEL", "DROP" -> "";
       case "CONSTANT", "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
-          "DUP", "SWAP", "ARITHMETIC", "TYPE_CONVERSION", "TYPE_CHECK" -> "";
+          "DUP", "SWAP", "ARITHMETIC", "TYPE_CONVERSION", "TYPE_CHECK" -> null;
       case "LOCAL_WRITE" -> translateLocalWrite(operands, context);
       case "FIELD_WRITE" -> translateFieldWrite(operands);
       case "METHOD_CALL" -> translateMethodCall(operands);
-      case "CONDITIONAL_BRANCH" -> translateConditional(operands);
-      case "JUMP" -> translateJump(operands);
+      case "CONDITIONAL_BRANCH" -> null;
+      case "JUMP" -> null;
       case "RETURN" -> operands.isEmpty() ? "return;" : "return " + operands.get(0) + ";";
-      case "THROW" -> operands.isEmpty() ? null : "throw " + operands.get(0) + ";";
-      case "DROP" -> "";
+      case "THROW" -> operands.isEmpty() ? null : "throw " + normalizeExpression(operands.get(0)) + ";";
       default -> null;
     };
   }
@@ -55,7 +136,7 @@ public final class JavaTranslator {
       return null;
 
     String local = operands.get(0);
-    String value = operands.get(1);
+    String value = normalizeExpression(operands.get(1));
     if (context.declareLocal(local))
       return "Object " + local + " = " + value + ";";
     return local + " = " + value + ";";
@@ -63,33 +144,55 @@ public final class JavaTranslator {
 
   private static String translateFieldWrite(List<String> operands) {
     if (operands.size() == 2)
-      return operands.get(0) + " = " + operands.get(1) + ";";
+      return operands.get(0) + " = " + normalizeExpression(operands.get(1)) + ";";
     if (operands.size() >= 3)
       return operands.get(0) + "." + simpleField(operands.get(1))
-          + " = " + operands.get(2) + ";";
+          + " = " + normalizeExpression(operands.get(2)) + ";";
     return null;
   }
 
   private static String translateMethodCall(List<String> operands) {
     if (operands.isEmpty())
       return null;
-    return operands.get(0).endsWith(";") ? operands.get(0) : operands.get(0) + ";";
+    return normalizeExpression(operands.get(0)) + ";";
   }
 
-  private static String translateConditional(List<String> operands) {
-    if (operands.size() < 2)
-      return null;
-    return "if (" + operands.get(0) + ") { // target " + operands.get(1) + " }";
+  private static String normalizeCondition(String condition) {
+    return condition.replace(" != null", " != null");
   }
 
-  private static String translateJump(List<String> operands) {
-    if (operands.isEmpty())
+  private static String normalizeExpression(String expression) {
+    if (expression == null)
       return null;
-    return "// goto " + operands.get(0);
+
+    String trimmed = expression.trim();
+    if (trimmed.startsWith("new ") && trimmed.endsWith(")")) {
+      int open = trimmed.indexOf('(');
+      if (open > 0 && open < trimmed.length() - 1) {
+        String type = trimmed.substring(4, open);
+        String argument = trimmed.substring(open + 1, trimmed.length() - 1);
+        if (!argument.isBlank() && !isQuoted(argument))
+          return "new " + type + "(\"" + escapeJava(argument) + "\")";
+      }
+    }
+
+    return trimmed;
+  }
+
+  private static boolean isQuoted(String value) {
+    return value.length() >= 2
+        && value.startsWith("\"")
+        && value.endsWith("\"");
+  }
+
+  private static String escapeJava(String value) {
+    return value.replace("\\", "\\\\").replace("\"", "\\\"");
   }
 
   private static String simpleField(String field) {
     int separator = field.lastIndexOf('.');
     return separator >= 0 ? field.substring(separator + 1) : field;
   }
+
+  private record BranchTranslation(String source, int lastIndex) {}
 }
