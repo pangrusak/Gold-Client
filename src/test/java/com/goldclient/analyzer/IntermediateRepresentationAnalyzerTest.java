@@ -41,6 +41,29 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void carriesOperandValuesAcrossControlFlowJoin() {
+    List<InstructionModel> instructions = List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(198, "IFNULL", "L0"),
+        instruction(25, "ALOAD", "0"),
+        instruction(167, "GOTO", "L1"),
+        instruction(-1, "LABEL", "L0"),
+        instruction(25, "ALOAD", "0"),
+        instruction(-1, "LABEL", "L1"),
+        instruction(58, "ASTORE", "1"),
+        instruction(177, "RETURN")
+    );
+
+    MethodModel method = method("join", "()V", instructions);
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(o ->
+        o.kind().equals("LOCAL_WRITE")
+            && o.operands().get(0).equals("local1")
+            && o.operands().get(1).equals("local0")));
+  }
+
+  @Test
   void reconstructsIntegerComparison() {
     List<InstructionModel> instructions = List.of(
         instruction(21, "ILOAD", "1"),
