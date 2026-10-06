@@ -1,6 +1,8 @@
 package com.goldclient;
 
 import com.goldclient.analyzer.*;
+import com.goldclient.translator.JavaTranslator;
+import com.goldclient.translator.TranslationResult;
 import com.goldclient.model.BasicBlockModel;
 import com.goldclient.model.ClassModel;
 import com.goldclient.model.InstructionModel;
@@ -11,7 +13,7 @@ import java.util.List;
 
 public final class Main {
   public static void main(String[] args) {
-    if (args.length < 1 || args.length > 5) {
+    if (args.length < 1 || args.length > 7) {
       printUsage();
       System.exit(2);
     }
@@ -19,6 +21,7 @@ public final class Main {
     String jar = args[0];
     String classFilter = null;
     String methodFilter = null;
+    boolean translate = false;
 
     for (int i = 1; i < args.length; i++) {
       switch (args[i]) {
@@ -29,6 +32,7 @@ public final class Main {
           }
           classFilter = args[i].replace('.', '/');
         }
+        case "--translate" -> translate = true;
         case "--method" -> {
           if (++i >= args.length) {
             printUsage();
@@ -45,11 +49,19 @@ public final class Main {
 
     try {
       ModAnalysis a = new ModAnalyzer().analyze(Path.of(jar));
-      boolean debug = classFilter != null || methodFilter != null;
+      boolean debug = classFilter != null || methodFilter != null || translate;
       printAnalysis(a, debug);
 
       if (debug)
         printBytecode(a.classes(), classFilter, methodFilter);
+
+      if (translate) {
+        if (classFilter == null || methodFilter == null) {
+          System.err.println("--translate requires both --class and --method.");
+          System.exit(2);
+        }
+        printTranslation(a.classes(), classFilter, methodFilter);
+      }
     } catch(Exception e) {
       System.err.println("Gold Client analysis failed: " + e.getMessage());
       System.exit(1);
@@ -57,7 +69,7 @@ public final class Main {
   }
 
   private static void printUsage() {
-    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--class <class>] [--method <method>]");
+    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate] [--class <class>] [--method <method>]");
   }
 
   private static void printAnalysis(ModAnalysis a, boolean debug) {
@@ -149,6 +161,33 @@ public final class Main {
       System.out.println("\nNo classes matched the requested filter.");
     else if (matchedMethods == 0)
       System.out.println("\nNo methods matched the requested filter.");
+  }
+
+  private static void printTranslation(
+      List<ClassModel> classes, String classFilter, String methodFilter) {
+    System.out.println("\n=== Java Translation ===");
+
+    for (ClassModel clazz : classes) {
+      if (!clazz.name().equals(classFilter))
+        continue;
+
+      for (MethodModel method : clazz.methods()) {
+        if (!method.name().equals(methodFilter))
+          continue;
+
+        TranslationResult result =
+            new JavaTranslator().translate(method.intermediateRepresentation());
+
+        System.out.println("\nClass: " + clazz.name());
+        System.out.println("Method: " + method.name() + method.descriptor());
+        System.out.println("Complete: " + result.complete());
+        System.out.println();
+        System.out.println(result.source());
+        return;
+      }
+    }
+
+    System.out.println("\nNo matching class/method found for translation.");
   }
 
   private static String formatInstruction(InstructionModel instruction) {
