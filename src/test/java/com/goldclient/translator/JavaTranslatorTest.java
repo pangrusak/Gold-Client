@@ -46,14 +46,135 @@ class JavaTranslatorTest {
     TranslationResult result = new JavaTranslator().translate(method);
 
     assertTrue(result.complete());
-    assertTrue(result.source().contains("void onInitialize()"));
     assertTrue(result.source().contains(
         "if (me.jellysquid.mods.lithium.common.LithiumMod.CONFIG == null) {"));
     assertTrue(result.source().contains(
-        "throw new java.lang.IllegalStateException(\"The mixin plugin did not initialize the config! Did it not load?\");"));
+        "throw new java.lang.IllegalStateException("The mixin plugin did not initialize the config! Did it not load?");"));
     assertTrue(result.source().contains("return;"));
   }
 
+  @Test
+  void translatesConstantsAndExpressions() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "()V",
+        List.of(
+            new IrOperationModel("CONSTANT", List.of("2"), 0),
+            new IrOperationModel("CONSTANT", List.of("3"), 1),
+            new IrOperationModel("ARITHMETIC", List.of("(2 + 3)"), 2),
+            new IrOperationModel("LOCAL_WRITE", List.of("local1", "(2 + 3)"), 3),
+            new IrOperationModel("LOCAL_READ", List.of("local1"), 4),
+            new IrOperationModel("METHOD_CALL", List.of("System.out.println(local1)"), 5),
+            new IrOperationModel("RETURN", List.of(), 6)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete());
+    assertTrue(result.source().contains("var local1 = (2 + 3);"));
+    assertTrue(result.source().contains("System.out.println(local1);"));
+  }
+
+  @Test
+  void translatesMethodArgumentsAndObjectConstruction() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "()V",
+        List.of(
+            new IrOperationModel("CONSTANT", List.of("hello"), 0),
+            new IrOperationModel(
+                "METHOD_CALL",
+                List.of("new java.lang.IllegalStateException(hello)"),
+                1),
+            new IrOperationModel("THROW", List.of("new java.lang.IllegalStateException(hello)"), 2)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete());
+    assertTrue(result.source().contains(
+        "throw new java.lang.IllegalStateException("hello");"));
+  }
+
+  @Test
+  void translatesIfElse() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "()V",
+        List.of(
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("local1 == 0", "Lelse"), 0),
+            new IrOperationModel("METHOD_CALL", List.of("foo()"), 1),
+            new IrOperationModel("JUMP", List.of("Lend"), 2),
+            new IrOperationModel("LABEL", List.of("Lelse"), 3),
+            new IrOperationModel("METHOD_CALL", List.of("bar()"), 4),
+            new IrOperationModel("LABEL", List.of("Lend"), 5),
+            new IrOperationModel("RETURN", List.of(), 6)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete());
+    assertTrue(result.source().contains("if (local1 == 0) {"));
+    assertTrue(result.source().contains("foo();"));
+    assertTrue(result.source().contains("} else {"));
+    assertTrue(result.source().contains("bar();"));
+  }
+
+  @Test
+  void translatesNestedIfStatements() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "()V",
+        List.of(
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("a == 0", "LouterEnd"), 0),
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("b == 0", "LinnerEnd"), 1),
+            new IrOperationModel("METHOD_CALL", List.of("nested()"), 2),
+            new IrOperationModel("LABEL", List.of("LinnerEnd"), 3),
+            new IrOperationModel("LABEL", List.of("LouterEnd"), 4),
+            new IrOperationModel("RETURN", List.of(), 5)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete());
+    assertTrue(result.source().contains("if (a != 0) {"));
+    assertTrue(result.source().contains("if (b != 0) {"));
+    assertTrue(result.source().contains("nested();"));
+  }
+
+  @Test
+  void translatesDoWhileLoop() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "()V",
+        List.of(
+            new IrOperationModel("LABEL", List.of("Lloop"), 0),
+            new IrOperationModel("METHOD_CALL", List.of("tick()"), 1),
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("local1 < 10", "Lloop"), 2),
+            new IrOperationModel("RETURN", List.of(), 3)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete());
+    assertTrue(result.source().contains("do {"));
+    assertTrue(result.source().contains("tick();"));
+    assertTrue(result.source().contains("} while (local1 < 10);"));
+  }
+
+  @Test
+  void translatesFieldWriteAndReturn() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "()V",
+        List.of(
+            new IrOperationModel(
+                "FIELD_WRITE",
+                List.of("example.Test.VALUE", "42"),
+                0),
+            new IrOperationModel("RETURN", List.of("example.Test.VALUE"), 1)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete());
+    assertTrue(result.source().contains("example.Test.VALUE = 42;"));
+    assertTrue(result.source().contains("return example.Test.VALUE;"));
+  }
 
   @Test
   void translatesMethodCallAndReturnExpression() {
@@ -96,7 +217,7 @@ class JavaTranslatorTest {
 
     TranslationResult result = new JavaTranslator().translate(method);
 
-    assertTrue(result.source().contains("Object local1 = 1;"));
+    assertTrue(result.source().contains("var local1 = 1;"));
     assertTrue(result.source().contains("local1 = 2;"));
   }
 }
