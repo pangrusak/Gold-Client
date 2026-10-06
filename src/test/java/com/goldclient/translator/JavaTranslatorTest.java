@@ -67,7 +67,7 @@ class JavaTranslatorTest {
 
     assertTrue(result.complete());
     assertTrue(result.source().contains(
-        "throw new java.lang.IllegalStateException(\\"The config did not initialize!\\");"));
+        "throw new java.lang.IllegalStateException(\"The config did not initialize!\");"));
   }
 
   @Test
