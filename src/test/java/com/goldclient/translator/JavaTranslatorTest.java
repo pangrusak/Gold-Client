@@ -115,6 +115,8 @@ class JavaTranslatorTest {
     assertTrue(result.source().contains("foo();"));
     assertTrue(result.source().contains("} else {"));
     assertTrue(result.source().contains("bar();"));
+    assertTrue(result.source().indexOf("bar();")
+        < result.source().indexOf("foo();"));
   }
 
   @Test
