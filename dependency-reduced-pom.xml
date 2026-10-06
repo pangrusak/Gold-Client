@@ -25,6 +25,7 @@
             </goals>
             <configuration>
               <transformers>
+                <transformer />
                 <transformer>
                   <mainClass>com.goldclient.Main</mainClass>
                 </transformer>
