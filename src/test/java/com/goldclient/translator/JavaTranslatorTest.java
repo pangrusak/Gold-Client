@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JavaTranslatorTest {
   @Test
-  void translatesSimpleMethod() {
+  void translatesLithiumStyleNullCheck() {
     IrMethodModel method = new IrMethodModel(
         "onInitialize",
         "()V",
@@ -27,14 +27,17 @@ class JavaTranslatorTest {
                 List.of("new java.lang.IllegalStateException"),
                 2),
             new IrOperationModel("DUP", List.of("new java.lang.IllegalStateException"), 3),
-            new IrOperationModel("CONSTANT", List.of("missing"), 4),
+            new IrOperationModel(
+                "CONSTANT",
+                List.of("The mixin plugin did not initialize the config! Did it not load?"),
+                4),
             new IrOperationModel(
                 "METHOD_CALL",
-                List.of("new java.lang.IllegalStateException(missing)"),
+                List.of("new java.lang.IllegalStateException(The mixin plugin did not initialize the config! Did it not load?)"),
                 5),
             new IrOperationModel(
                 "THROW",
-                List.of("new java.lang.IllegalStateException(missing)"),
+                List.of("new java.lang.IllegalStateException"),
                 6),
             new IrOperationModel("LABEL", List.of("L0"), 7),
             new IrOperationModel("RETURN", List.of(), 8)
@@ -44,8 +47,10 @@ class JavaTranslatorTest {
 
     assertTrue(result.complete());
     assertTrue(result.source().contains("void onInitialize()"));
-    assertTrue(result.source().contains("if (me.jellysquid.mods.lithium.common.LithiumMod.CONFIG != null)"));
-    assertTrue(result.source().contains("throw new java.lang.IllegalStateException(missing);"));
+    assertTrue(result.source().contains(
+        "if (!(me.jellysquid.mods.lithium.common.LithiumMod.CONFIG != null)) {"));
+    assertTrue(result.source().contains(
+        "throw new java.lang.IllegalStateException(\"The mixin plugin did not initialize the config! Did it not load?\");"));
     assertTrue(result.source().contains("return;"));
   }
 
