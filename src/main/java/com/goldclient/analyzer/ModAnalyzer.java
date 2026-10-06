@@ -337,6 +337,7 @@ public final class ModAnalyzer {
           public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
             String annotation = annotationName(descriptor);
             if (annotation != null) methodAnnotations.add(annotation);
+            addReference(descriptor, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
             return null;
           }
@@ -371,6 +372,8 @@ public final class ModAnalyzer {
 
           @Override public void visitMethodInsn(int opcode, String owner, String name,
                                                 String descriptor, boolean isInterface) {
+            addReference(owner, referencedClasses);
+            addReference(descriptor, referencedClasses);
             collect(owner, minecraftApis, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
             methodReferences.add(normalizeClassName(owner));
