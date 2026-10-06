@@ -83,9 +83,14 @@ public final class JavaTranslator {
             pendingConstruction = normalizeExpression(operation.operands().get(0));
         }
         case "THROW" -> {
-          String expression = operation.operands().isEmpty()
-              ? pendingConstruction
-              : normalizeExpression(operation.operands().get(0));
+          String expression;
+          if (operation.operands().isEmpty()
+              || (pendingConstruction != null
+                  && operation.operands().get(0).equals(pendingConstruction))) {
+            expression = pendingConstruction;
+          } else {
+            expression = normalizeExpression(operation.operands().get(0));
+          }
 
           if (expression == null)
             return null;
@@ -166,6 +171,10 @@ public final class JavaTranslator {
       return null;
 
     String trimmed = expression.trim();
+    if (trimmed.startsWith("new ") && !trimmed.endsWith(")")) {
+      return trimmed + "()";
+    }
+
     if (trimmed.startsWith("new ") && trimmed.endsWith(")")) {
       int open = trimmed.indexOf('(');
       if (open > 0 && open < trimmed.length() - 1) {
