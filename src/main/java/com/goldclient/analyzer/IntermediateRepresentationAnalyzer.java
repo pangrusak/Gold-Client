@@ -15,7 +15,17 @@ public final class IntermediateRepresentationAnalyzer {
     // First pass: solve the operand-stack dataflow across basic blocks.
     // A block may have multiple predecessors, so its incoming stack is the
     // merge of the stacks produced by those predecessors.
+    //
+    // IMPORTANT: exception edges do not carry the normal operand stack. JVM
+    // exception handlers begin with the thrown exception on the stack.
+    // Also, mergeValue() uses a bounded lattice so loops always converge.
     Map<Integer, List<String>> incomingStacks = new HashMap<>();
+    Map<Integer, List<com.goldclient.model.ControlFlowEdgeModel>> incomingEdges =
+        new HashMap<>();
+
+    for (com.goldclient.model.ControlFlowEdgeModel edge : method.controlFlow().edges())
+      incomingEdges.computeIfAbsent(edge.toBlock(), ignored -> new ArrayList<>()).add(edge);
+
     if (!blocks.isEmpty()) {
       incomingStacks.put(method.controlFlow().entryBlock(), List.of());
 
@@ -29,10 +39,15 @@ public final class IntermediateRepresentationAnalyzer {
         List<String> outgoing = simulateBlock(block, incoming, instructions);
 
         for (int successor : block.successors()) {
+          List<String> propagated = isExceptionEdge(
+              blockId, successor, method.controlFlow().edges())
+                  ? List.of("<exception>")
+                  : outgoing;
+
           List<String> existing = incomingStacks.get(successor);
           List<String> merged = existing == null
-              ? List.copyOf(outgoing)
-              : mergeStacks(existing, outgoing);
+              ? List.copyOf(propagated)
+              : mergeStacks(existing, propagated);
 
           if (existing == null || !existing.equals(merged)) {
             incomingStacks.put(successor, merged);
@@ -72,16 +87,12 @@ public final class IntermediateRepresentationAnalyzer {
   }
 
   private static List<String> mergeStacks(List<String> left, List<String> right) {
-    int size = Math.min(left.size(), right.size());
-    List<String> merged = new ArrayList<>(size);
-
-    // Malformed bytecode can produce incompatible stack heights. Preserve the
-    // common portion and mark the mismatch instead of crashing the analyzer.
-    for (int i = 0; i < size; i++)
-      merged.add(mergeValue(left.get(i), right.get(i)));
-
     if (left.size() != right.size())
-      merged.add("<stack-height-mismatch>");
+      return List.of("<unknown-stack>");
+
+    List<String> merged = new ArrayList<>(left.size());
+    for (int i = 0; i < left.size(); i++)
+      merged.add(mergeValue(left.get(i), right.get(i)));
 
     return List.copyOf(merged);
   }
@@ -90,20 +101,20 @@ public final class IntermediateRepresentationAnalyzer {
     if (Objects.equals(left, right))
       return left;
 
-    // Keep the merge deterministic so loops converge to a stable state.
-    Set<String> values = new TreeSet<>();
-    addMergedValues(values, left);
-    addMergedValues(values, right);
-    return "<merged: " + String.join(" | ", values) + ">";
+    // Keep the abstract value lattice bounded. Arbitrary symbolic expressions
+    // grow forever around loops (x -> x+1 -> x+1+1 ...), preventing the
+    // worklist solver from reaching a fixed point.
+    return "<unknown>";
   }
 
-  private static void addMergedValues(Set<String> values, String value) {
-    if (value.startsWith("<merged: ") && value.endsWith(">")) {
-      String inner = value.substring(9, value.length() - 1);
-      values.addAll(Arrays.asList(inner.split(" \\| ")));
-    } else {
-      values.add(value);
-    }
+  private static boolean isExceptionEdge(
+      int fromBlock,
+      int toBlock,
+      List<com.goldclient.model.ControlFlowEdgeModel> edges) {
+    return edges.stream().anyMatch(edge ->
+        edge.fromBlock() == fromBlock
+            && edge.toBlock() == toBlock
+            && "EXCEPTION".equals(edge.kind()));
   }
 
   private static void translate(
