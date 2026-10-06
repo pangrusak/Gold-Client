@@ -124,7 +124,7 @@ public final class JavaTranslator {
 
     return switch (operation.kind()) {
       case "LABEL", "DROP" -> "";
-      case "CONSTANT" -> translateConstant(operands);\n      case "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
+      case "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
           "DUP", "SWAP", "ARITHMETIC", "TYPE_CONVERSION", "TYPE_CHECK" -> null;
       case "LOCAL_WRITE" -> translateLocalWrite(operands, context);
       case "FIELD_WRITE" -> translateFieldWrite(operands);
@@ -177,28 +177,6 @@ public final class JavaTranslator {
       return trimmed.substring(1).trim();
     }
     return "!(" + trimmed + ")";
-  }
-
-  private static String translateConstant(List<String> operands) {
-    if (operands.isEmpty())
-      return null;
-
-    String value = operands.get(0);
-    if (value == null)
-      return "null";
-
-    String trimmed = value.trim();
-    if (trimmed.isEmpty())
-      return """";
-    if (isQuoted(trimmed) || "null".equals(trimmed) || "true".equals(trimmed)
-        || "false".equals(trimmed) || isNumericLiteral(trimmed)) {
-      return trimmed;
-    }
-    return """ + escapeJava(trimmed) + """;
-  }
-
-  private static boolean isNumericLiteral(String value) {
-    return value.matches("-?(?:0|[1-9]\d*)(?:\.\d+)?[fFdDlL]?");
   }
 
   private static String normalizeExpression(String expression) {
