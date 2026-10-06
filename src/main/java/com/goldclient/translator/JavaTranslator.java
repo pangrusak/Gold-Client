@@ -111,7 +111,7 @@ public final class JavaTranslator {
       return null;
 
     StringBuilder source = new StringBuilder();
-    source.append("  if (!(").append(normalizeCondition(condition)).append(")) {\n");
+    source.append("  if (").append(normalizeNegatedCondition(condition)).append(") {\n");
     source.append(body);
     source.append("  }\n");
     return new BranchTranslation(source.toString(), targetIndex);
@@ -124,14 +124,14 @@ public final class JavaTranslator {
 
     return switch (operation.kind()) {
       case "LABEL", "DROP" -> "";
-      case "CONSTANT", "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
+      case "CONSTANT" -> translateConstant(operands);\n      case "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
           "DUP", "SWAP", "ARITHMETIC", "TYPE_CONVERSION", "TYPE_CHECK" -> null;
       case "LOCAL_WRITE" -> translateLocalWrite(operands, context);
       case "FIELD_WRITE" -> translateFieldWrite(operands);
       case "METHOD_CALL" -> translateMethodCall(operands);
       case "CONDITIONAL_BRANCH" -> null;
       case "JUMP" -> null;
-      case "RETURN" -> operands.isEmpty() ? "return;" : "return " + operands.get(0) + ";";
+      case "RETURN" -> operands.isEmpty() ? "return;" : "return " + normalizeExpression(operands.get(0)) + ";";
       case "THROW" -> operands.isEmpty() ? null : "throw " + normalizeExpression(operands.get(0)) + ";";
       default -> null;
     };
@@ -165,8 +165,40 @@ public final class JavaTranslator {
     return normalizeExpression(operands.get(0)) + ";";
   }
 
-  private static String normalizeCondition(String condition) {
-    return condition.replace(" != null", " != null");
+  private static String normalizeNegatedCondition(String condition) {
+    String trimmed = condition == null ? "" : condition.trim();
+    if (trimmed.endsWith(" != null")) {
+      return trimmed.substring(0, trimmed.length() - " != null".length()) + " == null";
+    }
+    if (trimmed.endsWith(" == null")) {
+      return trimmed.substring(0, trimmed.length() - " == null".length()) + " != null";
+    }
+    if (trimmed.startsWith("!")) {
+      return trimmed.substring(1).trim();
+    }
+    return "!(" + trimmed + ")";
+  }
+
+  private static String translateConstant(List<String> operands) {
+    if (operands.isEmpty())
+      return null;
+
+    String value = operands.get(0);
+    if (value == null)
+      return "null";
+
+    String trimmed = value.trim();
+    if (trimmed.isEmpty())
+      return """";
+    if (isQuoted(trimmed) || "null".equals(trimmed) || "true".equals(trimmed)
+        || "false".equals(trimmed) || isNumericLiteral(trimmed)) {
+      return trimmed;
+    }
+    return """ + escapeJava(trimmed) + """;
+  }
+
+  private static boolean isNumericLiteral(String value) {
+    return value.matches("-?(?:0|[1-9]\d*)(?:\.\d+)?[fFdDlL]?");
   }
 
   private static String normalizeExpression(String expression) {
