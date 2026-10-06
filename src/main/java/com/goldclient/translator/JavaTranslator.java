@@ -34,7 +34,6 @@ public final class JavaTranslator {
       Map<String, Integer> labels) {
     StringBuilder source = new StringBuilder();
     boolean complete = true;
-    Map<String, Integer> labels = findLabels(operations, start, end);
 
     for (int i = start; i < end; i++) {
       IrOperationModel operation = operations.get(i);
@@ -121,7 +120,8 @@ public final class JavaTranslator {
 
     if (targetIndex <= branchIndex) {
       return renderBackwardLoop(
-          operations, branchIndex, targetIndex, end, indent, context, condition);
+          operations, branchIndex, targetIndex, end, indent, context, labels,
+          condition);
     }
 
     int jumpIndex = findForwardJoinJump(operations, branchIndex + 1, targetIndex);
@@ -177,7 +177,7 @@ public final class JavaTranslator {
       Map<String, Integer> labels,
       String condition) {
     RenderResult body = renderRange(
-        operations, targetIndex + 1, branchIndex, indent + 1, context);
+        operations, targetIndex + 1, branchIndex, indent + 1, context, labels);
 
     StringBuilder source = new StringBuilder();
     source.append(indent(indent))
@@ -326,7 +326,7 @@ public final class JavaTranslator {
         String type = trimmed.substring(4, open);
         String argument = trimmed.substring(open + 1, trimmed.length() - 1);
         if (!argument.isBlank() && !isQuoted(argument)) {
-          return "new " + type + "("" + escapeJava(argument) + "")";
+          return "new " + type + "(\"" + escapeJava(argument) + "\")";
         }
       }
     }
@@ -344,12 +344,12 @@ public final class JavaTranslator {
 
   private static boolean isQuoted(String value) {
     return value.length() >= 2
-        && value.startsWith(""")
-        && value.endsWith(""");
+        && value.startsWith("\"")
+        && value.endsWith("\"");
   }
 
   private static String escapeJava(String value) {
-    return value.replace("\\", "\\\\").replace(""", "\\"");
+    return value.replace("\\", "\\\\").replace("\"", "\\\"");
   }
 
   private static String simpleField(String field) {
