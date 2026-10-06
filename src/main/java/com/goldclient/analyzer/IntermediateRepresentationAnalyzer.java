@@ -449,9 +449,25 @@ public final class IntermediateRepresentationAnalyzer {
       return opcode.substring("FCONST_".length()) + "F";
     if (opcode.startsWith("DCONST_"))
       return opcode.substring("DCONST_".length());
-    if (!instruction.operands().isEmpty())
-      return instruction.operands().get(0);
+    if (!instruction.operands().isEmpty()) {
+      String value = instruction.operands().get(0);
+      if ("LDC".equals(opcode) && !isNumericLiteral(value)
+          && !"true".equals(value) && !"false".equals(value)
+          && !"null".equals(value) && !isQuoted(value)) {
+        return "\"" + value.replace("\\\\", "\\\\\\\\").replace("\"", "\\\\"") + "\"";
+      }
+      return value;
+    }
     return "unknown";
+  }
+
+  private static boolean isNumericLiteral(String value) {
+    return value.matches("-?(?:0|[1-9]\\d*)(?:[lLfFdD])?")
+        || value.matches("-?(?:0|[1-9]\\d*)\\.\\d+(?:[fFdD])?");
+  }
+
+  private static boolean isQuoted(String value) {
+    return value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"");
   }
 
   private static String localName(InstructionModel instruction) {
