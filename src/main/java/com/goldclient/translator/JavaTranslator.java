@@ -440,12 +440,12 @@ public final class JavaTranslator {
     if (trimmed.isEmpty())
       return false;
 
-    return trimmed.matches("local\\\\d+")
-        || trimmed.matches("[A-Za-z_$][\\\\w$]*(?:\\\\.[A-Za-z_$][\\\\w$]*)+")
-        || trimmed.matches("[A-Za-z_$][\\\\w$]*(?:\\\\.[A-Za-z_$][\\\\w$]*)*\\\\s*\\\\([^)]*\\\\)")
+    return trimmed.matches("local\\d+")
+        || trimmed.matches("[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)+")
+        || trimmed.matches("[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*\\s*\\([^)]*\\)")
         || trimmed.startsWith("new ")
         || (trimmed.startsWith("(") && trimmed.endsWith(")"))
-        || trimmed.matches(".*[+\\\\-*/%<>=!&|].*");
+        || trimmed.matches(".*[+\\-*/%<>=!&|].*");
   }
 
   private static boolean isJavaLiteral(String value) {
