@@ -99,6 +99,11 @@ public final class ModAnalyzer {
       if (mc != null) m.setMinecraftVersion(mc);
     }
 
+    JsonElement suggests = r.get("suggests");
+    if (suggests != null && suggests.isJsonObject()) {
+      suggests.getAsJsonObject().keySet().forEach(m::addDependency);
+    }
+
     JsonElement x = r.get("mixins");
     if (x != null && x.isJsonArray()) for (JsonElement e : x.getAsJsonArray()) {
       if (e.isJsonPrimitive()) m.addMixin(e.getAsString());
@@ -107,7 +112,8 @@ public final class ModAnalyzer {
 
     JsonElement ep = r.get("entrypoints");
     if (ep != null && ep.isJsonObject())
-      for (JsonElement group : ep.getAsJsonObject().values())
+      for (JsonElement group : ep.getAsJsonObject().entrySet().stream()
+          .map(Map.Entry::getValue).toList())
         addEntrypoints(group, m);
   }
 
@@ -583,7 +589,7 @@ public final class ModAnalyzer {
     collect(handle.getDesc(), minecraftApis, referencedClasses);
   }
 
-  private void collect(String value, Set<String> minecraftApis, Set<String> referencedClasses) {
+  private static void collect(String value, Set<String> minecraftApis, Set<String> referencedClasses) {
     if (value == null || !value.contains("net/minecraft/")) return;
 
     Matcher matcher = MINECRAFT_CLASS.matcher(value);
