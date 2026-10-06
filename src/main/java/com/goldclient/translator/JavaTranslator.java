@@ -13,7 +13,8 @@ public final class JavaTranslator {
     StringBuilder source = new StringBuilder();
     boolean complete = true;
 
-    source.append("void ").append(method.name()).append("() {\n");
+    source.append(returnType(method.descriptor())).append(" ").append(method.name()).append("(")
+        .append(parameterList(method.descriptor())).append(") {\n");
 
     Map<String, Integer> labels = findLabels(operations, 0, operations.size());
     RenderResult rendered = renderRange(
@@ -348,13 +349,96 @@ public final class JavaTranslator {
       if (open > 0 && open < trimmed.length() - 1) {
         String type = trimmed.substring(4, open);
         String argument = trimmed.substring(open + 1, trimmed.length() - 1);
-        if (!argument.isBlank() && !isQuoted(argument)) {
+        if (!argument.isBlank() && !isQuoted(argument) && !isJavaLiteral(argument)
+            && !looksLikeExpression(argument)) {
           return "new " + type + "(\"" + escapeJava(argument) + "\")";
         }
       }
     }
 
     return trimmed;
+  }
+
+  private static String returnType(String descriptor) {
+    if (descriptor == null)
+      return "void";
+    int close = descriptor.indexOf(')');
+    if (close < 0 || close + 1 >= descriptor.length())
+      return "void";
+    return descriptorType(descriptor.substring(close + 1));
+  }
+
+  private static String parameterList(String descriptor) {
+    if (descriptor == null)
+      return "";
+    int open = descriptor.indexOf('(');
+    int close = descriptor.indexOf(')');
+    if (open < 0 || close < open)
+      return "";
+
+    StringBuilder result = new StringBuilder();
+    int index = open + 1;
+    int parameterNumber = 0;
+    while (index < close) {
+      int start = index;
+      while (index < close && descriptor.charAt(index) == '[')
+        index++;
+      if (index >= close)
+        break;
+
+      char type = descriptor.charAt(index);
+      if (type == 'L') {
+        int end = descriptor.indexOf(';', index);
+        if (end < 0 || end > close)
+          break;
+        index = end + 1;
+      } else {
+        index++;
+      }
+
+      if (result.length() > 0)
+        result.append(", ");
+      result.append(descriptorType(descriptor.substring(start, index)))
+          .append(" local")
+          .append(parameterNumber++);
+    }
+    return result.toString();
+  }
+
+  private static String descriptorType(String descriptor) {
+    if (descriptor == null || descriptor.isEmpty())
+      return "Object";
+
+    int arrayDepth = 0;
+    while (arrayDepth < descriptor.length() && descriptor.charAt(arrayDepth) == '[')
+      arrayDepth++;
+    if (arrayDepth > 0)
+      return descriptorType(descriptor.substring(arrayDepth)) + "[]".repeat(arrayDepth);
+
+    return switch (descriptor.charAt(0)) {
+      case 'V' -> "void";
+      case 'Z' -> "boolean";
+      case 'B' -> "byte";
+      case 'C' -> "char";
+      case 'S' -> "short";
+      case 'I' -> "int";
+      case 'J' -> "long";
+      case 'F' -> "float";
+      case 'D' -> "double";
+      case 'L' -> {
+        int end = descriptor.indexOf(';');
+        yield end > 1 ? descriptor.substring(1, end).replace('/', '.') : "Object";
+      }
+      default -> "Object";
+    };
+  }
+
+  private static boolean looksLikeExpression(String value) {
+    return value.matches(".*[+\\-*/%<>=!&|?:].*")
+        || value.matches("local\\d+")
+        || value.contains(".")
+        || value.startsWith("new ")
+        || value.endsWith(")");
   }
 
   private static boolean isJavaLiteral(String value) {
