@@ -6,3 +6,4 @@ target/
 test-mods/*.jar
 output/*
 !output/.gitkeep
+.gold-client-jre

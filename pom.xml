@@ -41,7 +41,7 @@
         <dependency>
             <groupId>org.teavm</groupId>
             <artifactId>teavm-tooling</artifactId>
-            <version>0.10.2</version>
+            <version>0.11.0</version>
         </dependency>
     </dependencies>
 
