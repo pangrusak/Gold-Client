@@ -9,11 +9,44 @@ import java.util.*;
 
 public final class IntermediateRepresentationAnalyzer {
   public IrMethodModel analyze(MethodModel method) {
-    List<IrOperationModel> operations = new ArrayList<>();
     List<InstructionModel> instructions = method.instructions();
+    List<BasicBlockModel> blocks = method.controlFlow().blocks();
 
-    for (BasicBlockModel block : method.controlFlow().blocks()) {
-      Deque<String> stack = new ArrayDeque<>();
+    // First pass: solve the operand-stack dataflow across basic blocks.
+    // A block may have multiple predecessors, so its incoming stack is the
+    // merge of the stacks produced by those predecessors.
+    Map<Integer, List<String>> incomingStacks = new HashMap<>();
+    if (!blocks.isEmpty()) {
+      incomingStacks.put(method.controlFlow().entryBlock(), List.of());
+
+      Deque<Integer> worklist = new ArrayDeque<>();
+      worklist.add(method.controlFlow().entryBlock());
+
+      while (!worklist.isEmpty()) {
+        int blockId = worklist.removeFirst();
+        BasicBlockModel block = blocks.get(blockId);
+        List<String> incoming = incomingStacks.getOrDefault(blockId, List.of());
+        List<String> outgoing = simulateBlock(block, incoming, instructions);
+
+        for (int successor : block.successors()) {
+          List<String> existing = incomingStacks.get(successor);
+          List<String> merged = existing == null
+              ? List.copyOf(outgoing)
+              : mergeStacks(existing, outgoing);
+
+          if (existing == null || !existing.equals(merged)) {
+            incomingStacks.put(successor, merged);
+            worklist.addLast(successor);
+          }
+        }
+      }
+    }
+
+    // Second pass: emit semantic operations using the solved stack state.
+    List<IrOperationModel> operations = new ArrayList<>();
+    for (BasicBlockModel block : blocks) {
+      Deque<String> stack = new ArrayDeque<>(
+          incomingStacks.getOrDefault(block.id(), List.of()));
 
       for (int i = block.startInstruction(); i < block.endInstruction(); i++) {
         InstructionModel instruction = instructions.get(i);
@@ -22,6 +55,55 @@ public final class IntermediateRepresentationAnalyzer {
     }
 
     return new IrMethodModel(method.name(), method.descriptor(), operations);
+  }
+
+  private static List<String> simulateBlock(
+      BasicBlockModel block,
+      List<String> incoming,
+      List<InstructionModel> instructions) {
+    Deque<String> stack = new ArrayDeque<>(incoming);
+
+    // Reuse the exact opcode semantics used by the emitter, but discard the
+    // temporary operations. This keeps dataflow and emitted IR in sync.
+    for (int i = block.startInstruction(); i < block.endInstruction(); i++)
+      translate(instructions.get(i), i, stack, new ArrayList<>());
+
+    return List.copyOf(stack);
+  }
+
+  private static List<String> mergeStacks(List<String> left, List<String> right) {
+    int size = Math.min(left.size(), right.size());
+    List<String> merged = new ArrayList<>(size);
+
+    // Malformed bytecode can produce incompatible stack heights. Preserve the
+    // common portion and mark the mismatch instead of crashing the analyzer.
+    for (int i = 0; i < size; i++)
+      merged.add(mergeValue(left.get(i), right.get(i)));
+
+    if (left.size() != right.size())
+      merged.add("<stack-height-mismatch>");
+
+    return List.copyOf(merged);
+  }
+
+  private static String mergeValue(String left, String right) {
+    if (Objects.equals(left, right))
+      return left;
+
+    // Keep the merge deterministic so loops converge to a stable state.
+    Set<String> values = new TreeSet<>();
+    addMergedValues(values, left);
+    addMergedValues(values, right);
+    return "<merged: " + String.join(" | ", values) + ">";
+  }
+
+  private static void addMergedValues(Set<String> values, String value) {
+    if (value.startsWith("<merged: ") && value.endsWith(">")) {
+      String inner = value.substring(9, value.length() - 1);
+      values.addAll(Arrays.asList(inner.split(" \\| ")));
+    } else {
+      values.add(value);
+    }
   }
 
   private static void translate(
