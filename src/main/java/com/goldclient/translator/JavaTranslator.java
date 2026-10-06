@@ -312,12 +312,22 @@ public final class JavaTranslator {
 
   private static String negateCondition(String condition) {
     String trimmed = normalizeCondition(condition);
-    if (trimmed.endsWith(" != null"))
-      return trimmed.substring(0, trimmed.length() - " != null".length()) + " == null";
-    if (trimmed.endsWith(" == null"))
-      return trimmed.substring(0, trimmed.length() - " == null".length()) + " != null";
+
+    String[] operators = {" == ", " != ", " <= ", " >= ", " < ", " > "};
+    String[] inverses = {" != ", " == ", " > ", " < ", " >= ", " <= "};
+
+    for (int i = 0; i < operators.length; i++) {
+      int index = trimmed.indexOf(operators[i]);
+      if (index >= 0) {
+        return trimmed.substring(0, index)
+            + inverses[i]
+            + trimmed.substring(index + operators[i].length());
+      }
+    }
+
     if (trimmed.startsWith("!"))
       return trimmed.substring(1).trim();
+
     return "!(" + trimmed + ")";
   }
 
