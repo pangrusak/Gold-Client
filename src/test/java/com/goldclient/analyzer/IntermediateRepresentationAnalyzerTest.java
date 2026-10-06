@@ -41,6 +41,30 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void preservesStringConstructorArguments() {
+    List<InstructionModel> instructions = List.of(
+        instruction(187, "NEW", "java/lang/IllegalStateException"),
+        instruction(89, "DUP"),
+        instruction(18, "LDC", "missing"),
+        instruction(183, "INVOKESPECIAL", "java/lang/IllegalStateException", "<init>", "(Ljava/lang/String;)V", "false"),
+        instruction(191, "ATHROW")
+    );
+
+    MethodModel method = method("test", "()V", instructions);
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(o ->
+        o.kind().equals("METHOD_CALL")
+            && o.operands().get(0).equals(
+                "new java.lang.IllegalStateException(\"missing\")")));
+
+    assertTrue(ir.operations().stream().anyMatch(o ->
+        o.kind().equals("THROW")
+            && o.operands().get(0).equals(
+                "new java.lang.IllegalStateException(\"missing\")")));
+  }
+
+  @Test
   void carriesOperandValuesAcrossControlFlowJoin() {
     List<InstructionModel> instructions = List.of(
         instruction(25, "ALOAD", "0"),
