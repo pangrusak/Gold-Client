@@ -130,9 +130,9 @@ public final class JavaTranslator {
       if (!jump.operands().isEmpty()) {
         Integer endIndex = labels.get(jump.operands().get(0));
         if (endIndex != null && endIndex > targetIndex && endIndex <= end) {
-          RenderResult thenBody = renderRange(
+          RenderResult fallthroughBody = renderRange(
               operations, branchIndex + 1, jumpIndex, indent + 1, context, labels);
-          RenderResult elseBody = renderRange(
+          RenderResult targetBody = renderRange(
               operations, targetIndex + 1, endIndex, indent + 1, context, labels);
 
           StringBuilder source = new StringBuilder();
@@ -140,14 +140,14 @@ public final class JavaTranslator {
               .append("if (")
               .append(normalizeCondition(condition))
               .append(") {\n");
-          source.append(thenBody.source());
+          source.append(targetBody.source());
           source.append(indent(indent)).append("} else {\n");
-          source.append(elseBody.source());
+          source.append(fallthroughBody.source());
           source.append(indent(indent)).append("}\n");
 
           return new ConditionalRender(
               source.toString(),
-              thenBody.complete() && elseBody.complete(),
+              fallthroughBody.complete() && targetBody.complete(),
               endIndex);
         }
       }
