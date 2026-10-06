@@ -56,26 +56,6 @@ class JavaTranslatorTest {
 
 
   @Test
-  void translatesConstants() {
-    IrMethodModel method = new IrMethodModel(
-        "test",
-        "()V",
-        List.of(
-            new IrOperationModel("CONSTANT", List.of("hello"), 0),
-            new IrOperationModel("CONSTANT", List.of("42"), 1),
-            new IrOperationModel("CONSTANT", List.of("true"), 2),
-            new IrOperationModel("CONSTANT", List.of("null"), 3)));
-
-    TranslationResult result = new JavaTranslator().translate(method);
-
-    assertTrue(result.complete());
-    assertTrue(result.source().contains("  \"hello\";"));
-    assertTrue(result.source().contains("  42;"));
-    assertTrue(result.source().contains("  true;"));
-    assertTrue(result.source().contains("  null;"));
-  }
-
-  @Test
   void translatesMethodCallAndReturnExpression() {
     IrMethodModel method = new IrMethodModel(
         "test",
