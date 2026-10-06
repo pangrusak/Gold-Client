@@ -378,7 +378,7 @@ public final class JavaTranslator {
 
     StringBuilder result = new StringBuilder();
     int index = open + 1;
-    int parameterNumber = 0;
+    int localSlot = 0;
     while (index < close) {
       int start = index;
       while (index < close && descriptor.charAt(index) == '[')
@@ -400,7 +400,9 @@ public final class JavaTranslator {
         result.append(", ");
       result.append(descriptorType(descriptor.substring(start, index)))
           .append(" local")
-          .append(parameterNumber++);
+          .append(localSlot);
+      char parameterType = descriptor.charAt(start);
+      localSlot += (parameterType == 'J' || parameterType == 'D') ? 2 : 1;
     }
     return result.toString();
   }
@@ -434,11 +436,16 @@ public final class JavaTranslator {
   }
 
   private static boolean looksLikeExpression(String value) {
-    return value.matches(".*[+\\-*/%<>=!&|?:].*")
-        || value.matches("local\\d+")
-        || value.contains(".")
-        || value.startsWith("new ")
-        || value.endsWith(")");
+    String trimmed = value == null ? "" : value.trim();
+    if (trimmed.isEmpty())
+      return false;
+
+    return trimmed.matches("local\\\\d+")
+        || trimmed.matches("[A-Za-z_$][\\\\w$]*(?:\\\\.[A-Za-z_$][\\\\w$]*)+")
+        || trimmed.matches("[A-Za-z_$][\\\\w$]*(?:\\\\.[A-Za-z_$][\\\\w$]*)*\\\\s*\\\\([^)]*\\\\)")
+        || trimmed.startsWith("new ")
+        || (trimmed.startsWith("(") && trimmed.endsWith(")"))
+        || trimmed.matches(".*[+\\\\-*/%<>=!&|].*");
   }
 
   private static boolean isJavaLiteral(String value) {
