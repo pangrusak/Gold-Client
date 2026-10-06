@@ -15,7 +15,9 @@ public final class JavaTranslator {
 
     source.append("void ").append(method.name()).append("() {\n");
 
-    RenderResult rendered = renderRange(operations, 0, operations.size(), 1, context);
+    Map<String, Integer> labels = findLabels(operations, 0, operations.size());
+    RenderResult rendered = renderRange(
+        operations, 0, operations.size(), 1, context, labels);
     source.append(rendered.source());
     complete &= rendered.complete();
 
@@ -28,7 +30,8 @@ public final class JavaTranslator {
       int start,
       int end,
       int indent,
-      TranslationContext context) {
+      TranslationContext context,
+      Map<String, Integer> labels) {
     StringBuilder source = new StringBuilder();
     boolean complete = true;
     Map<String, Integer> labels = findLabels(operations, start, end);
@@ -42,7 +45,7 @@ public final class JavaTranslator {
               operations, i, end, operation.operands().get(0));
           if (loopBranch > i) {
             ConditionalRender loop = renderBackwardLoop(
-                operations, loopBranch, i, end, indent, context,
+                operations, loopBranch, i, end, indent, context, labels,
                 operations.get(loopBranch).operands().get(0));
             source.append(loop.source());
             complete &= loop.complete();
@@ -128,9 +131,9 @@ public final class JavaTranslator {
         Integer endIndex = labels.get(jump.operands().get(0));
         if (endIndex != null && endIndex > targetIndex && endIndex <= end) {
           RenderResult thenBody = renderRange(
-              operations, branchIndex + 1, jumpIndex, indent + 1, context);
+              operations, branchIndex + 1, jumpIndex, indent + 1, context, labels);
           RenderResult elseBody = renderRange(
-              operations, targetIndex + 1, endIndex, indent + 1, context);
+              operations, targetIndex + 1, endIndex, indent + 1, context, labels);
 
           StringBuilder source = new StringBuilder();
           source.append(indent(indent))
@@ -151,7 +154,7 @@ public final class JavaTranslator {
     }
 
     RenderResult body = renderRange(
-        operations, branchIndex + 1, targetIndex, indent + 1, context);
+        operations, branchIndex + 1, targetIndex, indent + 1, context, labels);
 
     StringBuilder source = new StringBuilder();
     source.append(indent(indent))
@@ -171,6 +174,7 @@ public final class JavaTranslator {
       int end,
       int indent,
       TranslationContext context,
+      Map<String, Integer> labels,
       String condition) {
     RenderResult body = renderRange(
         operations, targetIndex + 1, branchIndex, indent + 1, context);
