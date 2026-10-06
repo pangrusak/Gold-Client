@@ -22,6 +22,8 @@ public final class Main {
     String classFilter = null;
     String methodFilter = null;
     boolean translate = false;
+    String toJsDir = null;
+    String mainClass = null;
 
     for (int i = 1; i < args.length; i++) {
       switch (args[i]) {
@@ -33,6 +35,20 @@ public final class Main {
           classFilter = args[i].replace('.', '/');
         }
         case "--translate" -> translate = true;
+        case "--to-js" -> {
+          if (++i >= args.length) {
+            printUsage();
+            System.exit(2);
+          }
+          toJsDir = args[i];
+        }
+        case "--main-class" -> {
+          if (++i >= args.length) {
+            printUsage();
+            System.exit(2);
+          }
+          mainClass = args[i];
+        }
         case "--method" -> {
           if (++i >= args.length) {
             printUsage();
@@ -62,6 +78,25 @@ public final class Main {
         }
         printTranslation(a.classes(), classFilter, methodFilter);
       }
+      
+      if (toJsDir != null) {
+        if (mainClass == null) {
+          if (!a.metadata().getEntrypoints().isEmpty()) {
+            mainClass = a.metadata().getEntrypoints().get(0);
+            System.out.println("Auto-detected Fabric main class: " + mainClass);
+          } else {
+            for (ClassModel clazz : a.classes()) {
+              if (clazz.annotations().contains("net.minecraftforge.fml.common.Mod") ||
+                  clazz.annotations().contains("net.neoforged.fml.common.Mod")) {
+                mainClass = clazz.name();
+                System.out.println("Auto-detected Forge main class: " + mainClass);
+                break;
+              }
+            }
+          }
+        }
+        com.goldclient.translator.TeaVmTranslator.translate(Path.of(jar), Path.of(toJsDir), mainClass);
+      }
     } catch(Exception e) {
       System.err.println("Gold Client analysis failed: " + e.getMessage());
       System.exit(1);
@@ -69,7 +104,7 @@ public final class Main {
   }
 
   private static void printUsage() {
-    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate] [--class <class>] [--method <method>]");
+    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate] [--class <class>] [--method <method>] [--to-js <output_dir>] [--main-class <class>]");
   }
 
   private static void printAnalysis(ModAnalysis a, boolean debug) {

@@ -38,6 +38,11 @@
             <version>6.0.0</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.teavm</groupId>
+            <artifactId>teavm-tooling</artifactId>
+            <version>0.10.2</version>
+        </dependency>
     </dependencies>
 
     <build>
