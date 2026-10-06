@@ -196,6 +196,57 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void translatesMethodDescriptorSignature() {
+    IrMethodModel method = new IrMethodModel(
+        "compute",
+        "(Ljava/lang/String;I)Z",
+        List.of(new IrOperationModel("RETURN", List.of("true"), 0)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete());
+    assertTrue(result.source().startsWith("boolean compute(java.lang.String local0, int local1)"));
+    assertTrue(result.source().contains("return true;"));
+  }
+
+  @Test
+  void translatesArrayAndLongReturnTypes() {
+    TranslationResult array = new JavaTranslator().translate(new IrMethodModel(
+        "values",
+        "()[I",
+        List.of(new IrOperationModel("RETURN", List.of("local0"), 0))));
+    TranslationResult wide = new JavaTranslator().translate(new IrMethodModel(
+        "count",
+        "()J",
+        List.of(new IrOperationModel("RETURN", List.of("42L"), 0))));
+
+    assertTrue(array.source().startsWith("int[] values()"));
+    assertTrue(wide.source().startsWith("long count()"));
+  }
+
+  @Test
+  void preservesNumericConstructorArguments() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "()V",
+        List.of(
+            new IrOperationModel(
+                "METHOD_CALL",
+                List.of("new java.lang.IllegalArgumentException(42)"),
+                0),
+            new IrOperationModel(
+                "THROW",
+                List.of("new java.lang.IllegalArgumentException(42)"),
+                1)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete());
+    assertTrue(result.source().contains(
+        "throw new java.lang.IllegalArgumentException(42);"));
+  }
+
+  @Test
   void marksUnsupportedOperations() {
     IrMethodModel method = new IrMethodModel(
         "test",
