@@ -54,6 +54,23 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void preservesPunctuationInConstructorStringArguments() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "()V",
+        List.of(new IrOperationModel(
+            "THROW",
+            List.of("new java.lang.IllegalStateException(The config did not initialize!)"),
+            0)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete());
+    assertTrue(result.source().contains(
+        "throw new java.lang.IllegalStateException(\\"The config did not initialize!\\");"));
+  }
+
+  @Test
   void translatesConstantsAndExpressions() {
     IrMethodModel method = new IrMethodModel(
         "test",
