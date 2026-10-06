@@ -27,7 +27,14 @@ public final class ModAnalyzer {
       Enumeration<JarEntry> entries = jar.entries();
       while (entries.hasMoreElements()) {
         JarEntry entry = entries.nextElement();
-        if (entry.isDirectory() || !entry.getName().endsWith(".class")) continue;
+        if (entry.isDirectory()) continue;
+
+        if (entry.getName().endsWith(".mixins.json")) {
+          metadata.addMixin(entry.getName());
+          continue;
+        }
+
+        if (!entry.getName().endsWith(".class")) continue;
 
         try (InputStream in = jar.getInputStream(entry)) {
           ClassReader reader = new ClassReader(in);
@@ -100,11 +107,24 @@ public final class ModAnalyzer {
 
     JsonElement ep = r.get("entrypoints");
     if (ep != null && ep.isJsonObject())
-      for (JsonElement group : ep.getAsJsonObject().entrySet().stream().map(Map.Entry::getValue).toList())
-        if (group.isJsonArray()) for (JsonElement e : group.getAsJsonArray()) {
-          if (e.isJsonPrimitive()) m.addEntrypoint(e.getAsString());
-          else if (e.isJsonObject()) m.addEntrypoint(text(e.getAsJsonObject(), "value"));
-        }
+      for (JsonElement group : ep.getAsJsonObject().values())
+        addEntrypoints(group, m);
+  }
+
+  private void addEntrypoints(JsonElement value, ModMetadata m) {
+    if (value == null || value.isJsonNull()) return;
+    if (value.isJsonPrimitive()) {
+      m.addEntrypoint(value.getAsString());
+      return;
+    }
+    if (value.isJsonArray()) {
+      for (JsonElement e : value.getAsJsonArray()) addEntrypoints(e, m);
+      return;
+    }
+    if (value.isJsonObject()) {
+      String entrypoint = text(value.getAsJsonObject(), "value");
+      if (entrypoint != null) m.addEntrypoint(entrypoint);
+    }
   }
 
   private void readMcModInfo(String json, ModMetadata m) {
@@ -132,14 +152,60 @@ public final class ModAnalyzer {
   }
 
   private void readToml(String t, ModMetadata m) {
+    String section = "";
+    String dependencySectionId = null;
+
     for (String raw : t.split("\\R")) {
-      String l = raw.trim();
-      if (l.startsWith("version")) m.setVersion(value(l));
-      else if (l.startsWith("displayName")) m.setName(value(l));
-      else if (l.startsWith("loaderVersion")) m.setLoader("Forge");
-      else if (l.startsWith("modId")) m.addDependency("mod:" + value(l));
-      else if (l.startsWith("minecraft")) m.setMinecraftVersion(value(l));
+      String l = stripTomlComment(raw).trim();
+      if (l.isEmpty()) continue;
+
+      if (l.startsWith("[[") && l.endsWith("]]")) {
+        section = l.substring(2, l.length() - 2).trim();
+        dependencySectionId = section.startsWith("dependencies.")
+            ? section.substring("dependencies.".length())
+            : null;
+        continue;
+      }
+
+      int equals = l.indexOf('=');
+      if (equals < 0) continue;
+
+      String key = l.substring(0, equals).trim();
+      String parsedValue = value(l);
+
+      if ("mods".equals(section)) {
+        if ("displayName".equals(key)) m.setName(parsedValue);
+        else if ("version".equals(key)) m.setVersion(parsedValue);
+      } else if (dependencySectionId != null) {
+        if ("modId".equals(key)) {
+          dependencySectionId = parsedValue;
+          m.addDependency(parsedValue);
+        } else if ("versionRange".equals(key) && "minecraft".equals(dependencySectionId)) {
+          m.setMinecraftVersion(parsedValue);
+        }
+      } else if ("modLoader".equals(key)) {
+        m.setLoader("Forge");
+      }
     }
+  }
+
+  private static String stripTomlComment(String line) {
+    boolean quoted = false;
+    char quote = 0;
+    for (int i = 0; i < line.length(); i++) {
+      char c = line.charAt(i);
+      if ((c == '"' || c == '\\'') && (i == 0 || line.charAt(i - 1) != '\\\\')) {
+        if (!quoted) {
+          quoted = true;
+          quote = c;
+        } else if (quote == c) {
+          quoted = false;
+        }
+      } else if (c == '#' && !quoted) {
+        return line.substring(0, i);
+      }
+    }
+    return line;
   }
 
   private static String text(JsonObject o, String k) {
@@ -186,10 +252,15 @@ public final class ModAnalyzer {
         superName[0] = normalizeClassName(superClass);
 
         if (classInterfaces != null)
-          for (String i : classInterfaces) interfaces.add(normalizeClassName(i));
+          for (String i : classInterfaces) {
+            interfaces.add(normalizeClassName(i));
+            addReference(i, referencedClasses);
+          }
 
         collect(name, minecraftApis, referencedClasses);
+        addReference(classSignature, referencedClasses);
         collect(classSignature, minecraftApis, referencedClasses);
+        addReference(superClass, referencedClasses);
         collect(superClass, minecraftApis, referencedClasses);
 
         if (classInterfaces != null)
@@ -208,6 +279,8 @@ public final class ModAnalyzer {
       public FieldVisitor visitField(int fieldAccess, String name, String descriptor,
                                      String fieldSignature, Object value) {
         List<String> fieldAnnotations = new ArrayList<>();
+        addReference(descriptor, referencedClasses);
+        addReference(fieldSignature, referencedClasses);
         collect(descriptor, minecraftApis, referencedClasses);
         collect(fieldSignature, minecraftApis, referencedClasses);
 
@@ -216,6 +289,8 @@ public final class ModAnalyzer {
           public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
             String annotation = annotationName(descriptor);
             if (annotation != null) fieldAnnotations.add(annotation);
+            addReference(descriptor, referencedClasses);
+            addReference(descriptor, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
             return null;
           }
@@ -242,12 +317,15 @@ public final class ModAnalyzer {
         int[] maxStack = {0};
         int[] maxLocals = {0};
 
+        addReference(descriptor, referencedClasses);
+        addReference(methodSignature, referencedClasses);
         collect(descriptor, minecraftApis, referencedClasses);
         collect(methodSignature, minecraftApis, referencedClasses);
 
         if (exceptions != null)
           for (String exception : exceptions) {
             methodExceptions.add(normalizeClassName(exception));
+            addReference(exception, referencedClasses);
             collect(exception, minecraftApis, referencedClasses);
           }
 
@@ -276,12 +354,17 @@ public final class ModAnalyzer {
           }
 
           @Override public void visitTypeInsn(int opcode, String type) {
+            addReference(type, referencedClasses);
             collect(type, minecraftApis, referencedClasses);
             methodReferences.add(normalizeClassName(type));
             instructions.add(instruction(opcode, type));
           }
 
           @Override public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
+            addReference(owner, referencedClasses);
+            addReference(descriptor, referencedClasses);
+            addReference(owner, referencedClasses);
+            addReference(descriptor, referencedClasses);
             collect(owner, minecraftApis, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
             methodReferences.add(normalizeClassName(owner));
@@ -300,7 +383,11 @@ public final class ModAnalyzer {
           @Override public void visitInvokeDynamicInsn(String name, String descriptor,
                                                        Handle bootstrapMethodHandle,
                                                        Object... bootstrapMethodArguments) {
+            addReference(descriptor, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
+            addHandleReference(bootstrapMethodHandle, referencedClasses, minecraftApis);
+            for (Object argument : bootstrapMethodArguments)
+              addConstantReference(argument, referencedClasses, minecraftApis);
             List<String> operands = new ArrayList<>();
             operands.add(name);
             operands.add(descriptor);
@@ -321,12 +408,14 @@ public final class ModAnalyzer {
 
           @Override public void visitLdcInsn(Object value) {
             if (value instanceof Type type) {
+              addReference(type.getDescriptor(), referencedClasses);
               collect(type.getDescriptor(), minecraftApis, referencedClasses);
               methodReferences.add(normalizeClassName(type.getClassName()));
             } else if (value instanceof Handle handle) {
-              collect(handle.getOwner(), minecraftApis, referencedClasses);
+              addHandleReference(handle, referencedClasses, minecraftApis);
               methodReferences.add(normalizeClassName(handle.getOwner()));
             } else if (value instanceof ConstantDynamic dynamic) {
+              addReference(dynamic.getDescriptor(), referencedClasses);
               collect(dynamic.getDescriptor(), minecraftApis, referencedClasses);
             }
             instructions.add(instruction(Opcodes.LDC, constantText(value)));
@@ -359,12 +448,14 @@ public final class ModAnalyzer {
           }
 
           @Override public void visitMultiANewArrayInsn(String descriptor, int dims) {
+            addReference(descriptor, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
             instructions.add(instruction(Opcodes.MULTIANEWARRAY,
                 descriptor, Integer.toString(dims)));
           }
 
           @Override public void visitTryCatchBlock(Label start, Label end, Label handler, String type) {
+            addReference(type, referencedClasses);
             collect(type, minecraftApis, referencedClasses);
             tryCatchBlocks.add(new TryCatchModel(
                 labelId.apply(start), labelId.apply(end), labelId.apply(handler),
@@ -432,6 +523,63 @@ public final class ModAnalyzer {
   private static String handleText(Handle handle) {
     return "Handle(" + handle.getTag() + "," + handle.getOwner() + ","
         + handle.getName() + "," + handle.getDesc() + "," + handle.isInterface() + ")";
+  }
+
+  private static void addReference(String value, Set<String> referencedClasses) {
+    if (value == null || value.isBlank()) return;
+
+    try {
+      if (value.indexOf('(') >= 0) {
+        addTypeReference(Type.getMethodType(value), referencedClasses);
+        return;
+      }
+      if (value.startsWith("L") || value.startsWith("[")) {
+        addTypeReference(Type.getType(value), referencedClasses);
+        return;
+      }
+    } catch (IllegalArgumentException ignored) {
+      // Not a valid JVM descriptor; it may still be an internal class name.
+    }
+
+    if (value.indexOf('/') >= 0 && value.matches("[A-Za-z0-9_$/.]+"))
+      referencedClasses.add(value.replace('/', '.'));
+  }
+
+  private static void addTypeReference(Type type, Set<String> referencedClasses) {
+    if (type.getSort() == Type.METHOD) {
+      for (Type argument : type.getArgumentTypes())
+        addTypeReference(argument, referencedClasses);
+      addTypeReference(type.getReturnType(), referencedClasses);
+    } else if (type.getSort() == Type.ARRAY) {
+      addTypeReference(type.getElementType(), referencedClasses);
+    } else if (type.getSort() == Type.OBJECT) {
+      referencedClasses.add(type.getClassName());
+    }
+  }
+
+  private static void addConstantReference(Object value, Set<String> referencedClasses,
+                                           Set<String> minecraftApis) {
+    if (value instanceof Type type) {
+      addReference(type.getDescriptor(), referencedClasses);
+      collect(type.getDescriptor(), minecraftApis, referencedClasses);
+    } else if (value instanceof Handle handle) {
+      addHandleReference(handle, referencedClasses, minecraftApis);
+    } else if (value instanceof ConstantDynamic dynamic) {
+      addReference(dynamic.getDescriptor(), referencedClasses);
+      collect(dynamic.getDescriptor(), minecraftApis, referencedClasses);
+      addHandleReference(dynamic.getBootstrapMethod(), referencedClasses, minecraftApis);
+      for (int i = 0; i < dynamic.getBootstrapMethodArgumentCount(); i++)
+        addConstantReference(dynamic.getBootstrapMethodArgument(i), referencedClasses, minecraftApis);
+    }
+  }
+
+  private static void addHandleReference(Handle handle, Set<String> referencedClasses,
+                                         Set<String> minecraftApis) {
+    if (handle == null) return;
+    addReference(handle.getOwner(), referencedClasses);
+    addReference(handle.getDesc(), referencedClasses);
+    collect(handle.getOwner(), minecraftApis, referencedClasses);
+    collect(handle.getDesc(), minecraftApis, referencedClasses);
   }
 
   private void collect(String value, Set<String> minecraftApis, Set<String> referencedClasses) {
