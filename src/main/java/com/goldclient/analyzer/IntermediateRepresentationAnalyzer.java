@@ -321,6 +321,10 @@ public final class IntermediateRepresentationAnalyzer {
     String call;
     if ("<init>".equals(name) && receiver != null) {
       call = receiver + "(" + String.join(", ", args) + ")";
+      if (!stack.isEmpty() && stack.peek().equals(receiver)) {
+        stack.pop();
+        stack.push(call);
+      }
     } else if (receiver != null) {
       call = receiver + "." + name + "(" + String.join(", ", args) + ")";
     } else {
