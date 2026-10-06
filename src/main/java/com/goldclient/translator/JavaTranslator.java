@@ -83,14 +83,11 @@ public final class JavaTranslator {
             pendingConstruction = normalizeExpression(operation.operands().get(0));
         }
         case "THROW" -> {
-          String expression;
-          if (operation.operands().isEmpty()
-              || (pendingConstruction != null
-                  && operation.operands().get(0).equals(pendingConstruction))) {
-            expression = pendingConstruction;
-          } else {
-            expression = normalizeExpression(operation.operands().get(0));
-          }
+          String expression = pendingConstruction != null
+              ? pendingConstruction
+              : (operation.operands().isEmpty()
+                  ? null
+                  : normalizeExpression(operation.operands().get(0)));
 
           if (expression == null)
             return null;
