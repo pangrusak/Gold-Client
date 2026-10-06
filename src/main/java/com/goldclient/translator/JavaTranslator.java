@@ -2,119 +2,199 @@ package com.goldclient.translator;
 
 import com.goldclient.model.IrMethodModel;
 import com.goldclient.model.IrOperationModel;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public final class JavaTranslator {
   public TranslationResult translate(IrMethodModel method) {
-    StringBuilder source = new StringBuilder();
+    List<IrOperationModel> operations = method.operations();
     TranslationContext context = new TranslationContext();
+    StringBuilder source = new StringBuilder();
     boolean complete = true;
 
     source.append("void ").append(method.name()).append("() {\n");
 
-    List<IrOperationModel> operations = method.operations();
-    for (int i = 0; i < operations.size(); i++) {
-      IrOperationModel operation = operations.get(i);
-
-      if ("FIELD_READ".equals(operation.kind())
-          && i + 1 < operations.size()
-          && "CONDITIONAL_BRANCH".equals(operations.get(i + 1).kind())) {
-        continue;
-      }
-
-      if ("CONDITIONAL_BRANCH".equals(operation.kind())
-          && operation.operands().size() >= 2) {
-        BranchTranslation branch = translateConditionalBlock(operations, i, operation);
-        if (branch != null) {
-          source.append(branch.source());
-          i = branch.lastIndex();
-          continue;
-        }
-      }
-
-      String line = translateOperation(operation, context);
-      if (line == null) {
-        source.append("  // TODO: ").append(operation.kind())
-            .append(" ").append(operation.operands()).append("\n");
-        complete = false;
-      } else if (!line.isBlank()) {
-        source.append("  ").append(line).append("\n");
-      }
-    }
+    RenderResult rendered = renderRange(operations, 0, operations.size(), 1, context);
+    source.append(rendered.source());
+    complete &= rendered.complete();
 
     source.append("}");
     return new TranslationResult(source.toString(), complete);
   }
 
-  private static BranchTranslation translateConditionalBlock(
+  private static RenderResult renderRange(
+      List<IrOperationModel> operations,
+      int start,
+      int end,
+      int indent,
+      TranslationContext context) {
+    StringBuilder source = new StringBuilder();
+    boolean complete = true;
+    Map<String, Integer> labels = findLabels(operations, start, end);
+
+    for (int i = start; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+
+      if ("LABEL".equals(operation.kind()))
+        continue;
+
+      if ("CONDITIONAL_BRANCH".equals(operation.kind())
+          && operation.operands().size() >= 2) {
+        ConditionalRender branch = renderConditional(
+            operations, i, end, indent, context, labels);
+
+        if (branch != null) {
+          source.append(branch.source());
+          complete &= branch.complete();
+          i = branch.lastIndex();
+          continue;
+        }
+      }
+
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        String target = operation.operands().get(0);
+        Integer targetIndex = labels.get(target);
+
+        if (targetIndex != null && targetIndex == end)
+          continue;
+
+        source.append(indent(indent))
+            .append("// TODO: JUMP ")
+            .append(operation.operands())
+            .append("\n");
+        complete = false;
+        continue;
+      }
+
+      String line = translateOperation(operation, context);
+      if (line == null) {
+        if (isExpressionOnly(operation))
+          continue;
+
+        source.append(indent(indent))
+            .append("// TODO: ")
+            .append(operation.kind())
+            .append(" ")
+            .append(operation.operands())
+            .append("\n");
+        complete = false;
+      } else if (!line.isBlank()) {
+        source.append(indent(indent)).append(line).append("\n");
+      }
+    }
+
+    return new RenderResult(source.toString(), complete);
+  }
+
+  private static ConditionalRender renderConditional(
       List<IrOperationModel> operations,
       int branchIndex,
-      IrOperationModel branch) {
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    IrOperationModel branch = operations.get(branchIndex);
     String condition = branch.operands().get(0);
     String target = branch.operands().get(1);
+    Integer targetIndex = labels.get(target);
 
-    int targetIndex = -1;
-    for (int i = branchIndex + 1; i < operations.size(); i++) {
-      IrOperationModel operation = operations.get(i);
-      if ("LABEL".equals(operation.kind())
-          && !operation.operands().isEmpty()
-          && target.equals(operation.operands().get(0))) {
-        targetIndex = i;
-        break;
-      }
-    }
-
-    if (targetIndex < 0)
+    if (targetIndex == null || targetIndex >= end)
       return null;
 
-    StringBuilder body = new StringBuilder();
-    String pendingConstruction = null;
+    if (targetIndex <= branchIndex) {
+      return renderBackwardLoop(
+          operations, branchIndex, targetIndex, end, indent, context, condition);
+    }
 
-    for (int i = branchIndex + 1; i < targetIndex; i++) {
-      IrOperationModel operation = operations.get(i);
+    int jumpIndex = findForwardJoinJump(operations, branchIndex + 1, targetIndex);
+    if (jumpIndex >= 0) {
+      IrOperationModel jump = operations.get(jumpIndex);
+      if (!jump.operands().isEmpty()) {
+        Integer endIndex = labels.get(jump.operands().get(0));
+        if (endIndex != null && endIndex > targetIndex && endIndex <= end) {
+          RenderResult thenBody = renderRange(
+              operations, branchIndex + 1, jumpIndex, indent + 1, context);
+          RenderResult elseBody = renderRange(
+              operations, targetIndex + 1, endIndex, indent + 1, context);
 
-      switch (operation.kind()) {
-        case "OBJECT_CREATE" -> {
-          if (!operation.operands().isEmpty())
-            pendingConstruction = operation.operands().get(0);
-        }
-        case "CONSTANT" -> {
-          // The constructor call carries the constant argument in the current IR.
-        }
-        case "DUP" -> {
-          // Stack duplication is already represented by the eventual constructor call.
-        }
-        case "METHOD_CALL" -> {
-          if (!operation.operands().isEmpty())
-            pendingConstruction = normalizeExpression(operation.operands().get(0));
-        }
-        case "THROW" -> {
-          String expression = pendingConstruction != null
-              ? pendingConstruction
-              : (operation.operands().isEmpty()
-                  ? null
-                  : normalizeExpression(operation.operands().get(0)));
+          StringBuilder source = new StringBuilder();
+          source.append(indent(indent))
+              .append("if (")
+              .append(normalizeCondition(condition))
+              .append(") {\n");
+          source.append(thenBody.source());
+          source.append(indent(indent)).append("} else {\n");
+          source.append(elseBody.source());
+          source.append(indent(indent)).append("}\n");
 
-          if (expression == null)
-            return null;
-
-          body.append("    throw ").append(expression).append(";\n");
-          pendingConstruction = null;
-        }
-        default -> {
-          return null;
+          return new ConditionalRender(
+              source.toString(),
+              thenBody.complete() && elseBody.complete(),
+              endIndex);
         }
       }
     }
 
-    if (body.isEmpty())
-      return null;
+    RenderResult body = renderRange(
+        operations, branchIndex + 1, targetIndex, indent + 1, context);
 
     StringBuilder source = new StringBuilder();
-    source.append("  if (").append(normalizeNegatedCondition(condition)).append(") {\n");
-    source.append(body);
-    source.append("  }\n");
-    return new BranchTranslation(source.toString(), targetIndex);
+    source.append(indent(indent))
+        .append("if (")
+        .append(negateCondition(condition))
+        .append(") {\n");
+    source.append(body.source());
+    source.append(indent(indent)).append("}\n");
+
+    return new ConditionalRender(source.toString(), body.complete(), targetIndex);
+  }
+
+  private static ConditionalRender renderBackwardLoop(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int targetIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      String condition) {
+    RenderResult body = renderRange(
+        operations, targetIndex + 1, branchIndex, indent + 1, context);
+
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent))
+        .append("do {\n");
+    source.append(body.source());
+    source.append(indent(indent))
+        .append("} while (")
+        .append(normalizeCondition(condition))
+        .append(");\n");
+
+    return new ConditionalRender(source.toString(), body.complete(), branchIndex);
+  }
+
+  private static int findForwardJoinJump(
+      List<IrOperationModel> operations,
+      int start,
+      int targetIndex) {
+    for (int i = start; i < targetIndex; i++) {
+      if ("JUMP".equals(operations.get(i).kind()))
+        return i;
+    }
+    return -1;
+  }
+
+  private static Map<String, Integer> findLabels(
+      List<IrOperationModel> operations,
+      int start,
+      int end) {
+    Map<String, Integer> labels = new HashMap<>();
+    for (int i = start; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("LABEL".equals(operation.kind()) && !operation.operands().isEmpty())
+        labels.put(operation.operands().get(0), i);
+    }
+    return labels;
   }
 
   private static String translateOperation(
@@ -129,11 +209,22 @@ public final class JavaTranslator {
       case "LOCAL_WRITE" -> translateLocalWrite(operands, context);
       case "FIELD_WRITE" -> translateFieldWrite(operands);
       case "METHOD_CALL" -> translateMethodCall(operands);
-      case "CONDITIONAL_BRANCH" -> null;
-      case "JUMP" -> null;
-      case "RETURN" -> operands.isEmpty() ? "return;" : "return " + normalizeExpression(operands.get(0)) + ";";
-      case "THROW" -> operands.isEmpty() ? null : "throw " + normalizeExpression(operands.get(0)) + ";";
+      case "CONDITIONAL_BRANCH", "JUMP", "SWITCH" -> null;
+      case "RETURN" -> operands.isEmpty()
+          ? "return;"
+          : "return " + normalizeExpression(operands.get(0)) + ";";
+      case "THROW" -> operands.isEmpty()
+          ? null
+          : "throw " + normalizeExpression(operands.get(0)) + ";";
       default -> null;
+    };
+  }
+
+  private static boolean isExpressionOnly(IrOperationModel operation) {
+    return switch (operation.kind()) {
+      case "CONSTANT", "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
+          "DUP", "SWAP", "ARITHMETIC", "TYPE_CONVERSION", "TYPE_CHECK", "DROP" -> true;
+      default -> false;
     };
   }
 
@@ -145,8 +236,11 @@ public final class JavaTranslator {
 
     String local = operands.get(0);
     String value = normalizeExpression(operands.get(1));
-    if (context.declareLocal(local))
-      return "Object " + local + " = " + value + ";";
+    if (context.declareLocal(local)) {
+      if ("null".equals(value))
+        return "Object " + local + " = null;";
+      return "var " + local + " = " + value + ";";
+    }
     return local + " = " + value + ";";
   }
 
@@ -165,17 +259,19 @@ public final class JavaTranslator {
     return normalizeExpression(operands.get(0)) + ";";
   }
 
-  private static String normalizeNegatedCondition(String condition) {
+  private static String normalizeCondition(String condition) {
     String trimmed = condition == null ? "" : condition.trim();
-    if (trimmed.endsWith(" != null")) {
+    return trimmed.isEmpty() ? "false" : trimmed;
+  }
+
+  private static String negateCondition(String condition) {
+    String trimmed = normalizeCondition(condition);
+    if (trimmed.endsWith(" != null"))
       return trimmed.substring(0, trimmed.length() - " != null".length()) + " == null";
-    }
-    if (trimmed.endsWith(" == null")) {
+    if (trimmed.endsWith(" == null"))
       return trimmed.substring(0, trimmed.length() - " == null".length()) + " != null";
-    }
-    if (trimmed.startsWith("!")) {
+    if (trimmed.startsWith("!"))
       return trimmed.substring(1).trim();
-    }
     return "!(" + trimmed + ")";
   }
 
@@ -184,31 +280,43 @@ public final class JavaTranslator {
       return null;
 
     String trimmed = expression.trim();
-    if (trimmed.startsWith("new ") && !trimmed.endsWith(")")) {
+
+    if (isQuoted(trimmed) || isJavaLiteral(trimmed))
+      return trimmed;
+
+    if (trimmed.startsWith("new ") && !trimmed.endsWith(")"))
       return trimmed + "()";
-    }
 
     if (trimmed.startsWith("new ") && trimmed.endsWith(")")) {
       int open = trimmed.indexOf('(');
       if (open > 0 && open < trimmed.length() - 1) {
         String type = trimmed.substring(4, open);
         String argument = trimmed.substring(open + 1, trimmed.length() - 1);
-        if (!argument.isBlank() && !isQuoted(argument))
-          return "new " + type + "(\"" + escapeJava(argument) + "\")";
+        if (!argument.isBlank() && !isQuoted(argument)) {
+          return "new " + type + "("" + escapeJava(argument) + "")";
+        }
       }
     }
 
     return trimmed;
   }
 
+  private static boolean isJavaLiteral(String value) {
+    if ("null".equals(value) || "true".equals(value) || "false".equals(value))
+      return true;
+
+    return value.matches("-?(?:0|[1-9]\\d*)(?:[lLfFdD])?")
+        || value.matches("-?(?:0|[1-9]\\d*)\\.\\d+(?:[fFdD])?");
+  }
+
   private static boolean isQuoted(String value) {
     return value.length() >= 2
-        && value.startsWith("\"")
-        && value.endsWith("\"");
+        && value.startsWith(""")
+        && value.endsWith(""");
   }
 
   private static String escapeJava(String value) {
-    return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    return value.replace("\\", "\\\\").replace(""", "\\"");
   }
 
   private static String simpleField(String field) {
@@ -216,5 +324,11 @@ public final class JavaTranslator {
     return separator >= 0 ? field.substring(separator + 1) : field;
   }
 
-  private record BranchTranslation(String source, int lastIndex) {}
+  private static String indent(int level) {
+    return "  ".repeat(Math.max(0, level));
+  }
+
+  private record ConditionalRender(String source, boolean complete, int lastIndex) {}
+
+  private record RenderResult(String source, boolean complete) {}
 }
