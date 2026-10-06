@@ -445,7 +445,7 @@ public final class JavaTranslator {
         || trimmed.matches("[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*\\s*\\([^)]*\\)")
         || trimmed.startsWith("new ")
         || (trimmed.startsWith("(") && trimmed.endsWith(")"))
-        || trimmed.matches(".*[+\\-*/%<>=!&|].*");
+        || trimmed.matches(".*\\s(?:\\+|-|\\*|/|%|<|>|==|!=|<=|>=|&&|\\|\\||\\?|:)\\s.*");
   }
 
   private static boolean isJavaLiteral(String value) {
