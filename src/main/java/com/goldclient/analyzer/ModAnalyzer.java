@@ -129,7 +129,12 @@ public final class ModAnalyzer {
 
     JsonElement suggests = r.get("suggests");
     if (suggests != null && suggests.isJsonObject()) {
-      suggests.getAsJsonObject().keySet().forEach(m::addDependency);
+      suggests.getAsJsonObject().keySet().forEach(m::addOptionalDependency);
+    }
+
+    JsonElement recommends = r.get("recommends");
+    if (recommends != null && recommends.isJsonObject()) {
+      recommends.getAsJsonObject().keySet().forEach(m::addOptionalDependency);
     }
 
     JsonElement x = r.get("mixins");
@@ -188,16 +193,21 @@ public final class ModAnalyzer {
   private void readToml(String t, ModMetadata m) {
     String section = "";
     String dependencySectionId = null;
+    String dependencyId = null;
+    boolean dependencyRequired = true;
 
     for (String raw : t.split("\\R")) {
       String l = stripTomlComment(raw).trim();
       if (l.isEmpty()) continue;
 
       if (l.startsWith("[[") && l.endsWith("]]")) {
+        addTomlDependency(m, dependencyId, dependencyRequired);
         section = l.substring(2, l.length() - 2).trim();
         dependencySectionId = section.startsWith("dependencies.")
             ? section.substring("dependencies.".length())
             : null;
+        dependencyId = null;
+        dependencyRequired = true;
         continue;
       }
 
@@ -212,15 +222,23 @@ public final class ModAnalyzer {
         else if ("version".equals(key)) m.setVersion(parsedValue);
       } else if (dependencySectionId != null) {
         if ("modId".equals(key)) {
-          dependencySectionId = parsedValue;
-          m.addDependency(parsedValue);
-        } else if ("versionRange".equals(key) && "minecraft".equals(dependencySectionId)) {
+          dependencyId = parsedValue;
+        } else if ("mandatory".equals(key)) {
+          dependencyRequired = Boolean.parseBoolean(parsedValue);
+        } else if ("versionRange".equals(key) && "minecraft".equals(dependencyId)) {
           m.setMinecraftVersion(parsedValue);
         }
       } else if ("modLoader".equals(key)) {
         m.setLoader("Forge");
       }
     }
+    addTomlDependency(m, dependencyId, dependencyRequired);
+  }
+
+  private static void addTomlDependency(
+      ModMetadata metadata, String dependencyId, boolean required) {
+    if (required) metadata.addDependency(dependencyId);
+    else metadata.addOptionalDependency(dependencyId);
   }
 
   private static String stripTomlComment(String line) {

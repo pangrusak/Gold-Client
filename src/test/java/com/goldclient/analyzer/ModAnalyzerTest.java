@@ -47,7 +47,8 @@ class ModAnalyzerTest {
     assertEquals("Fabric", analysis.metadata().getLoader());
     assertTrue(analysis.metadata().getDependencies().contains("minecraft"));
     assertTrue(analysis.metadata().getDependencies().contains("fabricloader"));
-    assertTrue(analysis.metadata().getDependencies().contains("cloth-config"));
+    assertFalse(analysis.metadata().getDependencies().contains("cloth-config"));
+    assertTrue(analysis.metadata().getOptionalDependencies().contains("cloth-config"));
     assertTrue(analysis.metadata().getMixins().contains("example.mixins.json"));
     assertEquals(List.of("example.ExampleMod"), analysis.metadata().getEntrypoints());
 
@@ -87,6 +88,13 @@ class ModAnalyzerTest {
         versionRange="[1.20.1,1.21)"
         ordering="NONE"
         side="BOTH"
+
+        [[dependencies.example]]
+        modId="optional-addon"
+        mandatory=false
+        versionRange="*"
+        ordering="NONE"
+        side="BOTH"
         """,
         "example/Example.class",
         forgeExampleClass()
@@ -101,6 +109,8 @@ class ModAnalyzerTest {
     assertTrue(analysis.metadata().getDependencies().contains("forge"));
     assertTrue(analysis.metadata().getDependencies().contains("minecraft"));
     assertFalse(analysis.metadata().getDependencies().contains("example"));
+    assertTrue(analysis.metadata().getOptionalDependencies().contains("optional-addon"));
+    assertFalse(analysis.metadata().getDependencies().contains("optional-addon"));
     assertTrue(analysis.platformRequirements().contains(PlatformRequirement.FORGE_MOD_METADATA));
     assertTrue(analysis.platformRequirements().contains(PlatformRequirement.FORGE_EVENT_BUS));
     assertTrue(analysis.platformRequirements().contains(PlatformRequirement.FORGE_PLATFORM_CONTEXT));

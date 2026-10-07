@@ -9,8 +9,10 @@ import com.goldclient.model.ClassModel;
 import com.goldclient.model.InstructionModel;
 import com.goldclient.model.MethodModel;
 import com.goldclient.model.TryCatchModel;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import org.objectweb.asm.Opcodes;
 
 public final class Main {
   public static void main(String[] args) {
@@ -81,44 +83,37 @@ public final class Main {
       }
       
       if (toJsDir != null) {
-        // ---------------------------------------------------------------
-        // Mod-loader entry detection (informational only).
-        // A Forge @Mod class or Fabric initializer is NOT a valid TeaVM
-        // entry point — they have no main(String[]) method.
-        // The caller MUST supply --main-class <class> explicitly.
-        // ---------------------------------------------------------------
+        String modEntrypoint = findModEntrypoint(a);
+        System.out.println("\n=== TeaVM Entry Selection ===");
+        System.out.println("Detected mod loader: " + a.metadata().getLoader());
+        if (modEntrypoint != null) {
+          System.out.println("Detected mod entrypoint: " + modEntrypoint
+              + " (not used as a TeaVM entrypoint)");
+        } else {
+          System.out.println("Detected mod entrypoint: (none)");
+        }
+
         if (mainClass == null) {
-          String detectedModClass = null;
-          String detectedLoader = null;
-          if (!a.metadata().getEntrypoints().isEmpty()) {
-            detectedModClass = a.metadata().getEntrypoints().get(0);
-            detectedLoader = "Fabric";
-          } else {
-            for (ClassModel clazz : a.classes()) {
-              if (clazz.annotations().contains("net.minecraftforge.fml.common.Mod") ||
-                  clazz.annotations().contains("net.neoforged.fml.common.Mod")) {
-                detectedModClass = clazz.name();
-                detectedLoader = "Forge";
-                break;
-              }
-            }
-          }
-          if (detectedModClass != null) {
-            System.out.println("[info] Detected " + detectedLoader
-                + " mod class: " + detectedModClass);
-            System.out.println("[info] This class does NOT have main(String[]) "
-                + "and cannot be used as a TeaVM entry point.");
-          }
           System.err.println("ERROR: No TeaVM entry class specified.");
           System.err.println("  Provide a class with public static void main(String[])");
           System.err.println("  via --main-class <ClassName>.");
           System.exit(2);
         }
+
+        ClassModel selectedClass = findClass(a, mainClass);
+        if (selectedClass != null && !hasTeaVmMain(selectedClass)) {
+          System.err.println("Translation failed: " + mainClass
+              + " does not declare public static void main(String[]).");
+          System.err.println("Mod-loader entrypoints are not automatically valid TeaVM entries.");
+          System.exit(2);
+        }
+
+        System.out.println("TeaVM entrypoint: " + mainClass + " (explicitly selected)");
         try {
           com.goldclient.translator.TeaVmTranslator.translate(
               Path.of(jar), Path.of(toJsDir), mainClass);
-        } catch (TranslationException te) {
-          System.err.println("Translation failed: " + te.getMessage());
+        } catch (TranslationException | IOException e) {
+          System.err.println("Translation failed: " + e.getMessage());
           System.exit(2);
         }
       }
@@ -142,11 +137,19 @@ public final class Main {
     System.out.println("\nClasses: " + a.totalClasses());
     System.out.println("Methods: " + a.totalMethods());
     System.out.println("Fields: " + a.totalFields());
-    printList("Dependencies", a.metadata().getDependencies());
+    printList("Required mod dependencies", a.metadata().getDependencies());
+    printList("Optional mod dependencies", a.metadata().getOptionalDependencies());
+    System.out.println("\nRuntime dependency resolution:");
+    System.out.println("  Not assessed: no target runtime classpath was supplied.");
+    System.out.println("  Declared dependencies and platform adapters are not treated as missing JARs.");
     printList("Minecraft APIs", a.minecraftApis());
     printList("Mixins", a.metadata().getMixins());
     printList("Entrypoints", a.metadata().getEntrypoints());
-    printList("Platform requirements", a.platformRequirements().stream()
+    printList("Loader packaging requirements", a.platformRequirements().stream()
+        .filter(requirement -> requirement == PlatformRequirement.FORGE_MOD_METADATA)
+        .map(Enum::name).toList());
+    printList("Platform adapter requirements", a.platformRequirements().stream()
+        .filter(requirement -> requirement != PlatformRequirement.FORGE_MOD_METADATA)
         .map(Enum::name).toList());
     if (!debug) {
       System.out.println("\nClasses:");
@@ -154,6 +157,34 @@ public final class Main {
         System.out.printf("  %s (%d methods, %d fields)%n",
             i.name(), i.methods().size(), i.fields().size());
     }
+  }
+
+  private static String findModEntrypoint(ModAnalysis analysis) {
+    if (!analysis.metadata().getEntrypoints().isEmpty()) {
+      return analysis.metadata().getEntrypoints().get(0);
+    }
+    return analysis.classes().stream()
+        .filter(clazz -> clazz.annotations().contains("net.minecraftforge.fml.common.Mod")
+            || clazz.annotations().contains("net.neoforged.fml.common.Mod"))
+        .map(ClassModel::name)
+        .findFirst()
+        .orElse(null);
+  }
+
+  private static ClassModel findClass(ModAnalysis analysis, String className) {
+    String normalized = className.replace('.', '/');
+    return analysis.classes().stream()
+        .filter(clazz -> clazz.name().replace('.', '/').equals(normalized))
+        .findFirst()
+        .orElse(null);
+  }
+
+  private static boolean hasTeaVmMain(ClassModel clazz) {
+    return clazz.methods().stream().anyMatch(method ->
+        method.name().equals("main")
+            && method.descriptor().equals("([Ljava/lang/String;)V")
+            && (method.access() & (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC))
+                == (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC));
   }
 
   private static void printBytecode(
