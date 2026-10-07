@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "Perplexity": {
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "C:\\Users\\sriha.ranimwk\\.perplexity-mcp\\start.mjs"
+      ],
+      "env": {}
+    }
+  }
+}

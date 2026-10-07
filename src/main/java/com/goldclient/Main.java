@@ -95,7 +95,7 @@ public final class Main {
             }
           }
         }
-        com.goldclient.translator.TeaVmTranslator.translate(Path.of(jar), Path.of(toJsDir), mainClass);
+        com.goldclient.translator.TeaVmTranslator.translate(Path.of(jar), Path.of(toJsDir));
       }
     } catch(Exception e) {
       System.err.println("Gold Client analysis failed: " + e.getMessage());
