@@ -89,7 +89,7 @@ class ModAnalyzerTest {
         side="BOTH"
         """,
         "example/Example.class",
-        exampleClass()
+        forgeExampleClass()
     );
 
     ModAnalysis analysis = new ModAnalyzer().analyze(jar);
@@ -101,6 +101,9 @@ class ModAnalyzerTest {
     assertTrue(analysis.metadata().getDependencies().contains("forge"));
     assertTrue(analysis.metadata().getDependencies().contains("minecraft"));
     assertFalse(analysis.metadata().getDependencies().contains("example"));
+    assertTrue(analysis.platformRequirements().contains(PlatformRequirement.FORGE_MOD_METADATA));
+    assertTrue(analysis.platformRequirements().contains(PlatformRequirement.FORGE_EVENT_BUS));
+    assertTrue(analysis.platformRequirements().contains(PlatformRequirement.FORGE_PLATFORM_CONTEXT));
   }
 
   private static void writeJar(Path path, String... entries) throws Exception {
@@ -117,6 +120,23 @@ class ModAnalyzerTest {
         jar.closeEntry();
       }
     }
+  }
+
+  private static String forgeExampleClass() {
+    ClassWriter writer = new ClassWriter(0);
+    writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "example/ForgeExample", null,
+        "java/lang/Object", null);
+    writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "BUS",
+        "Lnet/minecraftforge/common/MinecraftForge;", null, null).visitEnd();
+    writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "COMMON",
+        "Lcom/example/PlatformContextLoaderCommonForge;", null, null).visitEnd();
+    org.objectweb.asm.MethodVisitor method =
+        writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "run", "()V", null, null);
+    method.visitCode();
+    method.visitInsn(Opcodes.RETURN);
+    method.visitMaxs(0, 0);
+    method.visitEnd();
+    return java.util.Base64.getEncoder().encodeToString(writer.toByteArray());
   }
 
   private static String exampleClass() {
