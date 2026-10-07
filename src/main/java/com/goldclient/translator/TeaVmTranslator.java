@@ -8,160 +8,179 @@ import org.teavm.tooling.TeaVMToolException;
 import org.teavm.vm.TeaVMOptimizationLevel;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Enumeration;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import java.util.jar.JarFile;
-import java.util.jar.Manifest;
-import java.util.jar.Attributes;
 
+/**
+ * Translates a JAR file to JavaScript via TeaVM.
+ *
+ * <p>Usage:</p>
+ * <pre>
+ *   TeaVmTranslator.translate(jarPath, outputDir, teaVmEntryClass);
+ * </pre>
+ *
+ * <p>The {@code teaVmEntryClass} must be a class that contains a
+ * {@code public static void main(String[])} method.  It is the caller's
+ * responsibility to supply a valid TeaVM entry class.  This class does
+ * NOT automatically promote a Forge {@code @Mod} class or a Fabric
+ * initializer to a TeaVM entry — they do not have a {@code main} method
+ * and are therefore not valid TeaVM entry points.</p>
+ *
+ * <p>On severe TeaVM diagnostics this method throws a
+ * {@link TranslationException} so that the caller can propagate a
+ * non-zero exit code.</p>
+ */
 public class TeaVmTranslator {
 
-    // ---------------------------------------------------------------------
-    // Generic overload that works for any JAR (including test-mods).
-    // It attempts to read the JAR manifest's Main-Class attribute. If found,
-    // that class is used as the entry point; otherwise we fall back to a
-    // safe default (no main class) which still preserves all classes.
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
     /**
-     * Translate a JAR to JavaScript, automatically determining the main class
-     * from the JAR’s manifest if present. This makes the translator usable with
-     * arbitrary mods, including the ones placed in the <code>/test-mods</code>
-     * directory.
+     * Translate {@code jarPath} to JavaScript, placing output in
+     * {@code outputDir}.
      *
-     * @param jarPath   Path to the input JAR file.
-     * @param outputDir Directory where the translated files will be written.
+     * @param jarPath        path to the input JAR
+     * @param outputDir      directory where {@code eagler-mod.js} will be
+     *                       written (created if absent)
+     * @param teaVmEntryClass dotted class name that contains
+     *                       {@code public static void main(String[])};
+     *                       must not be null or blank
+     * @throws TranslationException if the entry class is missing/blank, if
+     *                              TeaVM reports severe problems, or if the
+     *                              output is absent/empty after generation
+     * @throws IOException          if the JAR cannot be read or output cannot
+     *                              be written
      */
-    public static void translate(Path jarPath, Path outputDir) {
-        String inferredMain = null;
-        try (java.util.jar.JarFile jarFile = new java.util.jar.JarFile(jarPath.toFile())) {
-            java.util.jar.Manifest manifest = jarFile.getManifest();
-            if (manifest != null) {
-                java.util.jar.Attributes attrs = manifest.getMainAttributes();
-                inferredMain = attrs.getValue(java.util.jar.Attributes.Name.MAIN_CLASS);
-            }
-        } catch (IOException e) {
-            System.err.println("Failed to read JAR manifest: " + e.getMessage());
+    public static void translate(Path jarPath, Path outputDir,
+                                 String teaVmEntryClass)
+            throws TranslationException, IOException {
+
+        // --- validate entry class (milestone requirement: fail explicitly) ---
+        if (teaVmEntryClass == null || teaVmEntryClass.isBlank()) {
+            throw new TranslationException(
+                    "No TeaVM entry class specified. "
+                    + "Provide a class with public static void main(String[]) "
+                    + "via --main-class <ClassName>. "
+                    + "A Forge @Mod class or Fabric initializer is NOT a valid "
+                    + "TeaVM entry point.");
         }
-        // Forward to the original method. If we couldn't infer a main class we
-        // simply pass {@code null} – the existing method will handle it.
-        translate(jarPath, outputDir, inferredMain);
-    }
-
-
-    public static void translate(
-            Path jarPath, Path outputDir, String mainClass) {
+        // normalise slashes that may come from class-file names
+        String entryClass = teaVmEntryClass.replace('/', '.');
 
         System.out.println("\n=== TeaVM Translation ===");
-        System.out.println("Translating: " + jarPath.getFileName());
+        System.out.println("Input : " + jarPath.toAbsolutePath());
+        System.out.println("Entry : " + entryClass);
+        System.out.println("Output: " + outputDir.toAbsolutePath());
 
-        TeaVMTool tool = new TeaVMTool();
-        tool.setTargetDirectory(outputDir.toFile());
-        tool.setTargetFileName("eagler-mod.js");
-        tool.setTargetType(TeaVMTargetType.JAVASCRIPT);
-        tool.setOptimizationLevel(TeaVMOptimizationLevel.SIMPLE);
-        tool.setDebugInformationGenerated(true);
-        tool.setObfuscated(false);
+        Files.createDirectories(outputDir);
 
-        Path outputFile = outputDir.resolve("eagler-mod.js");
+        // Stale-artifact prevention: delete any existing JS before starting
+        Path outputJs = outputDir.resolve("eagler-mod.js");
+        Files.deleteIfExists(outputJs);
 
-        try {
-            Files.createDirectories(outputDir);
+        URL[] urls = {jarPath.toUri().toURL()};
+        try (URLClassLoader classLoader =
+                     new URLClassLoader(urls, TeaVmTranslator.class.getClassLoader())) {
 
-            URL[] urls = {jarPath.toUri().toURL()};
+            TeaVMTool tool = new TeaVMTool();
+            tool.setTargetDirectory(outputDir.toFile());
+            tool.setTargetFileName("eagler-mod.js");
+            tool.setTargetType(TeaVMTargetType.JAVASCRIPT);
+            tool.setOptimizationLevel(TeaVMOptimizationLevel.SIMPLE);
+            tool.setDebugInformationGenerated(false);
+            tool.setObfuscated(false);
+            tool.setClassLoader(classLoader);
+            tool.setMainClass(entryClass);
 
-            try (URLClassLoader classLoader = new URLClassLoader(
-                    urls, TeaVmTranslator.class.getClassLoader())) {
-
-                tool.setClassLoader(classLoader);
-
-                if (mainClass != null && !mainClass.isEmpty()) {
-                    tool.setMainClass(mainClass);
-                    System.out.println("Main class: " + mainClass);
-                }
-
-                try (ZipFile zipFile = new ZipFile(jarPath.toFile())) {
-                    Enumeration<? extends ZipEntry> entries = zipFile.entries();
-                    int added = 0;
-                    while (entries.hasMoreElements()) {
-                        ZipEntry entry = entries.nextElement();
-                        String name = entry.getName();
-                        if (name.endsWith(".class") && !entry.isDirectory()) {
-                            String className = name.substring(0, name.length() - 6)
-                                    .replace('/', '.');
-                            try {
-                                tool.getClassesToPreserve().add(className);
-                                added++;
-                            } catch (Exception ignored) {
-                            }
-                        }
-                    }
-                    System.out.println("Added " + added + " class entry points");
-                }
-
+            // --- compile ---
+            System.out.println("[TeaVM] Compiling...");
+            try {
                 tool.generate();
-                // Copy non-class resources (e.g., images, JSON, assets, etc.) from the JAR to the output directory
-                try (java.util.zip.ZipFile resourceZip = new java.util.zip.ZipFile(jarPath.toFile())) {
-                    java.util.Enumeration<? extends java.util.zip.ZipEntry> resEntries = resourceZip.entries();
-                    long totalBytesCopied = 0L;
-                    while (resEntries.hasMoreElements()) {
-                        java.util.zip.ZipEntry resEntry = resEntries.nextElement();
-                        String resName = resEntry.getName();
-                        // Skip class files and directories
-                        if (resEntry.isDirectory() || resName.endsWith(".class")) {
-                            continue;
-                        }
-                        java.nio.file.Path outPath = outputDir.resolve(resName);
-                        java.nio.file.Files.createDirectories(outPath.getParent());
-                        try (java.io.InputStream is = resourceZip.getInputStream(resEntry)) {
-                            java.nio.file.Files.copy(is, outPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                            totalBytesCopied += resEntry.getSize();
-                        }
-                    }
-                    System.out.println("Copied non-class resources (" + totalBytesCopied + " bytes).");
-                } catch (java.io.IOException e) {
-                    System.err.println("Failed to copy resources: " + e.getMessage());
-                }
-
-                TeaVMProblemRenderer.describeProblems(
-                        tool.getDependencyInfo().getCallGraph(),
-                        tool.getProblemProvider(),
-                        new ConsoleTeaVMToolLog(true)
-                );
-
-                if (!tool.getProblemProvider()
-                        .getSevereProblems().isEmpty()) {
-                    System.err.println(
-                            "TeaVM compilation failed. "
-                            + "See diagnostics above."
-                    );
-                    return;
-                }
-
-                if (!Files.isRegularFile(outputFile)
-                        || Files.size(outputFile) == 0) {
-                    System.err.println(
-                            "Translation produced no JavaScript. "
-                            + "Not a successful build."
-                    );
-                    return;
-                }
-
-                System.out.println(
-                        "Generated JS: " + outputFile
-                        + " (" + Files.size(outputFile) + " bytes)"
-                );
+            } catch (TeaVMToolException e) {
+                throw new TranslationException("TeaVM tool error: " + e.getMessage(), e);
             }
 
-        } catch (TeaVMToolException | IOException e) {
-            System.err.println(
-                    "TeaVM compilation failed: " + e.getMessage()
-            );
-            e.printStackTrace();
+            // --- diagnostics ---
+            ConsoleTeaVMToolLog log = new ConsoleTeaVMToolLog(true);
+            TeaVMProblemRenderer.describeProblems(
+                    tool.getDependencyInfo().getCallGraph(),
+                    tool.getProblemProvider(),
+                    log);
+
+            int severeCount = tool.getProblemProvider().getSevereProblems().size();
+            if (severeCount > 0) {
+                throw new TranslationException(
+                        "TeaVM compilation finished with " + severeCount
+                        + " severe problem(s). See diagnostics above.");
+            }
+
+            // --- verify output ---
+            if (!Files.isRegularFile(outputJs) || Files.size(outputJs) == 0) {
+                throw new TranslationException(
+                        "Translation produced no JavaScript output "
+                        + "(file missing or empty). "
+                        + "This usually means the entry class could not be resolved.");
+            }
+
+            System.out.println("[TeaVM] Compilation succeeded.");
+            System.out.println("[TeaVM] JS output: " + outputJs
+                    + " (" + Files.size(outputJs) + " bytes)");
+
+            // --- copy non-class resources (assets, JSON, etc.) ---
+            copyResources(jarPath, outputDir, outputJs);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Resource copying
+    // -------------------------------------------------------------------------
+
+    private static void copyResources(Path jarPath, Path outputDir,
+                                      Path reservedJs) throws IOException {
+        Path normalRoot = outputDir.toRealPath();
+        long bytesCopied = 0L;
+        int filesCopied = 0;
+
+        try (ZipFile zip = new ZipFile(jarPath.toFile())) {
+            Enumeration<? extends ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                String name = entry.getName();
+
+                // skip class files and directory entries
+                if (entry.isDirectory() || name.endsWith(".class")) continue;
+
+                // --- path traversal guard ---
+                Path dest = outputDir.resolve(name).normalize();
+                if (!dest.startsWith(normalRoot)) {
+                    System.err.println("[resources] Rejected traversal entry: " + name);
+                    continue;
+                }
+
+                // do not overwrite the generated JS
+                if (dest.equals(reservedJs)) {
+                    System.err.println("[resources] Skipped entry that would overwrite output JS: " + name);
+                    continue;
+                }
+
+                Files.createDirectories(dest.getParent());
+                long written;
+                try (InputStream is = zip.getInputStream(entry)) {
+                    written = Files.copy(is, dest, StandardCopyOption.REPLACE_EXISTING);
+                }
+                bytesCopied += written;
+                filesCopied++;
+            }
+        }
+        System.out.println("[resources] Copied " + filesCopied
+                + " asset file(s) (" + bytesCopied + " bytes).");
     }
 }

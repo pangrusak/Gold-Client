@@ -15,9 +15,11 @@ if not exist "%JAVA_EXE%" (
 )
 
 if "%~1"=="" (
-    echo Usage: translate-mod.bat path\to\mod.jar
+    echo Usage: translate-mod.bat path\to\mod.jar [--to-js ^<output_dir^>] [--main-class ^<class^>]
     exit /b 1
 )
 
 echo [Gold Client] Translating to Javascript...
-"%JAVA_EXE%" -jar target\gold-client-0.1.0-SNAPSHOT.jar %* --to-js ./output
+"%JAVA_EXE%" -jar target\gold-client-0.1.0-SNAPSHOT.jar %*
+set EXITCODE=%ERRORLEVEL%
+exit /b %EXITCODE%

@@ -2,6 +2,7 @@ package com.goldclient;
 
 import com.goldclient.analyzer.*;
 import com.goldclient.translator.JavaTranslator;
+import com.goldclient.translator.TranslationException;
 import com.goldclient.translator.TranslationResult;
 import com.goldclient.model.BasicBlockModel;
 import com.goldclient.model.ClassModel;
@@ -13,7 +14,7 @@ import java.util.List;
 
 public final class Main {
   public static void main(String[] args) {
-    if (args.length < 1 || args.length > 7) {
+    if (args.length < 1 || args.length > 9) {
       printUsage();
       System.exit(2);
     }
@@ -80,25 +81,50 @@ public final class Main {
       }
       
       if (toJsDir != null) {
+        // ---------------------------------------------------------------
+        // Mod-loader entry detection (informational only).
+        // A Forge @Mod class or Fabric initializer is NOT a valid TeaVM
+        // entry point — they have no main(String[]) method.
+        // The caller MUST supply --main-class <class> explicitly.
+        // ---------------------------------------------------------------
         if (mainClass == null) {
+          String detectedModClass = null;
+          String detectedLoader = null;
           if (!a.metadata().getEntrypoints().isEmpty()) {
-            mainClass = a.metadata().getEntrypoints().get(0);
-            System.out.println("Auto-detected Fabric main class: " + mainClass);
+            detectedModClass = a.metadata().getEntrypoints().get(0);
+            detectedLoader = "Fabric";
           } else {
             for (ClassModel clazz : a.classes()) {
               if (clazz.annotations().contains("net.minecraftforge.fml.common.Mod") ||
                   clazz.annotations().contains("net.neoforged.fml.common.Mod")) {
-                mainClass = clazz.name();
-                System.out.println("Auto-detected Forge main class: " + mainClass);
+                detectedModClass = clazz.name();
+                detectedLoader = "Forge";
                 break;
               }
             }
           }
+          if (detectedModClass != null) {
+            System.out.println("[info] Detected " + detectedLoader
+                + " mod class: " + detectedModClass);
+            System.out.println("[info] This class does NOT have main(String[]) "
+                + "and cannot be used as a TeaVM entry point.");
+          }
+          System.err.println("ERROR: No TeaVM entry class specified.");
+          System.err.println("  Provide a class with public static void main(String[])");
+          System.err.println("  via --main-class <ClassName>.");
+          System.exit(2);
         }
-        com.goldclient.translator.TeaVmTranslator.translate(Path.of(jar), Path.of(toJsDir));
+        try {
+          com.goldclient.translator.TeaVmTranslator.translate(
+              Path.of(jar), Path.of(toJsDir), mainClass);
+        } catch (TranslationException te) {
+          System.err.println("Translation failed: " + te.getMessage());
+          System.exit(2);
+        }
       }
-    } catch(Exception e) {
+    } catch (Exception e) {
       System.err.println("Gold Client analysis failed: " + e.getMessage());
+      e.printStackTrace();
       System.exit(1);
     }
   }
