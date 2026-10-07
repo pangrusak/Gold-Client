@@ -120,6 +120,8 @@ public final class Main {
     printList("Minecraft APIs", a.minecraftApis());
     printList("Mixins", a.metadata().getMixins());
     printList("Entrypoints", a.metadata().getEntrypoints());
+    printList("Platform requirements", a.platformRequirements().stream()
+        .map(Enum::name).toList());
     if (!debug) {
       System.out.println("\nClasses:");
       for (ClassModel i : a.classes())
