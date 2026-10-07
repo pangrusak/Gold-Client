@@ -48,8 +48,36 @@ public final class ModAnalyzer {
         classes,
         classes.stream().mapToInt(c -> c.methods().size()).sum(),
         classes.stream().mapToInt(c -> c.fields().size()).sum(),
-        List.copyOf(apis)
+        List.copyOf(apis),
+        detectPlatformRequirements(metadata, classes)
     );
+  }
+
+  private static Set<PlatformRequirement> detectPlatformRequirements(
+      ModMetadata metadata, List<ClassModel> classes) {
+    Set<PlatformRequirement> requirements = EnumSet.noneOf(PlatformRequirement.class);
+    if ("Forge".equalsIgnoreCase(metadata.getLoader()))
+      requirements.add(PlatformRequirement.FORGE_MOD_METADATA);
+
+    for (ClassModel clazz : classes) {
+      for (String reference : clazz.referencedClasses()) {
+        if (reference.equals("net.minecraftforge.common.MinecraftForge")
+            || reference.equals("net.minecraftforge.eventbus.api.IEventBus")) {
+          requirements.add(PlatformRequirement.FORGE_EVENT_BUS);
+        }
+        if (reference.contains("PlatformContextLoaderCommonForge")
+            || reference.contains("PlatformContextLoaderClientOnlyForge")) {
+          requirements.add(PlatformRequirement.FORGE_PLATFORM_CONTEXT);
+        }
+        if (reference.contains("net.minecraftforge.client")) {
+          requirements.add(PlatformRequirement.FORGE_CLIENT_EVENT_BUS);
+        }
+        if (reference.contains("net.minecraftforge.fml.config")) {
+          requirements.add(PlatformRequirement.FORGE_CONFIG_DIRECTORY);
+        }
+      }
+    }
+    return requirements;
   }
 
   private void readMetadata(JarFile jar, ModMetadata m) throws IOException {
