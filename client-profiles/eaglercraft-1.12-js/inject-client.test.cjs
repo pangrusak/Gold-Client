@@ -41,13 +41,25 @@ test('keeps injected scripts outside the client script and launch options valid'
 
     const html = fs.readFileSync(output, 'utf8');
     const firstClose = html.indexOf('</script>');
-    const adapterScript = html.indexOf('<script src="eagler-jei-suffix-tree.js">');
+    const adapterScript = html.indexOf('<script src="eagler-jei-ingredient-elements.js">');
     const runtimeScript = html.indexOf('if(typeof window !== "undefined")');
     const adapterClose = html.indexOf('</script>', adapterScript);
     assert.ok(firstClose >= 0);
-    assert.ok(adapterScript > firstClose, 'adapter must not be nested in launch-options script');
+    assert.ok(adapterScript > firstClose, 'translated bundle must not be nested in launch-options script');
     assert.ok(runtimeScript > adapterClose, 'client runtime must remain a separate script');
-    assert.equal((html.match(/<script src="eagler-jei-suffix-tree\.js">/g) || []).length, 1);
+    assert.equal((html.match(/<script src="eagler-jei-ingredient-elements\.js">/g) || []).length, 1);
+    assert.match(html,
+        /goldClientJeiInitializeWithTooltips\(ids, displayNames, normalTooltipData, advancedTooltipData\)/);
+    assert.match(html, /goldClientJeiSetLocale\(window\.__goldClientJeiLocaleTag\)/);
+    assert.match(html, /settings\.\$language/);
+    assert.match(html, /goldClientJeiFilter\(query\)/);
+    assert.match(html, /goldClientJeiTooltip/);
+    assert.match(html, /__goldClientJeiStacksById/);
+    assert.match(html, /nmi_ItemStack_getTooltip/);
+    assert.match(html, /ju_ArrayList_size/);
+    assert.match(html, /normalTooltipData/);
+    assert.match(html, /advancedTooltipData/);
+    assert.match(html, /__goldClientJeiProgressUpdate/);
 
     const launchStart = html.indexOf('window.eaglercraftXOpts = {');
     const launchScriptStart = html.lastIndexOf('<script', launchStart);
@@ -63,6 +75,6 @@ test('keeps injected scripts outside the client script and launch options valid'
             hooks: {}
         });
     assert.equal(
-        fs.readFileSync(path.join(path.dirname(output), 'eagler-jei-suffix-tree.js'), 'utf8'),
+        fs.readFileSync(path.join(path.dirname(output), 'eagler-jei-ingredient-elements.js'), 'utf8'),
         '/* translated test bundle */');
 });

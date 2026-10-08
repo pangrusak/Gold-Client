@@ -47,13 +47,21 @@ if (scriptOffset < 0) {
 requireUnique(output, itemRegistryCall, 'Eaglercraft screen-change callback');
 
 const translatedScript =
-    '    <script src="eagler-jei-suffix-tree.js"></script>\n' +
+    '    <script src="eagler-jei-ingredient-elements.js"></script>\n' +
     '    <script>\n' +
     '        if (typeof window.main !== "function" || ' +
-        'typeof window.goldClientJeiSearch !== "function") {\n' +
-    '            throw new Error("Translated JEI suffix-tree exports are missing");\n' +
+        'typeof window.goldClientJeiSearch !== "function" || ' +
+        'typeof window.goldClientJeiInitialize !== "function" || ' +
+        'typeof window.goldClientJeiInitializeWithTooltips !== "function" || ' +
+        'typeof window.goldClientJeiTooltip !== "function") {\n' +
+    '            throw new Error("Translated JEI ingredient-element exports are missing");\n' +
     '        }\n' +
     '        window.main([], function(error) { if (error) throw error; });\n' +
+    '        window.__goldClientJeiProgressUpdate = function(title, steps, step, message, active) {\n' +
+    '            var status = document.getElementById("gold-jei-status");\n' +
+    '            if (status) status.textContent = (active ? String(title) + ": " + step + "/" + steps : "Completed " + String(title) + " (" + step + "/" + steps + ")");\n' +
+    '            window.__goldClientJeiProgress = {title:String(title), steps:steps, step:step, message:String(message), active:active};\n' +
+    '        };\n' +
     '        window.eaglercraftXOpts.hooks = {\n' +
     '            screenChanged: function(screenName) {\n' +
     '                window.__goldClientJeiScreenChangeCount = (window.__goldClientJeiScreenChangeCount || 0) + 1;\n' +
@@ -80,18 +88,22 @@ const translatedScript =
     '            try {\n' +
     '                var items = window.__goldClientCaptureItems();\n' +
     '                if (!items.length) throw new Error("Client item registry returned no entries");\n' +
-    '                window.goldClientJeiReset();\n' +
-    '                items.forEach(function(item, index) {\n' +
-    '                    window.goldClientJeiIndex(item.id + " " + item.displayName, index);\n' +
-    '                });\n' +
-    '                window.goldClientJeiTrim();\n' +
-    '                window.__goldClientJeiItems = items;\n' +
+    '                window.__goldClientJeiSourceItems = items;\n' +
+    '                window.__goldClientJeiFactoryCallCount = (window.__goldClientJeiFactoryCallCount || 0) + 1;\n' +
+    '                var ids = items.map(function(item) { return item.id; });\n' +
+    '                var displayNames = items.map(function(item) { return item.displayName; });\n' +
+    '                var normalTooltipData = items.map(function(item) { return item.normalTooltipData; });\n' +
+    '                var advancedTooltipData = items.map(function(item) { return item.advancedTooltipData; });\n' +
+    '                window.goldClientJeiSetLocale(window.__goldClientJeiLocaleTag);\n' +
+    '                var elements = JSON.parse(window.goldClientJeiInitializeWithTooltips(ids, displayNames, normalTooltipData, advancedTooltipData));\n' +
+    '                if (!Array.isArray(elements) || elements.length !== items.length) throw new Error("Original JEI factory returned an unexpected element count");\n' +
+    '                window.__goldClientJeiItems = elements;\n' +
     '                window.__goldClientJeiIndexReady = true;\n' +
-    '                document.getElementById("gold-jei-status").textContent = "Indexed " + items.length + " registered item types (default stack only).";\n' +
+    '                document.getElementById("gold-jei-status").textContent = "Original JEI factory created " + elements.length + " ingredient elements from " + items.length + " registered item types (default stack only).";\n' +
     '                document.getElementById("gold-jei-query").disabled = false;\n' +
     '                showJeiDiagnosticResults();\n' +
     '                if (location.protocol !== "file:") {\n' +
-    '                    fetch("/__gold-client-corpus", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({profile:"supplied-eaglercraft-1.12.2-js", category:"registered item types; one default metadata-0 stack per registry item", excluded:["creative variants","item stacks from inventory","ingredients","recipes"], items:items})}).catch(function(error) { console.warn("[JEI corpus export]", error); });\n' +
+    '                    fetch("/__gold-client-corpus", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({profile:"supplied-eaglercraft-1.12.2-js", localeTag:window.__goldClientJeiLocaleTag, category:"registered item types; one default metadata-0 stack per registry item", excluded:["creative variants","item stacks from inventory","ingredients","recipes"], items:items})}).catch(function(error) { console.warn("[JEI corpus export]", error); });\n' +
     '                }\n' +
     '            } catch (error) {\n' +
     '                window.__goldClientJeiIndexing = false;\n' +
@@ -104,9 +116,8 @@ const translatedScript =
     '        function showJeiDiagnosticResults() {\n' +
     '            if (!window.__goldClientJeiIndexReady) return;\n' +
     '            var query = document.getElementById("gold-jei-query").value;\n' +
-    '            window.__goldClientJeiSearchCallCount = (window.__goldClientJeiSearchCallCount || 0) + 1;\n' +
-    '            var indices = JSON.parse(window.goldClientJeiSearch(query));\n' +
-    '            var matches = indices.map(function(index) { return window.__goldClientJeiItems[index]; });\n' +
+    '            window.__goldClientJeiFilterCallCount = (window.__goldClientJeiFilterCallCount || 0) + 1;\n' +
+    '            var matches = JSON.parse(window.goldClientJeiFilter(query));\n' +
     '            var list = document.getElementById("gold-jei-results");\n' +
     '            list.textContent = "";\n' +
     '            matches.slice(0, 100).forEach(function(item) {\n' +
@@ -117,7 +128,7 @@ const translatedScript =
     '            document.getElementById("gold-jei-count").textContent = matches.length + " result(s)" + (matches.length > 100 ? " (first 100 shown)" : "");\n' +
     '        }\n' +
     '        function exportJeiDiagnosticCorpus() {\n' +
-    '            var data = JSON.stringify({profile:"supplied-eaglercraft-1.12.2-js", category:"registered item types; one default metadata-0 stack per registry item", excluded:["creative variants","item stacks from inventory","ingredients","recipes"], items:window.__goldClientJeiItems}, null, 2);\n' +
+    '            var data = JSON.stringify({profile:"supplied-eaglercraft-1.12.2-js", localeTag:window.__goldClientJeiLocaleTag, category:"registered item types; one default metadata-0 stack per registry item", excluded:["creative variants","item stacks from inventory","ingredients","recipes"], items:window.__goldClientJeiSourceItems}, null, 2);\n' +
     '            var link = document.createElement("a");\n' +
     '            link.href = URL.createObjectURL(new Blob([data], {type:"application/json"}));\n' +
     '            link.download = "jei-real-item-corpus.json";\n' +
@@ -131,7 +142,23 @@ output = output.replace(itemRegistryCall,
     'if (typeof window.__goldClientCaptureItems !== "function") {\n' +
     '                window.__goldClientCaptureItems = function() {\n' +
     '                    nmi_Item_$callClinit();\n' +
+    '                    var settings = nmc_Minecraft_getMinecraft().$gameSettings;\n' +
+    '                    var language = settings == null ? null : settings.$language;\n' +
+    '                    window.__goldClientJeiLocaleTag = language == null ? "en_us" : $rt_ustr(language);\n' +
     '                    var registry = nmi_Item_REGISTRY;\n' +
+    '                    window.__goldClientJeiStacksById = Object.create(null);\n' +
+    '                    window.__goldClientJeiGetTooltipData = function(id, advanced) {\n' +
+    '                        var stack = window.__goldClientJeiStacksById[id];\n' +
+    '                        if (!stack) throw new Error("No live client ItemStack for " + id);\n' +
+    '                        var minecraft = nmc_Minecraft_getMinecraft();\n' +
+    '                        var lines = nmi_ItemStack_getTooltip(stack, minecraft.$player, !!advanced);\n' +
+    '                        var encoded = "";\n' +
+    '                        for (var index = 0; index < ju_ArrayList_size(lines); index++) {\n' +
+    '                            var line = $rt_ustr(ju_ArrayList_get(lines, index));\n' +
+    '                            encoded += line.length + ":" + line;\n' +
+    '                        }\n' +
+    '                        return encoded;\n' +
+    '                    };\n' +
     '                    var iterator = nmur_RegistryNamespaced_iterator(registry);\n' +
     '                    var items = [];\n' +
     '                    while (iterator.$hasNext()) {\n' +
@@ -139,7 +166,9 @@ output = output.replace(itemRegistryCall,
     '                        var id = nmur_RegistryNamespaced_getNameForObject(registry, item);\n' +
     '                        if (id === null) continue;\n' +
     '                        var stack = nmi_ItemStack__init_10(item, 1);\n' +
-    '                        items.push({id: $rt_ustr(nmu_ResourceLocation_toString(id)), displayName: $rt_ustr(nmi_ItemStack_getDisplayName(stack))});\n' +
+    '                        var idText = $rt_ustr(nmu_ResourceLocation_toString(id));\n' +
+    '                        window.__goldClientJeiStacksById[idText] = stack;\n' +
+    '                        items.push({id: idText, displayName: $rt_ustr(nmi_ItemStack_getDisplayName(stack)), normalTooltipData: window.__goldClientJeiGetTooltipData(idText, false), advancedTooltipData: window.__goldClientJeiGetTooltipData(idText, true)});\n' +
     '                    }\n' +
     '                    items.sort(function(a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });\n' +
     '                    return items;\n' +
@@ -149,7 +178,7 @@ output = output.replace(itemRegistryCall,
 const absoluteOutput = path.resolve(outputPath);
 fs.mkdirSync(path.dirname(absoluteOutput), { recursive: true });
 fs.copyFileSync(translatedPath,
-    path.join(path.dirname(absoluteOutput), 'eagler-jei-suffix-tree.js'));
+    path.join(path.dirname(absoluteOutput), 'eagler-jei-ingredient-elements.js'));
 fs.writeFileSync(absoluteOutput, output, 'utf8');
 
 process.stdout.write(`Created isolated JEI JS-profile client: ${absoluteOutput}\n`);

@@ -4,8 +4,8 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $client = Join-Path $repo "unminified-clients\Eaglercraft_1.12_Offline_en_US.html"
 $mod = Join-Path $repo "test-mods\jei1.12.2.jar"
 $expectedHash = "DAD60317D8FDF891AD7841ABF838564EA7CBD317EC85D92F57DCB8F55602124B"
-$translated = Join-Path $repo "target\jei-suffix-tree\translated\eagler-mod.js"
-$output = Join-Path $repo "target\jei-suffix-tree\client\Eaglercraft_1.12_Offline_en_US.html"
+$translated = Join-Path $repo "target\jei-ingredient-elements\translated\eagler-mod.js"
+$output = Join-Path $repo "target\jei-ingredient-elements\client\Eaglercraft_1.12_Offline_en_US.html"
 $maven = Get-Command mvn.cmd -ErrorAction SilentlyContinue
 if (-not $maven) {
     $maven = Get-Command mvn -ErrorAction Stop
@@ -23,14 +23,30 @@ if ((Get-FileHash -LiteralPath $mod -Algorithm SHA256).Hash -ne $expectedHash) {
 
 Push-Location $repo
 try {
+    & (Join-Path $PSScriptRoot "prepare-forge-runtime.ps1")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Matching Forge/Minecraft JVM runtime preparation failed ($LASTEXITCODE)."
+    }
+
     & node --test (Join-Path $PSScriptRoot "inject-client.test.cjs")
     if ($LASTEXITCODE -ne 0) {
         throw "Client injection regression test failed ($LASTEXITCODE)."
     }
 
-    & $maven.Source -q -Dtest=JeiSuffixTreeMilestoneTest test
-    if ($LASTEXITCODE -ne 0) {
-        throw "Original JEI suffix-tree JVM/TeaVM comparison failed ($LASTEXITCODE)."
+    $previousJavaHome = $env:JAVA_HOME
+    $previousPath = $env:PATH
+    $jdk17 = Join-Path $repo "target\forge-baseline\jdk-17.0.15+6"
+    $env:JAVA_HOME = $jdk17
+    $env:PATH = (Join-Path $jdk17 "bin") + ";" + $previousPath
+    try {
+        & $maven.Source -q "-Dtest=JeiSuffixTreeMilestoneTest,JeiIngredientElementMilestoneTest" test
+        if ($LASTEXITCODE -ne 0) {
+            throw "Original JEI JVM/TeaVM comparison failed ($LASTEXITCODE)."
+        }
+    }
+    finally {
+        $env:JAVA_HOME = $previousJavaHome
+        $env:PATH = $previousPath
     }
 
     & node (Join-Path $PSScriptRoot "inject-client.cjs") `

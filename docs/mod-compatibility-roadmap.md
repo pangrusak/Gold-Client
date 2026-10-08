@@ -9,7 +9,7 @@ Inputs and generated outputs remain outside tracked repository contents.
 
 | Target/backend | Evidence | Status |
 | --- | --- | --- |
-| Supplied readable Eaglercraft 1.12.2 JavaScript client | The input HTML identifies Eaglercraft 1.12.2. Its generated JavaScript has client-specific item registry and screen-change hook symbols. | One JEI diagnostic search slice was exercised in the browser. This is not Forge support or general arbitrary-mod support. |
+| Supplied readable Eaglercraft 1.12.2 JavaScript client | The input HTML identifies Eaglercraft 1.12.2. Its generated JavaScript has client-specific item registry, tooltip, language, and screen-change hook symbols. | Original JEI ingredient creation, `IngredientFilter` indexing/querying, and suffix-tree searches run over 411 client-derived records. This is not Forge support or general arbitrary-mod support. |
 | Minified JavaScript clients | No matching build profile or runtime verification. | Unsupported; retained as a product requirement. |
 | Eaglercraft 26.2 WebAssembly | Existing assessment found WASM exports without Minecraft-facing methods. | Unsupported; retained as a product requirement. |
 | Forge 1.12.2 client | No Forge runtime/loader is present in the supplied Eaglercraft client. | Unsupported. |
@@ -29,10 +29,26 @@ init, and load-complete lifecycle calls to JEI startup proxies.
 
 - [x] Original JAR identity/hash checked by the targeted test.
 - [x] The following original class bytes are staged unchanged and checked
-  byte-for-byte: `GeneralizedSuffixTree`, nested `Pair`, `Node`, `Edge`,
-  `ISearchTree`, and `mezz.jei.util.Log`.
+  byte-for-byte: `IngredientListElementFactory`, `IngredientListElement`,
+  `IngredientListElementComparator`, `IngredientOrderTracker`,
+  `IngredientInformation`, `LegacyUtil`, `Log`, `GeneralizedSuffixTree`,
+  nested `Pair`, `Node`, `Edge`, and `ISearchTree`.
+- [x] Original `IngredientListElementFactory.createBaseList`,
+  `addToBaseList`, and original element/comparator behavior run against the
+  matching JVM runtime and translated TeaVM output.
 - [x] Original `GeneralizedSuffixTree.put`, `search`, and `trimToSize`
   execute through TeaVM output and are compared to original JVM execution.
+- [x] Original `IngredientFilter.addIngredients`, `modesChanged`,
+  `IngredientFilterBackgroundBuilder.run`, `setFilterText`, and
+  `getIngredientList` run against matching original-JVM results for 837
+  corpus-derived, prefixed, intersecting, case, Unicode, absent, and repeated
+  queries. A second initialization with a three-item subset verifies that a
+  rebuild replaces rather than leaks old filter results.
+- [x] Original JEI `ConfigValues` defaults are used unchanged: tooltip search
+  enabled; mod-name search requires its prefix; ore-dictionary, creative-tab,
+  color, and resource-ID search disabled. The matching JVM test executes the
+  unmodified Translator against the mapped runtime; TeaVM uses a locale
+  boundary fed by the actual client language setting.
 - [x] Search parity against 411 real client registry entries: 829 queries
   include each registry ID and display name, an absent query, repeated query,
   case and Unicode queries, and a post-trim insertion.
@@ -41,16 +57,21 @@ init, and load-complete lifecycle calls to JEI startup proxies.
   of a one-count, metadata-0 ItemStack.
 - [x] The browser diagnostic UI returns those translated search matches.
   This UI is not JEI's original UI.
+- [x] Browser execution creates 411 original JEI ingredient elements once;
+  the real compatibility progress bar reaches 411/411 and is popped.
+- [x] Profile `NonNullList` factory, clear, null-validation, and fixed-size
+  behavior are compared with the matching mapped Minecraft 1.12.2 class.
 - [x] Client hook installation, query input, and displayed results were
-  exercised in the browser; the client remained playable.
+  exercised through profile-edit, main-menu, and options screen transitions.
+  The translated factory/search hooks and diagnostic panel install counts
+  remain one, and the client returns to its main menu.
 
 ### Not demonstrated / unsupported
 
-- [ ] JEI `IngredientListElementFactory` and `IngredientListElement` creating
-  its original ingredient models from `IIngredientRegistry`.
-- [ ] JEI `IngredientFilter` end-to-end: original text parsing, prefixed
-  filters, intersections, blacklist/edit-mode behavior, cache invalidation,
-  hidden-state updates, and listeners.
+- [ ] Full `IngredientFilter` lifecycle: JEI screen listeners, persisted
+  blacklist/edit-mode behavior, mutable configuration, hidden-state updates,
+  and runtime add/remove mutations. The demo exercises the original filter
+  methods over a fixed registered-item corpus and supports full reinitialization.
 - [ ] Full item variants. The current bridge includes only the default
   metadata-0 stack per item type; it does not enumerate creative variants.
 - [ ] JEI ingredient types other than the current item-type records.
@@ -58,40 +79,51 @@ init, and load-complete lifecycle calls to JEI startup proxies.
   `RecipeRegistry`, and `InternalRecipeRegistryPlugin` behavior.
 - [ ] Recipe lookup by input/output focus, category/catalyst handling, recipe
   transfer, and third-party recipe plugins.
-- [ ] JEI lifecycle, Forge event bus, registries, mod discovery, capabilities,
-  access-transformer application, original UI, rendering, input, config,
-  bookmarks, resources, and all remaining JEI classes.
+- [ ] Deferred `IngredientFilterBackgroundBuilder` work: original indexing
+  completes synchronously for the current corpus, but the profile cannot
+  provide Forge client-tick delivery when its 10-second budget is exceeded.
+- [ ] JEI lifecycle, Forge event bus, full registries/mod discovery,
+  capabilities, access-transformer application, original UI, rendering,
+  input, bookmark/config persistence, resources, and remaining JEI classes.
 - [ ] Compatibility with arbitrary Forge mods or any client backend other than
   the exact readable Eaglercraft 1.12.2 JS profile.
 
-### Next JEI milestone selected: original ingredient filtering
+### Ingredient/filter compatibility boundaries
 
-Translate and exercise JEI's original ingredient model and filtering path,
-not a replacement filter:
+The original factory's reachable services are now exercised separately:
 
-1. Start from the exact 411 client-derived item records, retaining provenance
-   hashes and the explicit default-stack-only limitation.
-2. Resolve a bounded original-bytecode closure for
-   `IngredientListElementFactory.createBaseList`,
-   `IngredientListElement`, and `IngredientFilter`, plus their reachable JEI
-   helpers. Do not stage substitute JEI classes.
-3. Provide only the real client compatibility services that this closure
-   requires, including the narrow ingredient registry/helper and required
-   Minecraft collection/stack semantics. The services must use client data;
-   unresolved behavior must fail explicitly rather than becoming a no-op.
-4. Exercise original JEI filter queries, mode/prefix parsing, exclusions,
-   repeated changes, and cache invalidation against original JVM behavior and
-   translated output. Compare stable registry IDs and observable listener/
-   result changes, not only compile success.
-5. Retain the diagnostic UI only as a host for the translated original
-   `IngredientFilter`; do not implement query matching or recipe behavior in
-   the UI adapter.
+- The JVM oracle uses ForgeGradle's mapped Minecraft 1.12.2 output and the
+  mapped Forge 14.23.5.2816 artifact. `IngredientListElementFactory` pushes a
+  Forge progress bar, steps once per registry value, and pops only after all
+  steps; the original-JVM test confirms no bars remain afterward.
+- The browser profile's stateful `ProgressManager` reports each step through
+  the installed UI callback, rejects over-stepping/incomplete pops, and
+  finishes at 411/411.
+- `NonNullList.func_191196_a`, `func_191197_a`, `func_193580_a`, `set`, and
+  `clear` are implemented at the Minecraft API boundary. Tests compare
+  default reset, fixed-size mutation failures, null validation, and negative
+  size behavior with the exact mapped Minecraft class.
+- `IIngredientRenderer.getTooltip` receives actual normal/advanced tooltip
+  lines captured by the supplied client's `ItemStack.getTooltip` for registered
+  metadata-0 stacks. The original filter uses the configured normal-tooltip
+  flag and original `IngredientInformation` normalization.
+- Matching Guava 21.0 and Commons Lang 3.5 classes are included for the
+  reachable closure. `NonNullList` operations are compared with mapped
+  Minecraft 1.12.2; the stateful progress manager reports and closes original
+  JEI's progress bars.
+- The JS `Translator` boundary implements only locale-sensitive lowercase,
+  configured from the actual `GameSettings.language` client field. The original
+  JVM oracle uses the unmodified JEI `Translator`. A narrow Minecraft context
+  adapter prevents the desktop client static initializer from running; it
+  does not provide a player or general Minecraft APIs.
+- The client-derived helper supports actual namespace/mod IDs and tooltip
+  search. Ore dictionary, creative-tab data, color names, mod display names,
+  blacklist/config persistence, Forge events, and non-default search-mode
+  settings remain unavailable. Unsupported helper operations fail explicitly.
 
-**Stop condition:** stop this milestone if TeaVM's reachable original-code
-closure requires a broad Forge runtime, an unprovided JEI lifecycle service,
-or a Minecraft behavior that cannot be mapped to the actual supplied client.
-Report the exact first unresolved type/method and do not replace it with a
-sample implementation.
+The next JEI milestone should add ingredient variants and runtime registry
+mutation only after defining corresponding real client data and lifecycle
+services. Recipe APIs and the original JEI UI remain separate, larger paths.
 
 Recipes should be a later separate milestone, after original ingredient
 filter parity passes. Its initial path should use original JEI recipe registry

@@ -6,10 +6,10 @@ const http = require('node:http');
 const path = require('node:path');
 
 const repository = path.resolve(__dirname, '..', '..');
-const clientDirectory = path.join(repository, 'target', 'jei-suffix-tree', 'client');
+const clientDirectory = path.join(repository, 'target', 'jei-ingredient-elements', 'client');
 const corpusPath = path.join(repository, 'target', 'jei-suffix-tree', 'jei-real-item-corpus.json');
 const clientFile = path.join(clientDirectory, 'Eaglercraft_1.12_Offline_en_US.html');
-const bundleFile = path.join(clientDirectory, 'eagler-jei-suffix-tree.js');
+const bundleFile = path.join(clientDirectory, 'eagler-jei-ingredient-elements.js');
 const port = Number(process.env.GOLD_CLIENT_DEMO_PORT || 4173);
 const maximumCorpusBytes = 5 * 1024 * 1024;
 
@@ -80,7 +80,7 @@ const server = http.createServer((request, response) => {
     if (requestPath === '/' || requestPath === '/Eaglercraft_1.12_Offline_en_US.html') {
         file = clientFile;
         contentType = 'text/html; charset=utf-8';
-    } else if (requestPath === '/eagler-jei-suffix-tree.js') {
+    } else if (requestPath === '/eagler-jei-ingredient-elements.js') {
         file = bundleFile;
         contentType = 'text/javascript; charset=utf-8';
     } else {

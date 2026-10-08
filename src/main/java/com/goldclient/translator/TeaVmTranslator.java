@@ -14,6 +14,7 @@ import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Set;
 import java.util.Enumeration;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -62,6 +63,13 @@ public class TeaVmTranslator {
     public static void translate(Path jarPath, Path outputDir,
                                  String teaVmEntryClass)
             throws TranslationException, IOException {
+        translate(jarPath, outputDir, teaVmEntryClass, Set.of());
+    }
+
+    public static void translate(Path jarPath, Path outputDir,
+                                 String teaVmEntryClass,
+                                 Set<String> childFirstPackages)
+            throws TranslationException, IOException {
 
         // --- validate entry class (milestone requirement: fail explicitly) ---
         if (teaVmEntryClass == null || teaVmEntryClass.isBlank()) {
@@ -81,6 +89,12 @@ public class TeaVmTranslator {
         System.out.println("Output: " + outputDir.toAbsolutePath());
 
         Files.createDirectories(outputDir);
+        if (childFirstPackages == null
+                || childFirstPackages.stream().anyMatch(
+                        prefix -> prefix == null || prefix.isBlank())) {
+            throw new TranslationException(
+                    "Child-first package prefixes must be non-null and non-blank.");
+        }
 
         // Stale-artifact prevention: delete any existing JS before starting
         Path outputJs = outputDir.resolve("eagler-mod.js");
@@ -88,7 +102,8 @@ public class TeaVmTranslator {
 
         URL[] urls = {jarPath.toUri().toURL()};
         try (URLClassLoader classLoader =
-                     new URLClassLoader(urls, TeaVmTranslator.class.getClassLoader())) {
+                     new PackagePriorityClassLoader(
+                             urls, TeaVmTranslator.class.getClassLoader(), childFirstPackages)) {
 
             TeaVMTool tool = new TeaVMTool();
             tool.setTargetDirectory(outputDir.toFile());
@@ -136,6 +151,40 @@ public class TeaVmTranslator {
 
             // --- copy non-class resources (assets, JSON, etc.) ---
             copyResources(jarPath, outputDir, outputJs);
+        }
+    }
+
+    private static final class PackagePriorityClassLoader extends URLClassLoader {
+        private final Set<String> childFirstPackages;
+
+        private PackagePriorityClassLoader(
+                URL[] urls, ClassLoader parent, Set<String> childFirstPackages) {
+            super(urls, parent);
+            this.childFirstPackages = Set.copyOf(childFirstPackages);
+        }
+
+        @Override
+        protected Class<?> loadClass(String name, boolean resolve)
+                throws ClassNotFoundException {
+            if (childFirstPackages.stream().noneMatch(name::startsWith)) {
+                return super.loadClass(name, resolve);
+            }
+            synchronized (getClassLoadingLock(name)) {
+                Class<?> loaded = findLoadedClass(name);
+                boolean definedHere = false;
+                if (loaded == null) {
+                    try {
+                        loaded = findClass(name);
+                        definedHere = true;
+                    } catch (ClassNotFoundException ignored) {
+                        loaded = super.loadClass(name, false);
+                    }
+                }
+                if (resolve && definedHere) {
+                    resolveClass(loaded);
+                }
+                return loaded;
+            }
         }
     }
 
