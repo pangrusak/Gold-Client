@@ -171,6 +171,16 @@ class JeiIngredientElementMilestoneTest {
     Path generatedClasses = generatedRoot.resolve("generated-classes");
     Path stagedJar = generatedRoot.resolve("jei-original-ingredient-element-slice.jar");
     Path translatedDirectory = generatedRoot.resolve("translated");
+    new ForgeLanguageRemapTest().originalForgeLanguageCanBeRemappedToSrg();
+
+    if (Files.exists(generatedClasses)) {
+      try (var files = Files.walk(generatedClasses)) {
+        for (Path path : files.sorted(java.util.Comparator.reverseOrder()).toList()) {
+          Files.delete(path);
+        }
+      }
+    }
+
     Files.createDirectories(generatedClasses);
     compileCompatibility(repository, jeiJar, mcJar, forgeClasses, generatedClasses);
     assertNonNullListMatchesMinecraft(mcJar, forgeClasses, generatedClasses);
@@ -220,9 +230,21 @@ class JeiIngredientElementMilestoneTest {
     Path teavmJso = mavenJar("org/teavm/teavm-jso/0.11.0/teavm-jso-0.11.0.jar");
     Path guava = gradleJar("com.google.guava", "guava", "21.0");
     Path commonsLang = gradleJar("org.apache.commons", "commons-lang3", "3.5");
+    Path languageOverlay =
+        forgeClasses.resolveSibling("forge-language-srg.jar");
+
+    assertTrue(Files.isRegularFile(languageOverlay),
+        "The verified original Forge Language overlay is required");
+
     String classpath = String.join(System.getProperty("path.separator"),
-        jeiJar.toString(), mcJar.toString(), forgeClasses.toString(),
-        fastutil.toString(), teavmJso.toString(), guava.toString(), commonsLang.toString());
+        languageOverlay.toString(),
+        jeiJar.toString(),
+        mcJar.toString(),
+        forgeClasses.toString(),
+        fastutil.toString(),
+        teavmJso.toString(),
+        guava.toString(),
+        commonsLang.toString());
     List<String> arguments = new ArrayList<>(List.of(
         "--release", "17",
         "-encoding", "UTF-8",
@@ -243,7 +265,7 @@ class JeiIngredientElementMilestoneTest {
     return Path.of(System.getProperty("user.home"), ".m2", "repository", relativePath);
   }
 
-  private static void stageOriginalClasses(
+   private static void stageOriginalClasses(
       Path jeiJar,
       Path mcJar,
       Path forgeClasses,
@@ -251,48 +273,80 @@ class JeiIngredientElementMilestoneTest {
       Path commonsLangJar,
       Path generatedClasses,
       Path stagedJar) throws IOException {
+
+    String language = "net/minecraft/client/resources/Language.class";
+    String languageManager =
+        "net/minecraft/client/resources/LanguageManager.class";
+    String translator = "mezz/jei/util/Translator.class";
+
+    Path languageOverlay =
+        forgeClasses.resolveSibling("forge-language-srg.jar");
+
+    if (!Files.isRegularFile(languageOverlay)) {
+      throw new IOException(
+          "Verified Forge Language overlay is missing: " + languageOverlay);
+    }
+
+    if (Files.exists(generatedClasses.resolve(translator))) {
+      throw new IOException(
+          "Stale replacement Translator.class remains in generated classes");
+    }
+
     Set<String> replacements = new HashSet<>(Set.of(
         "net/minecraft/client/Minecraft.class",
+        language,
+        languageManager,
         "net/minecraft/util/NonNullList.class",
         "net/minecraft/util/text/TextFormatting.class",
         "net/minecraftforge/fml/common/ProgressManager.class",
         "net/minecraftforge/fml/common/ProgressManager$ProgressBar.class"));
+
     replacements.addAll(List.of(ORIGINAL_FORGE_CLASSES));
-    String translator = "mezz/jei/util/Translator.class";
+
     try (OutputStream output = Files.newOutputStream(stagedJar);
          JarOutputStream staged = new JarOutputStream(output);
          ZipFile jei = new ZipFile(jeiJar.toFile());
          ZipFile minecraft = new ZipFile(mcJar.toFile());
          ZipFile forge = new ZipFile(forgeClasses.toFile());
+         ZipFile overlay = new ZipFile(languageOverlay.toFile());
          ZipFile guava = new ZipFile(guavaJar.toFile());
          ZipFile commonsLang = new ZipFile(commonsLangJar.toFile())) {
+
       for (String name : ORIGINAL_JEI_CLASSES) {
-        if (!name.equals(translator)) {
-          copyEntry(jei, staged, name);
-        }
+        copyEntry(jei, staged, name);
       }
+
       for (ZipEntry entry : java.util.Collections.list(jei.entries())) {
         String name = entry.getName();
+
         if (!entry.isDirectory()
             && (name.startsWith("mezz/jei/api/ingredients/")
                 || name.equals("mezz/jei/api/recipe/IIngredientType.class")
-                || name.equals("mezz/jei/gui/ingredients/IIngredientListElement.class")
+                || name.equals(
+                    "mezz/jei/gui/ingredients/IIngredientListElement.class")
                 || name.equals("mezz/jei/startup/IModIdHelper.class"))) {
           copyEntry(jei, staged, name);
         }
       }
+
       for (ZipEntry entry : java.util.Collections.list(minecraft.entries())) {
         String name = entry.getName();
+
         if (!entry.isDirectory()
             && name.endsWith(".class")
             && !replacements.contains(name)
-            && !name.startsWith("net/minecraftforge/fml/common/ProgressManager$")) {
+            && !name.startsWith(
+                "net/minecraftforge/fml/common/ProgressManager$")) {
           copyEntry(minecraft, staged, name);
         }
       }
+
+      copyEntry(overlay, staged, language);
+
       for (String name : ORIGINAL_FORGE_CLASSES) {
         copyEntry(forge, staged, name);
       }
+
       for (ZipEntry entry : java.util.Collections.list(guava.entries())) {
         if (!entry.isDirectory()
             && entry.getName().endsWith(".class")
@@ -300,6 +354,7 @@ class JeiIngredientElementMilestoneTest {
           copyEntry(guava, staged, entry.getName());
         }
       }
+
       for (ZipEntry entry : java.util.Collections.list(commonsLang.entries())) {
         if (!entry.isDirectory()
             && entry.getName().endsWith(".class")
@@ -307,22 +362,38 @@ class JeiIngredientElementMilestoneTest {
           copyEntry(commonsLang, staged, entry.getName());
         }
       }
+
       try (var files = Files.walk(generatedClasses)) {
-        for (Path classFile : files.filter(path -> path.toString().endsWith(".class")).sorted().toList()) {
-          String name = generatedClasses.relativize(classFile).toString().replace('\\', '/');
+        for (Path classFile : files
+            .filter(path -> path.toString().endsWith(".class"))
+            .sorted()
+            .toList()) {
+
+          String name = generatedClasses.relativize(classFile)
+              .toString().replace('\\', '/');
+
+          if (name.equals(translator) || name.equals(language)) {
+            throw new IOException(
+                "Unexpected generated replacement for original class: " + name);
+          }
+
           putFile(staged, name, classFile);
         }
       }
     }
+
     try (ZipFile original = new ZipFile(jeiJar.toFile());
+         ZipFile overlay = new ZipFile(languageOverlay.toFile());
          ZipFile result = new ZipFile(stagedJar.toFile())) {
+
       for (String name : ORIGINAL_JEI_CLASSES) {
-        if (!name.equals(translator)) {
-          assertEntryBytesEqual(original, result, name);
-        }
+        assertEntryBytesEqual(original, result, name);
       }
-      assertTrue(result.getEntry(translator) != null,
-          "The JS profile must supply a locale adapter in place of JEI's Minecraft-bound helper");
+
+      assertEntryBytesEqual(overlay, result, language);
+
+      assertTrue(result.getEntry(languageManager) != null,
+          "The client language-manager boundary must be staged");
     }
   }
 
@@ -449,9 +520,46 @@ class JeiIngredientElementMilestoneTest {
     addJars(classpath, Path.of(System.getProperty("user.home"), ".gradle/caches/modules-2/files-2.1"));
     addJars(classpath, Path.of(System.getProperty("user.home"), ".m2/repository"));
     classpath.add(generatedClasses.toUri().toURL());
-
+        java.util.Locale previousDefault = java.util.Locale.getDefault();
     try (URLClassLoader loader = new URLClassLoader(
         classpath.toArray(URL[]::new), ClassLoader.getPlatformClassLoader())) {
+                Path languageOverlay =
+          forgeClasses.resolveSibling("forge-language-srg.jar");
+
+      java.util.Locale expectedLocale;
+
+      try (URLClassLoader languageLoader = new URLClassLoader(
+          new URL[] {languageOverlay.toUri().toURL()},
+          ClassLoader.getPlatformClassLoader())) {
+
+        Class<?> languageType = languageLoader.loadClass(
+            "net.minecraft.client.resources.Language");
+
+        String normalizedCode = corpus.localeTag().replace('-', '_');
+
+        Object selectedLanguage = languageType.getConstructor(
+            String.class, String.class, String.class, boolean.class)
+            .newInstance(normalizedCode, "", normalizedCode, false);
+
+        expectedLocale = (java.util.Locale) languageType
+            .getMethod("getJavaLocale")
+            .invoke(selectedLanguage);
+      }
+
+      java.util.Locale.setDefault(expectedLocale);
+
+      Class<?> translatorType = loader.loadClass("mezz.jei.util.Translator");
+      var getLocale = translatorType.getDeclaredMethod("getLocale");
+      getLocale.setAccessible(true);
+
+      assertEquals(expectedLocale, getLocale.invoke(null),
+          "Original JEI JVM helper must resolve the comparison locale");
+
+      assertEquals(
+          "IRON \u0130 I\u0307".toLowerCase(expectedLocale),
+          translatorType.getMethod("toLowercaseWithLocale", String.class)
+              .invoke(null, "IRON \u0130 I\u0307"),
+          "Original JEI locale-sensitive lowercase must match the selected locale");
       Class<?> entry = loader.loadClass("JeiIngredientEntry");
       entry.getMethod("main", String[].class).invoke(null, (Object) new String[0]);
       String[] ids = corpus.ids().toArray(String[]::new);
@@ -513,6 +621,8 @@ class JeiIngredientElementMilestoneTest {
           actualItems, actualResults, actualFilterResults,
           replacementItems, rebuiltFilterResults, rebuildQueries,
           actualNormalTooltip, actualAdvancedTooltip);
+    } finally {
+      java.util.Locale.setDefault(previousDefault);
     }
   }
 
