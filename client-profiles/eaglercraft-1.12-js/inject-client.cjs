@@ -34,8 +34,11 @@ if (!fs.existsSync(translatedPath)) {
 }
 
 requireUnique(source, expectedOptions, 'Eaglercraft launch options');
-const markerOffset = requireUnique(source, scriptMarker, 'client runtime script');
-const scriptOffset = source.lastIndexOf('<script', markerOffset);
+let output = source.replace(expectedOptions, expectedOptions.replace(
+    '            worldsDB: "worlds"',
+    '            worldsDB: "worlds",\n            hooks: {}'));
+const markerOffset = requireUnique(output, scriptMarker, 'client runtime script');
+const scriptOffset = output.lastIndexOf('<script', markerOffset);
 if (scriptOffset < 0) {
     throw new Error('Could not locate Eaglercraft runtime script element');
 }
@@ -61,9 +64,6 @@ const translatedScript =
     '        };\n' +
     '    </script>\n';
 
-let output = source.replace(expectedOptions, expectedOptions.replace(
-    '        };',
-    '            hooks: {},\n        };'));
 output = output.slice(0, scriptOffset) + translatedScript + output.slice(scriptOffset);
 
 const absoluteOutput = path.resolve(outputPath);
