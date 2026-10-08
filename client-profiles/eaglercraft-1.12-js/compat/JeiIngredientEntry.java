@@ -41,7 +41,7 @@ public final class JeiIngredientEntry {
   
   @JSExport
   public static void goldClientJeiSetLocale(String languageCode) {
-    Translator.setClientContext(languageCode);
+    Minecraft.setClientContext(languageCode);
   }
 
   @JSExport
