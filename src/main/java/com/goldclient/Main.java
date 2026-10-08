@@ -2,18 +2,21 @@ package com.goldclient;
 
 import com.goldclient.analyzer.*;
 import com.goldclient.translator.JavaTranslator;
+import com.goldclient.translator.TranslationException;
 import com.goldclient.translator.TranslationResult;
 import com.goldclient.model.BasicBlockModel;
 import com.goldclient.model.ClassModel;
 import com.goldclient.model.InstructionModel;
 import com.goldclient.model.MethodModel;
 import com.goldclient.model.TryCatchModel;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import org.objectweb.asm.Opcodes;
 
 public final class Main {
   public static void main(String[] args) {
-    if (args.length < 1 || args.length > 7) {
+    if (args.length < 1 || args.length > 9) {
       printUsage();
       System.exit(2);
     }
@@ -22,6 +25,8 @@ public final class Main {
     String classFilter = null;
     String methodFilter = null;
     boolean translate = false;
+    String toJsDir = null;
+    String mainClass = null;
 
     for (int i = 1; i < args.length; i++) {
       switch (args[i]) {
@@ -33,6 +38,20 @@ public final class Main {
           classFilter = args[i].replace('.', '/');
         }
         case "--translate" -> translate = true;
+        case "--to-js" -> {
+          if (++i >= args.length) {
+            printUsage();
+            System.exit(2);
+          }
+          toJsDir = args[i];
+        }
+        case "--main-class" -> {
+          if (++i >= args.length) {
+            printUsage();
+            System.exit(2);
+          }
+          mainClass = args[i];
+        }
         case "--method" -> {
           if (++i >= args.length) {
             printUsage();
@@ -62,14 +81,51 @@ public final class Main {
         }
         printTranslation(a.classes(), classFilter, methodFilter);
       }
-    } catch(Exception e) {
+      
+      if (toJsDir != null) {
+        String modEntrypoint = findModEntrypoint(a);
+        System.out.println("\n=== TeaVM Entry Selection ===");
+        System.out.println("Detected mod loader: " + a.metadata().getLoader());
+        if (modEntrypoint != null) {
+          System.out.println("Detected mod entrypoint: " + modEntrypoint
+              + " (not used as a TeaVM entrypoint)");
+        } else {
+          System.out.println("Detected mod entrypoint: (none)");
+        }
+
+        if (mainClass == null) {
+          System.err.println("ERROR: No TeaVM entry class specified.");
+          System.err.println("  Provide a class with public static void main(String[])");
+          System.err.println("  via --main-class <ClassName>.");
+          System.exit(2);
+        }
+
+        ClassModel selectedClass = findClass(a, mainClass);
+        if (selectedClass != null && !hasTeaVmMain(selectedClass)) {
+          System.err.println("Translation failed: " + mainClass
+              + " does not declare public static void main(String[]).");
+          System.err.println("Mod-loader entrypoints are not automatically valid TeaVM entries.");
+          System.exit(2);
+        }
+
+        System.out.println("TeaVM entrypoint: " + mainClass + " (explicitly selected)");
+        try {
+          com.goldclient.translator.TeaVmTranslator.translate(
+              Path.of(jar), Path.of(toJsDir), mainClass);
+        } catch (TranslationException | IOException e) {
+          System.err.println("Translation failed: " + e.getMessage());
+          System.exit(2);
+        }
+      }
+    } catch (Exception e) {
       System.err.println("Gold Client analysis failed: " + e.getMessage());
+      e.printStackTrace();
       System.exit(1);
     }
   }
 
   private static void printUsage() {
-    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate] [--class <class>] [--method <method>]");
+    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate] [--class <class>] [--method <method>] [--to-js <output_dir>] [--main-class <class>]");
   }
 
   private static void printAnalysis(ModAnalysis a, boolean debug) {
@@ -81,16 +137,54 @@ public final class Main {
     System.out.println("\nClasses: " + a.totalClasses());
     System.out.println("Methods: " + a.totalMethods());
     System.out.println("Fields: " + a.totalFields());
-    printList("Dependencies", a.metadata().getDependencies());
+    printList("Required mod dependencies", a.metadata().getDependencies());
+    printList("Optional mod dependencies", a.metadata().getOptionalDependencies());
+    System.out.println("\nRuntime dependency resolution:");
+    System.out.println("  Not assessed: no target runtime classpath was supplied.");
+    System.out.println("  Declared dependencies and platform adapters are not treated as missing JARs.");
     printList("Minecraft APIs", a.minecraftApis());
     printList("Mixins", a.metadata().getMixins());
     printList("Entrypoints", a.metadata().getEntrypoints());
+    printList("Loader packaging requirements", a.platformRequirements().stream()
+        .filter(requirement -> requirement == PlatformRequirement.FORGE_MOD_METADATA)
+        .map(Enum::name).toList());
+    printList("Platform adapter requirements", a.platformRequirements().stream()
+        .filter(requirement -> requirement != PlatformRequirement.FORGE_MOD_METADATA)
+        .map(Enum::name).toList());
     if (!debug) {
       System.out.println("\nClasses:");
       for (ClassModel i : a.classes())
         System.out.printf("  %s (%d methods, %d fields)%n",
             i.name(), i.methods().size(), i.fields().size());
     }
+  }
+
+  private static String findModEntrypoint(ModAnalysis analysis) {
+    if (!analysis.metadata().getEntrypoints().isEmpty()) {
+      return analysis.metadata().getEntrypoints().get(0);
+    }
+    return analysis.classes().stream()
+        .filter(clazz -> clazz.annotations().contains("net.minecraftforge.fml.common.Mod")
+            || clazz.annotations().contains("net.neoforged.fml.common.Mod"))
+        .map(ClassModel::name)
+        .findFirst()
+        .orElse(null);
+  }
+
+  private static ClassModel findClass(ModAnalysis analysis, String className) {
+    String normalized = className.replace('.', '/');
+    return analysis.classes().stream()
+        .filter(clazz -> clazz.name().replace('.', '/').equals(normalized))
+        .findFirst()
+        .orElse(null);
+  }
+
+  private static boolean hasTeaVmMain(ClassModel clazz) {
+    return clazz.methods().stream().anyMatch(method ->
+        method.name().equals("main")
+            && method.descriptor().equals("([Ljava/lang/String;)V")
+            && (method.access() & (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC))
+                == (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC));
   }
 
   private static void printBytecode(

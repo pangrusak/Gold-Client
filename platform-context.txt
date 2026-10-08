@@ -1,0 +1,309 @@
+﻿Compiled from "PlatformContextForge.java"
+public class xaero.common.PlatformContextForge extends xaero.common.PlatformContext {
+  private xaero.common.PlatformContextLoaderClientOnlyForge loaderClientOnly;
+
+  private xaero.common.PlatformContextLoaderCommonForge loaderCommon;
+
+  private final xaero.common.HudMod modMain;
+
+  private net.minecraftforge.fml.common.ModMetadata modInfo;
+
+  private java.nio.file.Path modFile;
+
+  private boolean dedicatedServer;
+
+  private java.nio.file.Path configFolder;
+
+  private java.nio.file.Path defaultConfigsFolder;
+
+  public xaero.common.PlatformContextForge(xaero.common.HudMod);
+    Code:
+         0: aload_0
+         1: invokespecial #24                 // Method xaero/common/PlatformContext."<init>":()V
+         4: aload_0
+         5: aload_1
+         6: putfield      #26                 // Field modMain:Lxaero/common/HudMod;
+         9: return
+
+  private void registerEvents(net.minecraftforge.fml.relauncher.Side);
+    Code:
+         0: getstatic     #36                 // Field net/minecraftforge/common/MinecraftForge.EVENT_BUS:Lnet/minecraftforge/fml/common/eventhandler/EventBus;
+         3: aload_0
+         4: invokevirtual #42                 // Method net/minecraftforge/fml/common/eventhandler/EventBus.register:(Ljava/lang/Object;)V
+         7: getstatic     #36                 // Field net/minecraftforge/common/MinecraftForge.EVENT_BUS:Lnet/minecraftforge/fml/common/eventhandler/EventBus;
+        10: aload_0
+        11: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+        14: invokevirtual #48                 // Method xaero/common/HudMod.getCommonEvents:()Lxaero/common/events/CommonEvents;
+        17: invokevirtual #42                 // Method net/minecraftforge/fml/common/eventhandler/EventBus.register:(Ljava/lang/Object;)V
+        20: getstatic     #36                 // Field net/minecraftforge/common/MinecraftForge.EVENT_BUS:Lnet/minecraftforge/fml/common/eventhandler/EventBus;
+        23: aload_0
+        24: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+        27: invokevirtual #52                 // Method xaero/common/HudMod.getModCommonEvents:()Lxaero/common/events/ModCommonEvents;
+        30: invokevirtual #42                 // Method net/minecraftforge/fml/common/eventhandler/EventBus.register:(Ljava/lang/Object;)V
+        33: aload_0
+        34: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+        37: invokevirtual #56                 // Method xaero/common/HudMod.getSupportServerMods:()Lxaero/common/server/mods/SupportServerMods;
+        40: invokevirtual #60                 // Method xaero/common/server/mods/SupportServerMods.registerEvents:()V
+        43: aload_1
+        44: getstatic     #66                 // Field net/minecraftforge/fml/relauncher/Side.CLIENT:Lnet/minecraftforge/fml/relauncher/Side;
+        47: if_acmpne     64
+        50: aload_0
+        51: invokespecial #69                 // Method registerClientEvents:()V
+        54: aload_0
+        55: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+        58: invokevirtual #73                 // Method xaero/common/HudMod.getSupportMods:()Lxaero/common/mods/SupportMods;
+        61: invokevirtual #76                 // Method xaero/common/mods/SupportMods.registerClientEvents:()V
+        64: return
+
+  private void registerClientEvents();
+    Code:
+         0: getstatic     #36                 // Field net/minecraftforge/common/MinecraftForge.EVENT_BUS:Lnet/minecraftforge/fml/common/eventhandler/EventBus;
+         3: aload_0
+         4: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+         7: invokevirtual #81                 // Method xaero/common/HudMod.getModClientEvents:()Lxaero/common/events/ModClientEvents;
+        10: invokevirtual #42                 // Method net/minecraftforge/fml/common/eventhandler/EventBus.register:(Ljava/lang/Object;)V
+        13: getstatic     #36                 // Field net/minecraftforge/common/MinecraftForge.EVENT_BUS:Lnet/minecraftforge/fml/common/eventhandler/EventBus;
+        16: aload_0
+        17: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+        20: invokevirtual #85                 // Method xaero/common/HudMod.getEvents:()Lxaero/common/events/ClientEvents;
+        23: invokevirtual #42                 // Method net/minecraftforge/fml/common/eventhandler/EventBus.register:(Ljava/lang/Object;)V
+        26: return
+
+  public void loadPreCommonForge(net.minecraftforge.fml.common.event.FMLPreInitializationEvent, java.lang.Class<? extends xaero.common.HudMod>, boolean);
+    Code:
+         0: aload_0
+         1: aload_1
+         2: invokevirtual #93                 // Method net/minecraftforge/fml/common/event/FMLPreInitializationEvent.getModMetadata:()Lnet/minecraftforge/fml/common/ModMetadata;
+         5: putfield      #95                 // Field modInfo:Lnet/minecraftforge/fml/common/ModMetadata;
+         8: aload_0
+         9: aload_1
+        10: invokevirtual #99                 // Method net/minecraftforge/fml/common/event/FMLPreInitializationEvent.getSourceFile:()Ljava/io/File;
+        13: invokevirtual #105                // Method java/io/File.toPath:()Ljava/nio/file/Path;
+        16: putfield      #107                // Field modFile:Ljava/nio/file/Path;
+        19: aload_0
+        20: aload_1
+        21: invokevirtual #111                // Method net/minecraftforge/fml/common/event/FMLPreInitializationEvent.getSide:()Lnet/minecraftforge/fml/relauncher/Side;
+        24: getstatic     #114                // Field net/minecraftforge/fml/relauncher/Side.SERVER:Lnet/minecraftforge/fml/relauncher/Side;
+        27: if_acmpne     34
+        30: iconst_1
+        31: goto          35
+        34: iconst_0
+        35: putfield      #118                // Field dedicatedServer:Z
+        38: aload_0
+        39: aload_1
+        40: invokevirtual #121                // Method net/minecraftforge/fml/common/event/FMLPreInitializationEvent.getModConfigurationDirectory:()Ljava/io/File;
+        43: invokevirtual #105                // Method java/io/File.toPath:()Ljava/nio/file/Path;
+        46: putfield      #123                // Field configFolder:Ljava/nio/file/Path;
+        49: aload_0
+        50: aload_0
+        51: getfield      #123                // Field configFolder:Ljava/nio/file/Path;
+        54: ldc           #125                // String defaultconfigs
+        56: invokeinterface #131,  2          // InterfaceMethod java/nio/file/Path.resolveSibling:(Ljava/lang/String;)Ljava/nio/file/Path;
+        61: putfield      #133                // Field defaultConfigsFolder:Ljava/nio/file/Path;
+        64: aload_0
+        65: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+        68: aload_0
+        69: aload_2
+        70: iload_3
+        71: invokevirtual #137                // Method xaero/common/HudMod.loadPreCommon:(Lxaero/common/PlatformContext;Ljava/lang/Class;Z)V
+        74: aload_0
+        75: aload_1
+        76: invokevirtual #111                // Method net/minecraftforge/fml/common/event/FMLPreInitializationEvent.getSide:()Lnet/minecraftforge/fml/relauncher/Side;
+        79: invokespecial #139                // Method registerEvents:(Lnet/minecraftforge/fml/relauncher/Side;)V
+        82: return
+
+  public void loadCommonForge(net.minecraftforge.fml.common.event.FMLInitializationEvent);
+    Code:
+         0: aload_0
+         1: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+         4: invokevirtual #150                // Method xaero/common/HudMod.loadCommon:()V
+         7: return
+
+  public void loadLaterCommonForge(net.minecraftforge.fml.common.event.FMLPostInitializationEvent);
+    Code:
+         0: return
+
+  public void loadPreClientForge(net.minecraftforge.fml.common.event.FMLPreInitializationEvent);
+    Code:
+         0: return
+
+  public void loadClientForge(net.minecraftforge.fml.common.event.FMLInitializationEvent);
+    Code:
+         0: aload_0
+         1: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+         4: invokevirtual #162                // Method xaero/common/HudMod.loadClient:()V
+         7: goto          20
+        10: astore_2
+        11: new           #164                // class java/lang/RuntimeException
+        14: dup
+        15: aload_2
+        16: invokespecial #167                // Method java/lang/RuntimeException."<init>":(Ljava/lang/Throwable;)V
+        19: athrow
+        20: return
+      Exception table:
+         from    to  target type
+             0     7    10   Class java/io/IOException
+
+  public void loadLaterClientForge(net.minecraftforge.fml.common.event.FMLPostInitializationEvent);
+    Code:
+         0: aload_0
+         1: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+         4: invokevirtual #173                // Method xaero/common/HudMod.loadLater:()V
+         7: return
+
+  public void loadPreServerForge(net.minecraftforge.fml.common.event.FMLPreInitializationEvent);
+    Code:
+         0: return
+
+  public void loadServerForge(net.minecraftforge.fml.common.event.FMLInitializationEvent);
+    Code:
+         0: aload_0
+         1: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+         4: invokevirtual #178                // Method xaero/common/HudMod.loadServer:()V
+         7: return
+
+  public void loadLaterServerForge(net.minecraftforge.fml.common.event.FMLPostInitializationEvent);
+    Code:
+         0: aload_0
+         1: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+         4: invokevirtual #182                // Method xaero/common/HudMod.loadLaterServer:()V
+         7: return
+
+  public void onServerStarting(net.minecraftforge.fml.common.event.FMLServerStartingEvent);
+    Code:
+         0: aload_0
+         1: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+         4: invokevirtual #48                 // Method xaero/common/HudMod.getCommonEvents:()Lxaero/common/events/CommonEvents;
+         7: aload_1
+         8: invokevirtual #188                // Method xaero/common/events/CommonEvents.onServerStarting:(Lnet/minecraftforge/fml/common/event/FMLServerStartingEvent;)V
+        11: return
+
+  public void onServerStopped(net.minecraftforge.fml.common.event.FMLServerStoppedEvent);
+    Code:
+         0: aload_0
+         1: getfield      #26                 // Field modMain:Lxaero/common/HudMod;
+         4: invokevirtual #48                 // Method xaero/common/HudMod.getCommonEvents:()Lxaero/common/events/CommonEvents;
+         7: aload_1
+         8: invokevirtual #193                // Method xaero/common/events/CommonEvents.onServerStopped:(Lnet/minecraftforge/fml/common/event/FMLServerStoppedEvent;)V
+        11: return
+
+  public xaero.common.events.ClientEvents createClientEvents(xaero.common.HudMod);
+    Code:
+         0: aload_1
+         1: invokevirtual #198                // Method xaero/common/HudMod.createClientEvents:()Lxaero/common/events/ClientEvents;
+         4: areturn
+
+  public xaero.common.events.CommonEvents createCommonEvents(xaero.common.HudMod);
+    Code:
+         0: new           #186                // class xaero/common/events/CommonEvents
+         3: dup
+         4: aload_1
+         5: invokespecial #202                // Method xaero/common/events/CommonEvents."<init>":(Lxaero/common/HudMod;)V
+         8: areturn
+
+  public xaero.common.PlatformContextLoaderClientOnlyForge getLoaderClientOnly();
+    Code:
+         0: aload_0
+         1: getfield      #206                // Field loaderClientOnly:Lxaero/common/PlatformContextLoaderClientOnlyForge;
+         4: ifnonnull     18
+         7: aload_0
+         8: new           #208                // class xaero/common/PlatformContextLoaderClientOnlyForge
+        11: dup
+        12: invokespecial #209                // Method xaero/common/PlatformContextLoaderClientOnlyForge."<init>":()V
+        15: putfield      #206                // Field loaderClientOnly:Lxaero/common/PlatformContextLoaderClientOnlyForge;
+        18: aload_0
+        19: getfield      #206                // Field loaderClientOnly:Lxaero/common/PlatformContextLoaderClientOnlyForge;
+        22: areturn
+
+  public xaero.common.PlatformContextLoaderCommonForge getLoaderCommon();
+    Code:
+         0: aload_0
+         1: getfield      #213                // Field loaderCommon:Lxaero/common/PlatformContextLoaderCommonForge;
+         4: ifnonnull     18
+         7: aload_0
+         8: new           #215                // class xaero/common/PlatformContextLoaderCommonForge
+        11: dup
+        12: invokespecial #216                // Method xaero/common/PlatformContextLoaderCommonForge."<init>":()V
+        15: putfield      #213                // Field loaderCommon:Lxaero/common/PlatformContextLoaderCommonForge;
+        18: aload_0
+        19: getfield      #213                // Field loaderCommon:Lxaero/common/PlatformContextLoaderCommonForge;
+        22: areturn
+
+  public xaero.common.events.ModClientEvents createModClientEvents(xaero.common.IXaeroMinimap);
+    Code:
+         0: new           #220                // class xaero/common/events/ModClientEvents
+         3: dup
+         4: aload_1
+         5: invokespecial #223                // Method xaero/common/events/ModClientEvents."<init>":(Lxaero/common/IXaeroMinimap;)V
+         8: areturn
+
+  public xaero.common.mods.SupportMods createSupportMods(xaero.common.IXaeroMinimap);
+    Code:
+         0: new           #75                 // class xaero/common/mods/SupportMods
+         3: dup
+         4: aload_1
+         5: invokespecial #227                // Method xaero/common/mods/SupportMods."<init>":(Lxaero/common/IXaeroMinimap;)V
+         8: areturn
+
+  public xaero.common.events.ModCommonEvents createModCommonEvents(xaero.common.IXaeroMinimap);
+    Code:
+         0: new           #231                // class xaero/common/events/ModCommonEvents
+         3: dup
+         4: aload_1
+         5: invokespecial #232                // Method xaero/common/events/ModCommonEvents."<init>":(Lxaero/common/IXaeroMinimap;)V
+         8: areturn
+
+  public xaero.common.minimap.write.MinimapWriter createMinimapWriter(xaero.common.IXaeroMinimap, xaero.hud.minimap.module.MinimapSession, xaero.common.cache.BlockStateShortShapeCache, xaero.common.minimap.highlight.HighlighterRegistry);
+    Code:
+         0: new           #236                // class xaero/common/minimap/write/MinimapWriter
+         3: dup
+         4: aload_1
+         5: aload_2
+         6: aload_3
+         7: aload         4
+         9: invokespecial #239                // Method xaero/common/minimap/write/MinimapWriter."<init>":(Lxaero/common/IXaeroMinimap;Lxaero/hud/minimap/module/MinimapSession;Lxaero/common/cache/BlockStateShortShapeCache;Lxaero/common/minimap/highlight/HighlighterRegistry;)V
+        12: areturn
+
+  public java.lang.String getModInfoVersion();
+    Code:
+         0: aload_0
+         1: getfield      #95                 // Field modInfo:Lnet/minecraftforge/fml/common/ModMetadata;
+         4: getfield      #253                // Field net/minecraftforge/fml/common/ModMetadata.version:Ljava/lang/String;
+         7: areturn
+
+  public java.nio.file.Path getConfigFolderPath();
+    Code:
+         0: aload_0
+         1: getfield      #123                // Field configFolder:Ljava/nio/file/Path;
+         4: areturn
+
+  public java.nio.file.Path getDefaultConfigsFolderPath();
+    Code:
+         0: aload_0
+         1: getfield      #133                // Field defaultConfigsFolder:Ljava/nio/file/Path;
+         4: areturn
+
+  public java.nio.file.Path getModFile();
+    Code:
+         0: aload_0
+         1: getfield      #107                // Field modFile:Ljava/nio/file/Path;
+         4: areturn
+
+  public boolean isDedicatedServer();
+    Code:
+         0: aload_0
+         1: getfield      #118                // Field dedicatedServer:Z
+         4: ireturn
+
+  public xaero.common.PlatformContextLoaderCommon getLoaderCommon();
+    Code:
+         0: aload_0
+         1: invokevirtual #261                // Method getLoaderCommon:()Lxaero/common/PlatformContextLoaderCommonForge;
+         4: areturn
+
+  public xaero.common.PlatformContextLoaderClientOnly getLoaderClientOnly();
+    Code:
+         0: aload_0
+         1: invokevirtual #264                // Method getLoaderClientOnly:()Lxaero/common/PlatformContextLoaderClientOnlyForge;
+         4: areturn
+}
