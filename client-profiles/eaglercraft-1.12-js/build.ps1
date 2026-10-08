@@ -23,6 +23,11 @@ if ((Get-FileHash -LiteralPath $mod -Algorithm SHA256).Hash -ne $expectedHash) {
 
 Push-Location $repo
 try {
+    & node --test (Join-Path $PSScriptRoot "inject-client.test.cjs")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Client injection regression test failed ($LASTEXITCODE)."
+    }
+
     & $maven.Source -q -Dtest=JeiSuffixTreeMilestoneTest test
     if ($LASTEXITCODE -ne 0) {
         throw "Original JEI suffix-tree JVM/TeaVM comparison failed ($LASTEXITCODE)."
@@ -39,7 +44,6 @@ finally {
 }
 
 Write-Output ""
-Write-Output "Open the isolated client and enter a world, then open/close a screen."
-Write-Output "Verify a '[JEI original suffix-tree adapter]' console entry and inspect:"
-Write-Output "window.__goldClientJeiSearchCalls"
+Write-Output "Run .\client-profiles\eaglercraft-1.12-js\run-demo.ps1 to serve the isolated client."
+Write-Output "The client-derived registry corpus is saved under ignored target\jei-suffix-tree\."
 Write-Output $output
