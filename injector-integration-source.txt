@@ -1,9 +1,10 @@
+﻿
+=== .\client-profiles\eaglercraft-1.12-js\inject-client.cjs ===
 'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { installClientBridge } =
-    require('../shared/client-bridge.cjs');
+
 const [clientPath, translatedPath, outputPath] = process.argv.slice(2);
 if (!clientPath || !translatedPath || !outputPath) {
     process.stderr.write(
@@ -47,35 +48,6 @@ if (scriptOffset < 0) {
 }
 requireUnique(output, itemRegistryCall, 'Eaglercraft screen-change callback');
 
-const bridgeScript =
-    '    <script>\n' +
-    '    (function() {\n' +
-    '        "use strict";\n' +
-    '        var install = ' + installClientBridge.toString() + ';\n' +
-    '        install(window, {\n' +
-    '            getLocale: function() {\n' +
-    '                var locale = window.__goldClientJeiLocaleTag;\n' +
-    '                if (typeof locale !== "string" || !locale.trim()) {\n' +
-    '                    throw new Error("Capture client items before requesting the locale");\n' +
-    '                }\n' +
-    '                return locale;\n' +
-    '            },\n' +
-    '            getRegisteredItemTypes: function() {\n' +
-    '                if (typeof window.__goldClientCaptureItems !== "function") {\n' +
-    '                    throw new Error("The client item registry adapter is not ready");\n' +
-    '                }\n' +
-    '                return window.__goldClientCaptureItems();\n' +
-    '            },\n' +
-    '            getTooltipData: function(id, advanced) {\n' +
-    '                if (typeof window.__goldClientJeiGetTooltipData !== "function") {\n' +
-    '                    throw new Error("The client tooltip adapter is not ready");\n' +
-    '                }\n' +
-    '                return window.__goldClientJeiGetTooltipData(id, advanced);\n' +
-    '            }\n' +
-    '        }, "supplied-eaglercraft-1.12.2-js");\n' +
-    '    })();\n' +
-    '    </script>\n';
-
 const translatedScript =
     '    <script src="eagler-jei-ingredient-elements.js"></script>\n' +
     '    <script>\n' +
@@ -83,8 +55,6 @@ const translatedScript =
         'typeof window.goldClientJeiSearch !== "function" || ' +
         'typeof window.goldClientJeiInitialize !== "function" || ' +
         'typeof window.goldClientJeiInitializeWithTooltips !== "function" || ' +
-        'typeof window.goldClientJeiSetLocale !== "function" || ' +
-        'typeof window.goldClientJeiFilter !== "function" || ' +
         'typeof window.goldClientJeiTooltip !== "function") {\n' +
     '            throw new Error("Translated JEI ingredient-element exports are missing");\n' +
     '        }\n' +
@@ -109,7 +79,7 @@ const translatedScript =
     '            var panel = document.createElement("section");\n' +
     '            panel.id = "gold-client-jei-diagnostic";\n' +
     '            panel.style.cssText = "position:fixed;right:12px;top:12px;z-index:2147483647;width:340px;max-height:70vh;overflow:auto;padding:10px;background:rgba(18,18,22,.94);color:#fff;font:13px Arial,sans-serif;border:1px solid #aaa;border-radius:4px";\n' +
-    '            panel.innerHTML = "<strong>Partial JEI original-code search — diagnostic UI</strong><div id=\\"gold-jei-status\\">Waiting for client item registry...</div><input id=\\"gold-jei-query\\" type=\\"search\\" placeholder=\\"Search item ID or display name\\" style=\\"box-sizing:border-box;width:100%;margin:8px 0;padding:6px\\"><div id=\\"gold-jei-count\\"></div><ul id=\\"gold-jei-results\\" style=\\"padding-left:20px\\"></ul><button id=\\"gold-jei-export\\" type=\\"button\\">Export client corpus</button>";\n' +
+    '            panel.innerHTML = "<strong>Partial JEI original-code search â€” diagnostic UI</strong><div id=\\"gold-jei-status\\">Waiting for client item registry...</div><input id=\\"gold-jei-query\\" type=\\"search\\" placeholder=\\"Search item ID or display name\\" style=\\"box-sizing:border-box;width:100%;margin:8px 0;padding:6px\\"><div id=\\"gold-jei-count\\"></div><ul id=\\"gold-jei-results\\" style=\\"padding-left:20px\\"></ul><button id=\\"gold-jei-export\\" type=\\"button\\">Export client corpus</button>";\n' +
     '            document.body.appendChild(panel);\n' +
     '            document.getElementById("gold-jei-query").addEventListener("input", showJeiDiagnosticResults);\n' +
     '            document.getElementById("gold-jei-export").addEventListener("click", exportJeiDiagnosticCorpus);\n' +
@@ -118,9 +88,7 @@ const translatedScript =
     '        }\n' +
     '        function buildJeiDiagnosticIndex() {\n' +
     '            try {\n' +
-    '                var bridge = window.goldClientBridge;\n' +
-    '                var items = bridge.getRegisteredItemTypes();\n' +
-    '                window.__goldClientJeiLocaleTag = bridge.getLocale();\n' +
+    '                var items = window.__goldClientCaptureItems();\n' +
     '                if (!items.length) throw new Error("Client item registry returned no entries");\n' +
     '                window.__goldClientJeiSourceItems = items;\n' +
     '                window.__goldClientJeiFactoryCallCount = (window.__goldClientJeiFactoryCallCount || 0) + 1;\n' +
@@ -156,7 +124,7 @@ const translatedScript =
     '            list.textContent = "";\n' +
     '            matches.slice(0, 100).forEach(function(item) {\n' +
     '                var row = document.createElement("li");\n' +
-    '                row.textContent = item.id + " — " + item.displayName;\n' +
+    '                row.textContent = item.id + " â€” " + item.displayName;\n' +
     '                list.appendChild(row);\n' +
     '            });\n' +
     '            document.getElementById("gold-jei-count").textContent = matches.length + " result(s)" + (matches.length > 100 ? " (first 100 shown)" : "");\n' +
@@ -171,10 +139,7 @@ const translatedScript =
     '        }\n' +
     '    </script>\n';
 
-output = output.slice(0, scriptOffset)
-    + bridgeScript
-    + translatedScript
-    + output.slice(scriptOffset);
+output = output.slice(0, scriptOffset) + translatedScript + output.slice(scriptOffset);
 output = output.replace(itemRegistryCall,
     'if (typeof window.__goldClientCaptureItems !== "function") {\n' +
     '                window.__goldClientCaptureItems = function() {\n' +
@@ -220,3 +185,85 @@ fs.writeFileSync(absoluteOutput, output, 'utf8');
 
 process.stdout.write(`Created isolated JEI JS-profile client: ${absoluteOutput}\n`);
 process.stdout.write('The original client HTML and mod JAR were left unchanged.\n');
+
+=== .\client-profiles\eaglercraft-1.12-js\inject-client.test.cjs ===
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const test = require('node:test');
+const vm = require('node:vm');
+
+const injector = path.join(__dirname, 'inject-client.cjs');
+
+test('keeps injected scripts outside the client script and launch options valid', t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gold-client-inject-'));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+
+    const client = path.join(directory, 'client.html');
+    const translated = path.join(directory, 'eagler-mod.js');
+    const output = path.join(directory, 'out', 'client.html');
+    const runtimeCall =
+        'var$1.$screenChangedHook.call($rt_ustr(var$2), var$3, var$4, var$5, var$6, var$7);';
+    fs.writeFileSync(client, [
+        '<title>Eaglercraft 1.12.2</title>',
+        '<script type="text/javascript">',
+        '        window.eaglercraftXOpts = {',
+        '            container: "game_frame",',
+        '            worldsDB: "worlds"',
+        '        };',
+        '</script>',
+        '<script type="text/javascript">',
+        'if(typeof window !== "undefined") window.eaglercraftXClientScriptElement = document.currentScript;',
+        runtimeCall,
+        '</script>'
+    ].join('\r\n'));
+    fs.writeFileSync(translated, '/* translated test bundle */');
+
+    const result = spawnSync(process.execPath, [injector, client, translated, output], {
+        encoding: 'utf8'
+    });
+    assert.equal(result.status, 0, result.stderr);
+
+    const html = fs.readFileSync(output, 'utf8');
+    const firstClose = html.indexOf('</script>');
+    const adapterScript = html.indexOf('<script src="eagler-jei-ingredient-elements.js">');
+    const runtimeScript = html.indexOf('if(typeof window !== "undefined")');
+    const adapterClose = html.indexOf('</script>', adapterScript);
+    assert.ok(firstClose >= 0);
+    assert.ok(adapterScript > firstClose, 'translated bundle must not be nested in launch-options script');
+    assert.ok(runtimeScript > adapterClose, 'client runtime must remain a separate script');
+    assert.equal((html.match(/<script src="eagler-jei-ingredient-elements\.js">/g) || []).length, 1);
+    assert.match(html,
+        /goldClientJeiInitializeWithTooltips\(ids, displayNames, normalTooltipData, advancedTooltipData\)/);
+    assert.match(html, /goldClientJeiSetLocale\(window\.__goldClientJeiLocaleTag\)/);
+    assert.match(html, /settings\.\$language/);
+    assert.match(html, /goldClientJeiFilter\(query\)/);
+    assert.match(html, /goldClientJeiTooltip/);
+    assert.match(html, /__goldClientJeiStacksById/);
+    assert.match(html, /nmi_ItemStack_getTooltip/);
+    assert.match(html, /ju_ArrayList_size/);
+    assert.match(html, /normalTooltipData/);
+    assert.match(html, /advancedTooltipData/);
+    assert.match(html, /__goldClientJeiProgressUpdate/);
+
+    const launchStart = html.indexOf('window.eaglercraftXOpts = {');
+    const launchScriptStart = html.lastIndexOf('<script', launchStart);
+    const launchEnd = html.indexOf('</script>', launchStart);
+    const launchScript = html.slice(html.indexOf('>', launchScriptStart) + 1, launchEnd);
+    const sandbox = { window: {} };
+    vm.runInNewContext(launchScript, sandbox);
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(sandbox.window.eaglercraftXOpts)),
+        {
+            container: 'game_frame',
+            worldsDB: 'worlds',
+            hooks: {}
+        });
+    assert.equal(
+        fs.readFileSync(path.join(path.dirname(output), 'eagler-jei-ingredient-elements.js'), 'utf8'),
+        '/* translated test bundle */');
+});
