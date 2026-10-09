@@ -11,7 +11,8 @@ public record ClassModel(
     List<String> annotations,
     List<FieldModel> fields,
     List<MethodModel> methods,
-    List<String> referencedClasses
+    List<String> referencedClasses,
+    List<AnnotationData> annotationData
 ) {
   public ClassModel {
     interfaces = List.copyOf(interfaces);
@@ -19,5 +20,31 @@ public record ClassModel(
     fields = List.copyOf(fields);
     methods = List.copyOf(methods);
     referencedClasses = List.copyOf(referencedClasses);
+    annotationData = List.copyOf(annotationData);
+  }
+
+  public ClassModel(
+      String name,
+      String superName,
+      List<String> interfaces,
+      int access,
+      String signature,
+      List<String> annotations,
+      List<FieldModel> fields,
+      List<MethodModel> methods,
+      List<String> referencedClasses
+  ) {
+    this(
+        name,
+        superName,
+        interfaces,
+        access,
+        signature,
+        annotations,
+        fields,
+        methods,
+        referencedClasses,
+        List.of()
+    );
   }
 }

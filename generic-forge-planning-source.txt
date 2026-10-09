@@ -1,3 +1,5 @@
+﻿
+=== .\src\main\java\com\goldclient\analyzer\ModAnalyzer.java ===
 package com.goldclient.analyzer;
 
 import com.goldclient.model.*;
@@ -288,7 +290,6 @@ public final class ModAnalyzer {
     List<FieldModel> fields = new ArrayList<>();
     List<MethodModel> methods = new ArrayList<>();
     List<String> annotations = new ArrayList<>();
-    List<AnnotationData> annotationData = new ArrayList<>();
     Set<String> referencedClasses = new LinkedHashSet<>();
 
     final String[] superName = {null};
@@ -321,20 +322,12 @@ public final class ModAnalyzer {
       }
 
       @Override
-      public AnnotationVisitor visitAnnotation(
-          String descriptor, boolean visible
-      ) {
+      public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
         String name = annotationName(descriptor);
         if (name != null) annotations.add(name);
-
         addReference(descriptor, referencedClasses);
         collect(descriptor, minecraftApis, referencedClasses);
-
-        return new AnnotationValueReader(
-            descriptor,
-            visible,
-            annotationData::add
-        );
+        return null;
       }
 
       @Override
@@ -395,15 +388,11 @@ public final class ModAnalyzer {
 
         return new MethodVisitor(Opcodes.ASM9) {
           @Override
-          public AnnotationVisitor visitAnnotation(
-              String descriptor, boolean visible
-          ) {
+          public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
             String annotation = annotationName(descriptor);
             if (annotation != null) methodAnnotations.add(annotation);
-
             addReference(descriptor, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
-
             return null;
           }
 
@@ -567,8 +556,7 @@ public final class ModAnalyzer {
         annotations,
         fields,
         methods,
-        List.copyOf(referencedClasses),
-        annotationData
+        List.copyOf(referencedClasses)
     );
   }
 
@@ -667,5 +655,234 @@ public final class ModAnalyzer {
   private static String annotationName(String descriptor) {
     if (descriptor == null || !descriptor.startsWith("L") || !descriptor.endsWith(";")) return null;
     return descriptor.substring(1, descriptor.length() - 1).replace('/', '.');
+  }
+}
+
+=== .\src\main\java\com\goldclient\analyzer\ModAnalysis.java ===
+package com.goldclient.analyzer;
+
+import com.goldclient.model.ClassModel;
+import java.util.List;
+import java.util.Set;
+
+public record ModAnalysis(
+    ModMetadata metadata,
+    List<ClassModel> classes,
+    int totalMethods,
+    int totalFields,
+    List<String> minecraftApis,
+    Set<PlatformRequirement> platformRequirements
+) {
+  public ModAnalysis {
+    classes = List.copyOf(classes);
+    minecraftApis = List.copyOf(minecraftApis);
+    platformRequirements = Set.copyOf(platformRequirements);
+  }
+
+  public int totalClasses() {
+    return classes.size();
+  }
+}
+
+=== .\src\main\java\com\goldclient\analyzer\ModMetadata.java ===
+package com.goldclient.analyzer;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public final class ModMetadata {
+  private String name = "Unknown";
+  private String version = "Unknown";
+  private String minecraftVersion = "Unknown";
+  private String loader = "Unknown";
+  private final List<String> dependencies = new ArrayList<>();
+  private final List<String> optionalDependencies = new ArrayList<>();
+  private final List<String> entrypoints = new ArrayList<>();
+  private final List<String> mixins = new ArrayList<>();
+
+  public String getName() { return name; }
+  public String getVersion() { return version; }
+  public String getMinecraftVersion() { return minecraftVersion; }
+  public String getLoader() { return loader; }
+  public List<String> getDependencies() { return List.copyOf(dependencies); }
+  public List<String> getOptionalDependencies() { return List.copyOf(optionalDependencies); }
+  public List<String> getEntrypoints() { return List.copyOf(entrypoints); }
+  public List<String> getMixins() { return List.copyOf(mixins); }
+
+  void setName(String value) {
+    if (value != null && !value.isBlank()) name = value;
+  }
+
+  void setVersion(String value) {
+    if (value != null && !value.isBlank()) version = value;
+  }
+
+  void setMinecraftVersion(String value) {
+    if (value != null && !value.isBlank()) minecraftVersion = value;
+  }
+
+  void setLoader(String value) {
+    if (value != null && !value.isBlank()) loader = value;
+  }
+
+  void addDependency(String value) {
+    if (value != null && !value.isBlank() && !dependencies.contains(value)) {
+      dependencies.add(value);
+      optionalDependencies.remove(value);
+    }
+  }
+
+  void addOptionalDependency(String value) {
+    if (value != null && !value.isBlank()
+        && !dependencies.contains(value) && !optionalDependencies.contains(value)) {
+      optionalDependencies.add(value);
+    }
+  }
+
+  void addEntrypoint(String value) {
+    if (value != null && !value.isBlank() && !entrypoints.contains(value)) {
+      entrypoints.add(value);
+    }
+  }
+
+  void addMixin(String value) {
+    if (value != null && !value.isBlank() && !mixins.contains(value)) {
+      mixins.add(value);
+    }
+  }
+}
+
+=== .\src\main\java\com\goldclient\analyzer\ClassAnalyzer.java ===
+
+=== .\src\main\java\com\goldclient\analyzer\JarReader.java ===
+
+=== .\src\main\java\com\goldclient\analyzer\PlatformRequirement.java ===
+package com.goldclient.analyzer;
+
+/** Platform services that a translated mod may need from its target runtime. */
+public enum PlatformRequirement {
+  FORGE_PLATFORM_CONTEXT,
+  FORGE_EVENT_BUS,
+  FORGE_CLIENT_EVENT_BUS,
+  FORGE_MOD_METADATA,
+  FORGE_CONFIG_DIRECTORY
+}
+
+=== .\src\main\java\com\goldclient\model\ClassModel.java ===
+package com.goldclient.model;
+
+import java.util.List;
+
+public record ClassModel(
+    String name,
+    String superName,
+    List<String> interfaces,
+    int access,
+    String signature,
+    List<String> annotations,
+    List<FieldModel> fields,
+    List<MethodModel> methods,
+    List<String> referencedClasses
+) {
+  public ClassModel {
+    interfaces = List.copyOf(interfaces);
+    annotations = List.copyOf(annotations);
+    fields = List.copyOf(fields);
+    methods = List.copyOf(methods);
+    referencedClasses = List.copyOf(referencedClasses);
+  }
+}
+
+=== .\src\main\java\com\goldclient\model\MethodModel.java ===
+package com.goldclient.model;
+
+import java.util.List;
+
+public record MethodModel(
+    String name,
+    String descriptor,
+    String signature,
+    int access,
+    List<String> exceptions,
+    List<String> annotations,
+    List<String> referencedClasses,
+    List<InstructionModel> instructions,
+    List<TryCatchModel> tryCatchBlocks,
+    int maxStack,
+    int maxLocals,
+    ControlFlowModel controlFlow,
+    IrMethodModel intermediateRepresentation
+) {
+  public MethodModel {
+    exceptions = List.copyOf(exceptions);
+    annotations = List.copyOf(annotations);
+    referencedClasses = List.copyOf(referencedClasses);
+    instructions = List.copyOf(instructions);
+    tryCatchBlocks = List.copyOf(tryCatchBlocks);
+    intermediateRepresentation = intermediateRepresentation == null
+        ? new IrMethodModel(name, descriptor, List.of())
+        : intermediateRepresentation;
+  }
+
+  public MethodModel(
+      String name,
+      String descriptor,
+      String signature,
+      int access,
+      List<String> exceptions,
+      List<String> annotations,
+      List<String> referencedClasses,
+      List<InstructionModel> instructions,
+      List<TryCatchModel> tryCatchBlocks,
+      int maxStack,
+      int maxLocals,
+      ControlFlowModel controlFlow
+  ) {
+    this(
+        name, descriptor, signature, access,
+        exceptions, annotations, referencedClasses,
+        instructions, tryCatchBlocks, maxStack, maxLocals,
+        controlFlow,
+        new IrMethodModel(name, descriptor, List.of())
+    );
+  }
+
+  public MethodModel(
+      String name,
+      String descriptor,
+      String signature,
+      int access,
+      List<String> exceptions,
+      List<String> annotations,
+      List<String> referencedClasses,
+      List<InstructionModel> instructions,
+      List<TryCatchModel> tryCatchBlocks,
+      int maxStack,
+      int maxLocals
+  ) {
+    this(
+        name, descriptor, signature, access,
+        exceptions, annotations, referencedClasses,
+        instructions, tryCatchBlocks, maxStack, maxLocals,
+        new ControlFlowModel(0, List.of()),
+        new IrMethodModel(name, descriptor, List.of())
+    );
+  }
+}
+
+=== .\src\main\java\com\goldclient\model\FieldModel.java ===
+package com.goldclient.model;
+
+import java.util.List;
+
+public record FieldModel(
+    String name,
+    String descriptor,
+    String signature,
+    int access,
+    List<String> annotations
+) {
+  public FieldModel {
+    annotations = List.copyOf(annotations);
   }
 }
