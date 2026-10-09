@@ -1,0 +1,1364 @@
+﻿=== Main Java source inventory ===
+src\main\java\com\goldclient\analyzer\ClassAnalyzer.java
+src\main\java\com\goldclient\analyzer\ClassInfo.java
+src\main\java\com\goldclient\analyzer\ControlFlowAnalyzer.java
+src\main\java\com\goldclient\analyzer\IntermediateRepresentationAnalyzer.java
+src\main\java\com\goldclient\analyzer\JarReader.java
+src\main\java\com\goldclient\analyzer\ModAnalysis.java
+src\main\java\com\goldclient\analyzer\ModAnalyzer.java
+src\main\java\com\goldclient\analyzer\ModMetadata.java
+src\main\java\com\goldclient\analyzer\PlatformRequirement.java
+src\main\java\com\goldclient\Main.java
+src\main\java\com\goldclient\model\BasicBlockModel.java
+src\main\java\com\goldclient\model\ClassModel.java
+src\main\java\com\goldclient\model\ControlFlowEdgeModel.java
+src\main\java\com\goldclient\model\ControlFlowModel.java
+src\main\java\com\goldclient\model\FieldModel.java
+src\main\java\com\goldclient\model\InstructionModel.java
+src\main\java\com\goldclient\model\IrMethodModel.java
+src\main\java\com\goldclient\model\IrOperationModel.java
+src\main\java\com\goldclient\model\MethodModel.java
+src\main\java\com\goldclient\model\TryCatchModel.java
+src\main\java\com\goldclient\translator\JavaTranslator.java
+src\main\java\com\goldclient\translator\TeaVmTranslator.java
+src\main\java\com\goldclient\translator\TranslationContext.java
+src\main\java\com\goldclient\translator\TranslationException.java
+src\main\java\com\goldclient\translator\TranslationResult.java
+
+=== CLI and translator callers ===
+
+--- src\main\java\com\goldclient\Main.java ---
+package com.goldclient;
+
+import com.goldclient.analyzer.*;
+import com.goldclient.translator.JavaTranslator;
+import com.goldclient.translator.TranslationException;
+import com.goldclient.translator.TranslationResult;
+import com.goldclient.model.BasicBlockModel;
+import com.goldclient.model.ClassModel;
+import com.goldclient.model.InstructionModel;
+import com.goldclient.model.MethodModel;
+import com.goldclient.model.TryCatchModel;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.List;
+import org.objectweb.asm.Opcodes;
+
+public final class Main {
+  public static void main(String[] args) {
+    if (args.length < 1 || args.length > 9) {
+      printUsage();
+      System.exit(2);
+    }
+
+    String jar = args[0];
+    String classFilter = null;
+    String methodFilter = null;
+    boolean translate = false;
+    String toJsDir = null;
+    String mainClass = null;
+
+    for (int i = 1; i < args.length; i++) {
+      switch (args[i]) {
+        case "--class" -> {
+          if (++i >= args.length) {
+            printUsage();
+            System.exit(2);
+          }
+          classFilter = args[i].replace('.', '/');
+        }
+        case "--translate" -> translate = true;
+        case "--to-js" -> {
+          if (++i >= args.length) {
+            printUsage();
+            System.exit(2);
+          }
+          toJsDir = args[i];
+        }
+        case "--main-class" -> {
+          if (++i >= args.length) {
+            printUsage();
+            System.exit(2);
+          }
+          mainClass = args[i];
+        }
+        case "--method" -> {
+          if (++i >= args.length) {
+            printUsage();
+            System.exit(2);
+          }
+          methodFilter = args[i];
+        }
+        default -> {
+          printUsage();
+          System.exit(2);
+        }
+      }
+    }
+
+    try {
+      ModAnalysis a = new ModAnalyzer().analyze(Path.of(jar));
+      boolean debug = classFilter != null || methodFilter != null || translate;
+      printAnalysis(a, debug);
+
+      if (debug)
+        printBytecode(a.classes(), classFilter, methodFilter);
+
+      if (translate) {
+        if (classFilter == null || methodFilter == null) {
+          System.err.println("--translate requires both --class and --method.");
+          System.exit(2);
+        }
+        printTranslation(a.classes(), classFilter, methodFilter);
+      }
+      
+      if (toJsDir != null) {
+        String modEntrypoint = findModEntrypoint(a);
+        System.out.println("\n=== TeaVM Entry Selection ===");
+        System.out.println("Detected mod loader: " + a.metadata().getLoader());
+        if (modEntrypoint != null) {
+          System.out.println("Detected mod entrypoint: " + modEntrypoint
+              + " (not used as a TeaVM entrypoint)");
+        } else {
+          System.out.println("Detected mod entrypoint: (none)");
+        }
+
+        if (mainClass == null) {
+          System.err.println("ERROR: No TeaVM entry class specified.");
+          System.err.println("  Provide a class with public static void main(String[])");
+          System.err.println("  via --main-class <ClassName>.");
+          System.exit(2);
+        }
+
+        ClassModel selectedClass = findClass(a, mainClass);
+        if (selectedClass != null && !hasTeaVmMain(selectedClass)) {
+          System.err.println("Translation failed: " + mainClass
+              + " does not declare public static void main(String[]).");
+          System.err.println("Mod-loader entrypoints are not automatically valid TeaVM entries.");
+          System.exit(2);
+        }
+
+        System.out.println("TeaVM entrypoint: " + mainClass + " (explicitly selected)");
+        try {
+          com.goldclient.translator.TeaVmTranslator.translate(
+              Path.of(jar), Path.of(toJsDir), mainClass);
+        } catch (TranslationException | IOException e) {
+          System.err.println("Translation failed: " + e.getMessage());
+          System.exit(2);
+        }
+      }
+    } catch (Exception e) {
+      System.err.println("Gold Client analysis failed: " + e.getMessage());
+      e.printStackTrace();
+      System.exit(1);
+    }
+  }
+
+  private static void printUsage() {
+    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate] [--class <class>] [--method <method>] [--to-js <output_dir>] [--main-class <class>]");
+  }
+
+  private static void printAnalysis(ModAnalysis a, boolean debug) {
+    System.out.println("=== Gold Client Mod Analyzer ===\n");
+    System.out.println("Mod: " + a.metadata().getName());
+    System.out.println("Version: " + a.metadata().getVersion());
+    System.out.println("Minecraft: " + a.metadata().getMinecraftVersion());
+    System.out.println("Loader: " + a.metadata().getLoader());
+    System.out.println("\nClasses: " + a.totalClasses());
+    System.out.println("Methods: " + a.totalMethods());
+    System.out.println("Fields: " + a.totalFields());
+    printList("Required mod dependencies", a.metadata().getDependencies());
+    printList("Optional mod dependencies", a.metadata().getOptionalDependencies());
+    System.out.println("\nRuntime dependency resolution:");
+    System.out.println("  Not assessed: no target runtime classpath was supplied.");
+    System.out.println("  Declared dependencies and platform adapters are not treated as missing JARs.");
+    printList("Minecraft APIs", a.minecraftApis());
+    printList("Mixins", a.metadata().getMixins());
+    printList("Entrypoints", a.metadata().getEntrypoints());
+    printList("Loader packaging requirements", a.platformRequirements().stream()
+        .filter(requirement -> requirement == PlatformRequirement.FORGE_MOD_METADATA)
+        .map(Enum::name).toList());
+    printList("Platform adapter requirements", a.platformRequirements().stream()
+        .filter(requirement -> requirement != PlatformRequirement.FORGE_MOD_METADATA)
+        .map(Enum::name).toList());
+    if (!debug) {
+      System.out.println("\nClasses:");
+      for (ClassModel i : a.classes())
+        System.out.printf("  %s (%d methods, %d fields)%n",
+            i.name(), i.methods().size(), i.fields().size());
+    }
+  }
+
+  private static String findModEntrypoint(ModAnalysis analysis) {
+    if (!analysis.metadata().getEntrypoints().isEmpty()) {
+      return analysis.metadata().getEntrypoints().get(0);
+    }
+    return analysis.classes().stream()
+        .filter(clazz -> clazz.annotations().contains("net.minecraftforge.fml.common.Mod")
+            || clazz.annotations().contains("net.neoforged.fml.common.Mod"))
+        .map(ClassModel::name)
+        .findFirst()
+        .orElse(null);
+  }
+
+  private static ClassModel findClass(ModAnalysis analysis, String className) {
+    String normalized = className.replace('.', '/');
+    return analysis.classes().stream()
+        .filter(clazz -> clazz.name().replace('.', '/').equals(normalized))
+        .findFirst()
+        .orElse(null);
+  }
+
+  private static boolean hasTeaVmMain(ClassModel clazz) {
+    return clazz.methods().stream().anyMatch(method ->
+        method.name().equals("main")
+            && method.descriptor().equals("([Ljava/lang/String;)V")
+            && (method.access() & (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC))
+                == (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC));
+  }
+
+  private static void printBytecode(
+      List<ClassModel> classes, String classFilter, String methodFilter) {
+    System.out.println("\n=== Bytecode Debug ===");
+
+    int matchedClasses = 0;
+    int matchedMethods = 0;
+
+    for (ClassModel clazz : classes) {
+      if (classFilter != null && !clazz.name().equals(classFilter))
+        continue;
+
+      matchedClasses++;
+      System.out.println("\nClass: " + clazz.name());
+
+      for (MethodModel method : clazz.methods()) {
+        if (methodFilter != null && !method.name().equals(methodFilter))
+          continue;
+
+        matchedMethods++;
+        System.out.printf("  Method: %s%s%n", method.name(), method.descriptor());
+        System.out.printf("    Instructions: %d%n", method.instructions().size());
+        System.out.printf("    Max stack: %d, Max locals: %d%n",
+            method.maxStack(), method.maxLocals());
+
+        if (!method.controlFlow().blocks().isEmpty()) {
+          System.out.println("    Control flow:");
+          for (BasicBlockModel block : method.controlFlow().blocks()) {
+            System.out.printf("      B%d [%d..%d) -> %s%n",
+                block.id(), block.startInstruction(), block.endInstruction(),
+                block.successors());
+          }
+          if (!method.controlFlow().edges().isEmpty()) {
+            System.out.println("    Control-flow edges:");
+            method.controlFlow().edges().forEach(edge ->
+                System.out.printf("      B%d -> B%d (%s)%n",
+                    edge.fromBlock(), edge.toBlock(), edge.kind()));
+          }
+        }
+
+        if (!method.intermediateRepresentation().operations().isEmpty()) {
+          System.out.println("    Semantic IR:");
+          method.intermediateRepresentation().operations().forEach(operation ->
+              System.out.printf("      %04d: %-20s %s%n",
+                  operation.sourceInstruction(),
+                  operation.kind(),
+                  operation.operands()));
+        }
+
+        for (int i = 0; i < method.instructions().size(); i++) {
+          InstructionModel instruction = method.instructions().get(i);
+          System.out.printf("    %04d: %s%n", i, formatInstruction(instruction));
+        }
+
+        if (!method.tryCatchBlocks().isEmpty()) {
+          System.out.println("    Try/catch:");
+          for (TryCatchModel block : method.tryCatchBlocks()) {
+            System.out.printf("      %s -> %s -> %s (%s)%n",
+                block.startLabel(), block.endLabel(),
+                block.handlerLabel(), block.exceptionType());
+          }
+        }
+      }
+    }
+
+    if (matchedClasses == 0)
+      System.out.println("\nNo classes matched the requested filter.");
+    else if (matchedMethods == 0)
+      System.out.println("\nNo methods matched the requested filter.");
+  }
+
+  private static void printTranslation(
+      List<ClassModel> classes, String classFilter, String methodFilter) {
+    System.out.println("\n=== Java Translation ===");
+
+    for (ClassModel clazz : classes) {
+      if (!clazz.name().equals(classFilter))
+        continue;
+
+      for (MethodModel method : clazz.methods()) {
+        if (!method.name().equals(methodFilter))
+          continue;
+
+        TranslationResult result =
+            new JavaTranslator().translate(method.intermediateRepresentation());
+
+        System.out.println("\nClass: " + clazz.name());
+        System.out.println("Method: " + method.name() + method.descriptor());
+        System.out.println("Complete: " + result.complete());
+        System.out.println();
+        System.out.println(result.source());
+        return;
+      }
+    }
+
+    System.out.println("\nNo matching class/method found for translation.");
+  }
+
+  private static String formatInstruction(InstructionModel instruction) {
+    if (instruction.operands().isEmpty())
+      return instruction.opcodeName();
+
+    return instruction.opcodeName() + " " + String.join(", ", instruction.operands());
+  }
+
+  private static void printList(String title, List<String> values) {
+    System.out.println("\n" + title + ":");
+    if (values.isEmpty()) {
+      System.out.println("  (none detected)");
+      return;
+    }
+    values.forEach(v -> System.out.println("  " + v));
+  }
+}
+
+--- src\main\java\com\goldclient\translator\TeaVmTranslator.java ---
+package com.goldclient.translator;
+
+import org.teavm.tooling.ConsoleTeaVMToolLog;
+import org.teavm.tooling.TeaVMProblemRenderer;
+import org.teavm.tooling.TeaVMTargetType;
+import org.teavm.tooling.TeaVMTool;
+import org.teavm.tooling.TeaVMToolException;
+import org.teavm.vm.TeaVMOptimizationLevel;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Set;
+import java.util.Enumeration;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+
+/**
+ * Translates a JAR file to JavaScript via TeaVM.
+ *
+ * <p>Usage:</p>
+ * <pre>
+ *   TeaVmTranslator.translate(jarPath, outputDir, teaVmEntryClass);
+ * </pre>
+ *
+ * <p>The {@code teaVmEntryClass} must be a class that contains a
+ * {@code public static void main(String[])} method.  It is the caller's
+ * responsibility to supply a valid TeaVM entry class.  This class does
+ * NOT automatically promote a Forge {@code @Mod} class or a Fabric
+ * initializer to a TeaVM entry â€” they do not have a {@code main} method
+ * and are therefore not valid TeaVM entry points.</p>
+ *
+ * <p>On severe TeaVM diagnostics this method throws a
+ * {@link TranslationException} so that the caller can propagate a
+ * non-zero exit code.</p>
+ */
+public class TeaVmTranslator {
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    /**
+     * Translate {@code jarPath} to JavaScript, placing output in
+     * {@code outputDir}.
+     *
+     * @param jarPath        path to the input JAR
+     * @param outputDir      directory where {@code eagler-mod.js} will be
+     *                       written (created if absent)
+     * @param teaVmEntryClass dotted class name that contains
+     *                       {@code public static void main(String[])};
+     *                       must not be null or blank
+     * @throws TranslationException if the entry class is missing/blank, if
+     *                              TeaVM reports severe problems, or if the
+     *                              output is absent/empty after generation
+     * @throws IOException          if the JAR cannot be read or output cannot
+     *                              be written
+     */
+    public static void translate(Path jarPath, Path outputDir,
+                                 String teaVmEntryClass)
+            throws TranslationException, IOException {
+        translate(jarPath, outputDir, teaVmEntryClass, Set.of());
+    }
+
+    public static void translate(Path jarPath, Path outputDir,
+                                 String teaVmEntryClass,
+                                 Set<String> childFirstPackages)
+            throws TranslationException, IOException {
+
+        // --- validate entry class (milestone requirement: fail explicitly) ---
+        if (teaVmEntryClass == null || teaVmEntryClass.isBlank()) {
+            throw new TranslationException(
+                    "No TeaVM entry class specified. "
+                    + "Provide a class with public static void main(String[]) "
+                    + "via --main-class <ClassName>. "
+                    + "A Forge @Mod class or Fabric initializer is NOT a valid "
+                    + "TeaVM entry point.");
+        }
+        // normalise slashes that may come from class-file names
+        String entryClass = teaVmEntryClass.replace('/', '.');
+
+        System.out.println("\n=== TeaVM Translation ===");
+        System.out.println("Input : " + jarPath.toAbsolutePath());
+        System.out.println("Entry : " + entryClass);
+        System.out.println("Output: " + outputDir.toAbsolutePath());
+
+        Files.createDirectories(outputDir);
+        if (childFirstPackages == null
+                || childFirstPackages.stream().anyMatch(
+                        prefix -> prefix == null || prefix.isBlank())) {
+            throw new TranslationException(
+                    "Child-first package prefixes must be non-null and non-blank.");
+        }
+
+        // Stale-artifact prevention: delete any existing JS before starting
+        Path outputJs = outputDir.resolve("eagler-mod.js");
+        Files.deleteIfExists(outputJs);
+
+        URL[] urls = {jarPath.toUri().toURL()};
+        try (URLClassLoader classLoader =
+                     new PackagePriorityClassLoader(
+                             urls, TeaVmTranslator.class.getClassLoader(), childFirstPackages)) {
+
+            TeaVMTool tool = new TeaVMTool();
+            tool.setTargetDirectory(outputDir.toFile());
+            tool.setTargetFileName("eagler-mod.js");
+            tool.setTargetType(TeaVMTargetType.JAVASCRIPT);
+            tool.setOptimizationLevel(TeaVMOptimizationLevel.SIMPLE);
+            tool.setDebugInformationGenerated(false);
+            tool.setObfuscated(false);
+            tool.setClassLoader(classLoader);
+            tool.setMainClass(entryClass);
+
+            // --- compile ---
+            System.out.println("[TeaVM] Compiling...");
+            try {
+                tool.generate();
+            } catch (TeaVMToolException e) {
+                throw new TranslationException("TeaVM tool error: " + e.getMessage(), e);
+            }
+
+            // --- diagnostics ---
+            ConsoleTeaVMToolLog log = new ConsoleTeaVMToolLog(true);
+            TeaVMProblemRenderer.describeProblems(
+                    tool.getDependencyInfo().getCallGraph(),
+                    tool.getProblemProvider(),
+                    log);
+
+            int severeCount = tool.getProblemProvider().getSevereProblems().size();
+            if (severeCount > 0) {
+                throw new TranslationException(
+                        "TeaVM compilation finished with " + severeCount
+                        + " severe problem(s). See diagnostics above.");
+            }
+
+            // --- verify output ---
+            if (!Files.isRegularFile(outputJs) || Files.size(outputJs) == 0) {
+                throw new TranslationException(
+                        "Translation produced no JavaScript output "
+                        + "(file missing or empty). "
+                        + "This usually means the entry class could not be resolved.");
+            }
+
+            System.out.println("[TeaVM] Compilation succeeded.");
+            System.out.println("[TeaVM] JS output: " + outputJs
+                    + " (" + Files.size(outputJs) + " bytes)");
+
+            // --- copy non-class resources (assets, JSON, etc.) ---
+            copyResources(jarPath, outputDir, outputJs);
+        }
+    }
+
+    private static final class PackagePriorityClassLoader extends URLClassLoader {
+        private final Set<String> childFirstPackages;
+
+        private PackagePriorityClassLoader(
+                URL[] urls, ClassLoader parent, Set<String> childFirstPackages) {
+            super(urls, parent);
+            this.childFirstPackages = Set.copyOf(childFirstPackages);
+        }
+
+        @Override
+        protected Class<?> loadClass(String name, boolean resolve)
+                throws ClassNotFoundException {
+            if (childFirstPackages.stream().noneMatch(name::startsWith)) {
+                return super.loadClass(name, resolve);
+            }
+            synchronized (getClassLoadingLock(name)) {
+                Class<?> loaded = findLoadedClass(name);
+                boolean definedHere = false;
+                if (loaded == null) {
+                    try {
+                        loaded = findClass(name);
+                        definedHere = true;
+                    } catch (ClassNotFoundException ignored) {
+                        loaded = super.loadClass(name, false);
+                    }
+                }
+                if (resolve && definedHere) {
+                    resolveClass(loaded);
+                }
+                return loaded;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Resource copying
+    // -------------------------------------------------------------------------
+
+    private static void copyResources(Path jarPath, Path outputDir,
+                                      Path reservedJs) throws IOException {
+        Path normalRoot = outputDir.toRealPath();
+        long bytesCopied = 0L;
+        int filesCopied = 0;
+
+        try (ZipFile zip = new ZipFile(jarPath.toFile())) {
+            Enumeration<? extends ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                String name = entry.getName();
+
+                // skip class files and directory entries
+                if (entry.isDirectory() || name.endsWith(".class")) continue;
+
+                // --- path traversal guard ---
+                Path dest = outputDir.resolve(name).normalize();
+                if (!dest.startsWith(normalRoot)) {
+                    System.err.println("[resources] Rejected traversal entry: " + name);
+                    continue;
+                }
+
+                // do not overwrite the generated JS
+                if (dest.equals(reservedJs)) {
+                    System.err.println("[resources] Skipped entry that would overwrite output JS: " + name);
+                    continue;
+                }
+
+                Files.createDirectories(dest.getParent());
+                long written;
+                try (InputStream is = zip.getInputStream(entry)) {
+                    written = Files.copy(is, dest, StandardCopyOption.REPLACE_EXISTING);
+                }
+                bytesCopied += written;
+                filesCopied++;
+            }
+        }
+        System.out.println("[resources] Copied " + filesCopied
+                + " asset file(s) (" + bytesCopied + " bytes).");
+    }
+}
+
+=== Client profile inventory ===
+
+Path                                                                                                Bytes
+----                                                                                                -----
+client-profiles\eaglercraft-1.12-js\build.ps1                                                        2526
+client-profiles\eaglercraft-1.12-js\compat\JeiIngredientEntry.java                                  19951
+client-profiles\eaglercraft-1.12-js\compat\net\minecraft\client\Minecraft.java                       1362
+client-profiles\eaglercraft-1.12-js\compat\net\minecraft\client\resources\LanguageManager.java        511
+client-profiles\eaglercraft-1.12-js\compat\net\minecraft\util\NonNullList.java                       1960
+client-profiles\eaglercraft-1.12-js\compat\net\minecraft\util\text\TextFormatting.java               1513
+client-profiles\eaglercraft-1.12-js\compat\net\minecraftforge\common\MinecraftForge.java              238
+client-profiles\eaglercraft-1.12-js\compat\net\minecraftforge\fml\common\eventhandler\EventBus.java   433
+client-profiles\eaglercraft-1.12-js\compat\net\minecraftforge\fml\common\ProgressManager.java        2415
+client-profiles\eaglercraft-1.12-js\compat\org\apache\logging\log4j\Logger.java                       287
+client-profiles\eaglercraft-1.12-js\compat\org\apache\logging\log4j\LogManager.java                  1816
+client-profiles\eaglercraft-1.12-js\inject-client.cjs                                               13413
+client-profiles\eaglercraft-1.12-js\inject-client.test.cjs                                           3810
+client-profiles\eaglercraft-1.12-js\prepare-forge-runtime.ps1                                        4239
+client-profiles\eaglercraft-1.12-js\README.md                                                        6495
+client-profiles\eaglercraft-1.12-js\run-demo.ps1                                                      225
+client-profiles\eaglercraft-1.12-js\serve-demo.cjs                                                   4715
+
+=== Client integration hook locations ===
+
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\build.ps1
+LineNumber : 4
+Line       : $client = Join-Path $repo "unminified-clients\Eaglercraft_1.12_Offline_en_US.html"
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\build.ps1
+LineNumber : 7
+Line       : $translated = Join-Path $repo "target\jei-ingredient-elements\translated\eagler-mod.js"
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 53
+Line       :         'typeof window.goldClientJeiSearch !== "function" || ' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 54
+Line       :         'typeof window.goldClientJeiInitialize !== "function" || ' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 55
+Line       :         'typeof window.goldClientJeiInitializeWithTooltips !== "function" || ' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 56
+Line       :         'typeof window.goldClientJeiTooltip !== "function") {\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 60
+Line       :     '        window.__goldClientJeiProgressUpdate = function(title, steps, step, message, active) {\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 63
+Line       :     '            window.__goldClientJeiProgress = {title:String(title), steps:steps, step:step, message:String(message), active:active};\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 67
+Line       :     '                window.__goldClientJeiScreenChangeCount = (window.__goldClientJeiScreenChangeCount || 0) + 1;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 68
+Line       :     '                window.__goldClientLastScreen = String(screenName == null ? "" : screenName);\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 69
+Line       :     '                if (!window.__goldClientJeiUiInstalled) installJeiDiagnosticUi();\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 70
+Line       :     '                if (!window.__goldClientJeiIndexReady && !window.__goldClientJeiIndexing) {\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 71
+Line       :     '                    window.__goldClientJeiIndexing = true;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 84
+Line       :     '            window.__goldClientJeiUiInstalled = true;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 85
+Line       :     '            window.__goldClientJeiUiInstallCount = (window.__goldClientJeiUiInstallCount || 0) + 1;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 89
+Line       :     '                var items = window.__goldClientCaptureItems();\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 91
+Line       :     '                window.__goldClientJeiSourceItems = items;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 92
+Line       :     '                window.__goldClientJeiFactoryCallCount = (window.__goldClientJeiFactoryCallCount || 0) + 1;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 97
+Line       :     '                window.goldClientJeiSetLocale(window.__goldClientJeiLocaleTag);\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 98
+Line       :     '                var elements = JSON.parse(window.goldClientJeiInitializeWithTooltips(ids, displayNames, normalTooltipData, advancedTooltipData));\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 100
+Line       :     '                window.__goldClientJeiItems = elements;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 101
+Line       :     '                window.__goldClientJeiIndexReady = true;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 106
+Line       :     '                    fetch("/__gold-client-corpus", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({profile:"supplied-eaglercraft-1.12.2-js", localeTag:window.__goldClientJeiLocaleTag, 
+             category:"registered item types; one default metadata-0 stack per registry item", excluded:["creative variants","item stacks from inventory","ingredients","recipes"], items:items})}).catch(function(error) { console.warn("[JEI 
+             corpus export]", error); });\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 109
+Line       :     '                window.__goldClientJeiIndexing = false;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 114
+Line       :     '            window.__goldClientJeiIndexing = false;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 117
+Line       :     '            if (!window.__goldClientJeiIndexReady) return;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 119
+Line       :     '            window.__goldClientJeiFilterCallCount = (window.__goldClientJeiFilterCallCount || 0) + 1;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 120
+Line       :     '            var matches = JSON.parse(window.goldClientJeiFilter(query));\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 131
+Line       :     '            var data = JSON.stringify({profile:"supplied-eaglercraft-1.12.2-js", localeTag:window.__goldClientJeiLocaleTag, category:"registered item types; one default metadata-0 stack per registry item", 
+             excluded:["creative variants","item stacks from inventory","ingredients","recipes"], items:window.__goldClientJeiSourceItems}, null, 2);\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 142
+Line       :     'if (typeof window.__goldClientCaptureItems !== "function") {\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 143
+Line       :     '                window.__goldClientCaptureItems = function() {\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 147
+Line       :     '                    window.__goldClientJeiLocaleTag = language == null ? "en_us" : $rt_ustr(language);\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 149
+Line       :     '                    window.__goldClientJeiStacksById = Object.create(null);\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 150
+Line       :     '                    window.__goldClientJeiGetTooltipData = function(id, advanced) {\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 151
+Line       :     '                        var stack = window.__goldClientJeiStacksById[id];\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 170
+Line       :     '                        window.__goldClientJeiStacksById[idText] = stack;\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.cjs
+LineNumber : 171
+Line       :     '                        items.push({id: idText, displayName: $rt_ustr(nmi_ItemStack_getDisplayName(stack)), normalTooltipData: window.__goldClientJeiGetTooltipData(idText, false), advancedTooltipData: 
+             window.__goldClientJeiGetTooltipData(idText, true)});\n' +
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.test.cjs
+LineNumber : 18
+Line       :     const translated = path.join(directory, 'eagler-mod.js');
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.test.cjs
+LineNumber : 52
+Line       :         /goldClientJeiInitializeWithTooltips\(ids, displayNames, normalTooltipData, advancedTooltipData\)/);
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.test.cjs
+LineNumber : 53
+Line       :     assert.match(html, /goldClientJeiSetLocale\(window\.__goldClientJeiLocaleTag\)/);
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.test.cjs
+LineNumber : 55
+Line       :     assert.match(html, /goldClientJeiFilter\(query\)/);
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.test.cjs
+LineNumber : 56
+Line       :     assert.match(html, /goldClientJeiTooltip/);
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.test.cjs
+LineNumber : 57
+Line       :     assert.match(html, /__goldClientJeiStacksById/);
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\inject-client.test.cjs
+LineNumber : 62
+Line       :     assert.match(html, /__goldClientJeiProgressUpdate/);
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\README.md
+LineNumber : 32
+Line       : run `window.goldClientJeiTooltip("minecraft:iron_ingot", false)`. The supplied
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\README.md
+LineNumber : 118
+Line       : Minified JavaScript clients and the required 26.2 WebAssembly client remain
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\README.md
+LineNumber : 119
+Line       : unsupported. No minified-client generalization or WASM rewriting is included.
+
+Path       : C:\Users\sriha.ranimwk\Desktop\Gold-Client\client-profiles\eaglercraft-1.12-js\serve-demo.cjs
+LineNumber : 57
+Line       :                     path.join(repository, 'unminified-clients', 'Eaglercraft_1.12_Offline_en_US.html'));
+
+
+
+
+
+=== Matching integration files ===
+
+--- client-profiles\eaglercraft-1.12-js\build.ps1 ---
+$ErrorActionPreference = "Stop"
+
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$client = Join-Path $repo "unminified-clients\Eaglercraft_1.12_Offline_en_US.html"
+$mod = Join-Path $repo "test-mods\jei1.12.2.jar"
+$expectedHash = "DAD60317D8FDF891AD7841ABF838564EA7CBD317EC85D92F57DCB8F55602124B"
+$translated = Join-Path $repo "target\jei-ingredient-elements\translated\eagler-mod.js"
+$output = Join-Path $repo "target\jei-ingredient-elements\client\Eaglercraft_1.12_Offline_en_US.html"
+$maven = Get-Command mvn.cmd -ErrorAction SilentlyContinue
+if (-not $maven) {
+    $maven = Get-Command mvn -ErrorAction Stop
+}
+
+if (-not (Test-Path -LiteralPath $client -PathType Leaf)) {
+    throw "Supplied Eaglercraft 1.12.2 HTML was not found: $client"
+}
+if (-not (Test-Path -LiteralPath $mod -PathType Leaf)) {
+    throw "Exact external JEI input was not found: $mod"
+}
+if ((Get-FileHash -LiteralPath $mod -Algorithm SHA256).Hash -ne $expectedHash) {
+    throw "Refusing to use a JEI JAR with an unexpected SHA-256."
+}
+
+Push-Location $repo
+try {
+    & (Join-Path $PSScriptRoot "prepare-forge-runtime.ps1")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Matching Forge/Minecraft JVM runtime preparation failed ($LASTEXITCODE)."
+    }
+
+    & node --test (Join-Path $PSScriptRoot "inject-client.test.cjs")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Client injection regression test failed ($LASTEXITCODE)."
+    }
+
+    $previousJavaHome = $env:JAVA_HOME
+    $previousPath = $env:PATH
+    $jdk17 = Join-Path $repo "target\forge-baseline\jdk-17.0.15+6"
+    $env:JAVA_HOME = $jdk17
+    $env:PATH = (Join-Path $jdk17 "bin") + ";" + $previousPath
+    try {
+        & $maven.Source -q "-Dtest=JeiSuffixTreeMilestoneTest,JeiIngredientElementMilestoneTest" test
+        if ($LASTEXITCODE -ne 0) {
+            throw "Original JEI JVM/TeaVM comparison failed ($LASTEXITCODE)."
+        }
+    }
+    finally {
+        $env:JAVA_HOME = $previousJavaHome
+        $env:PATH = $previousPath
+    }
+
+    & node (Join-Path $PSScriptRoot "inject-client.cjs") `
+        $client $translated $output
+    if ($LASTEXITCODE -ne 0) {
+        throw "Eaglercraft client profile preparation failed ($LASTEXITCODE)."
+    }
+}
+finally {
+    Pop-Location
+}
+
+Write-Output ""
+Write-Output "Run .\client-profiles\eaglercraft-1.12-js\run-demo.ps1 to serve the isolated client."
+Write-Output "The client-derived registry corpus is saved under ignored target\jei-suffix-tree\."
+Write-Output $output
+
+--- client-profiles\eaglercraft-1.12-js\inject-client.cjs ---
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+const [clientPath, translatedPath, outputPath] = process.argv.slice(2);
+if (!clientPath || !translatedPath || !outputPath) {
+    process.stderr.write(
+        'Usage: node inject-client.cjs <client.html> <jei-slice.js> <output.html>\n');
+    process.exit(2);
+}
+
+const source = fs.readFileSync(clientPath, 'utf8').replace(/\r\n/g, '\n');
+const expectedOptions = `        window.eaglercraftXOpts = {
+            container: "game_frame",
+            worldsDB: "worlds"
+        };`;
+const scriptMarker =
+    'if(typeof window !== "undefined") window.eaglercraftXClientScriptElement = document.currentScript;';
+const itemRegistryCall =
+    'var$1.$screenChangedHook.call($rt_ustr(var$2), var$3, var$4, var$5, var$6, var$7);';
+
+function requireUnique(text, marker, description) {
+    const first = text.indexOf(marker);
+    if (first < 0 || text.indexOf(marker, first + marker.length) >= 0) {
+        throw new Error(`Expected exactly one ${description} anchor in supplied client`);
+    }
+    return first;
+}
+
+if (!source.includes('<title>Eaglercraft 1.12.2</title>')) {
+    throw new Error('Unsupported client: expected the supplied Eaglercraft 1.12.2 profile');
+}
+if (!fs.existsSync(translatedPath)) {
+    throw new Error(`Translated JEI slice not found: ${translatedPath}`);
+}
+
+requireUnique(source, expectedOptions, 'Eaglercraft launch options');
+let output = source.replace(expectedOptions, expectedOptions.replace(
+    '            worldsDB: "worlds"',
+    '            worldsDB: "worlds",\n            hooks: {}'));
+const markerOffset = requireUnique(output, scriptMarker, 'client runtime script');
+const scriptOffset = output.lastIndexOf('<script', markerOffset);
+if (scriptOffset < 0) {
+    throw new Error('Could not locate Eaglercraft runtime script element');
+}
+requireUnique(output, itemRegistryCall, 'Eaglercraft screen-change callback');
+
+const translatedScript =
+    '    <script src="eagler-jei-ingredient-elements.js"></script>\n' +
+    '    <script>\n' +
+    '        if (typeof window.main !== "function" || ' +
+        'typeof window.goldClientJeiSearch !== "function" || ' +
+        'typeof window.goldClientJeiInitialize !== "function" || ' +
+        'typeof window.goldClientJeiInitializeWithTooltips !== "function" || ' +
+        'typeof window.goldClientJeiTooltip !== "function") {\n' +
+    '            throw new Error("Translated JEI ingredient-element exports are missing");\n' +
+    '        }\n' +
+    '        window.main([], function(error) { if (error) throw error; });\n' +
+    '        window.__goldClientJeiProgressUpdate = function(title, steps, step, message, active) {\n' +
+    '            var status = document.getElementById("gold-jei-status");\n' +
+    '            if (status) status.textContent = (active ? String(title) + ": " + step + "/" + steps : "Completed " + String(title) + " (" + step + "/" + steps + ")");\n' +
+    '            window.__goldClientJeiProgress = {title:String(title), steps:steps, step:step, message:String(message), active:active};\n' +
+    '        };\n' +
+    '        window.eaglercraftXOpts.hooks = {\n' +
+    '            screenChanged: function(screenName) {\n' +
+    '                window.__goldClientJeiScreenChangeCount = (window.__goldClientJeiScreenChangeCount || 0) + 1;\n' +
+    '                window.__goldClientLastScreen = String(screenName == null ? "" : screenName);\n' +
+    '                if (!window.__goldClientJeiUiInstalled) installJeiDiagnosticUi();\n' +
+    '                if (!window.__goldClientJeiIndexReady && !window.__goldClientJeiIndexing) {\n' +
+    '                    window.__goldClientJeiIndexing = true;\n' +
+    '                    setTimeout(buildJeiDiagnosticIndex, 0);\n' +
+    '                }\n' +
+    '            }\n' +
+    '        };\n' +
+    '        function installJeiDiagnosticUi() {\n' +
+    '            var panel = document.createElement("section");\n' +
+    '            panel.id = "gold-client-jei-diagnostic";\n' +
+    '            panel.style.cssText = "position:fixed;right:12px;top:12px;z-index:2147483647;width:340px;max-height:70vh;overflow:auto;padding:10px;background:rgba(18,18,22,.94);color:#fff;font:13px Arial,sans-serif;border:1px solid #aaa;border-radius:4px";\n' +
+    '            panel.innerHTML = "<strong>Partial JEI original-code search â€” diagnostic UI</strong><div id=\\"gold-jei-status\\">Waiting for client item registry...</div><input id=\\"gold-jei-query\\" type=\\"search\\" placeholder=\\"Search item ID or display name\\" style=\\"box-sizing:border-box;width:100%;margin:8px 0;padding:6px\\"><div id=\\"gold-jei-count\\"></div><ul id=\\"gold-jei-results\\" style=\\"padding-left:20px\\"></ul><button id=\\"gold-jei-export\\" type=\\"button\\">Export client corpus</button>";\n' +
+    '            document.body.appendChild(panel);\n' +
+    '            document.getElementById("gold-jei-query").addEventListener("input", showJeiDiagnosticResults);\n' +
+    '            document.getElementById("gold-jei-export").addEventListener("click", exportJeiDiagnosticCorpus);\n' +
+    '            window.__goldClientJeiUiInstalled = true;\n' +
+    '            window.__goldClientJeiUiInstallCount = (window.__goldClientJeiUiInstallCount || 0) + 1;\n' +
+    '        }\n' +
+    '        function buildJeiDiagnosticIndex() {\n' +
+    '            try {\n' +
+    '                var items = window.__goldClientCaptureItems();\n' +
+    '                if (!items.length) throw new Error("Client item registry returned no entries");\n' +
+    '                window.__goldClientJeiSourceItems = items;\n' +
+    '                window.__goldClientJeiFactoryCallCount = (window.__goldClientJeiFactoryCallCount || 0) + 1;\n' +
+    '                var ids = items.map(function(item) { return item.id; });\n' +
+    '                var displayNames = items.map(function(item) { return item.displayName; });\n' +
+    '                var normalTooltipData = items.map(function(item) { return item.normalTooltipData; });\n' +
+    '                var advancedTooltipData = items.map(function(item) { return item.advancedTooltipData; });\n' +
+    '                window.goldClientJeiSetLocale(window.__goldClientJeiLocaleTag);\n' +
+    '                var elements = JSON.parse(window.goldClientJeiInitializeWithTooltips(ids, displayNames, normalTooltipData, advancedTooltipData));\n' +
+    '                if (!Array.isArray(elements) || elements.length !== items.length) throw new Error("Original JEI factory returned an unexpected element count");\n' +
+    '                window.__goldClientJeiItems = elements;\n' +
+    '                window.__goldClientJeiIndexReady = true;\n' +
+    '                document.getElementById("gold-jei-status").textContent = "Original JEI factory created " + elements.length + " ingredient elements from " + items.length + " registered item types (default stack only).";\n' +
+    '                document.getElementById("gold-jei-query").disabled = false;\n' +
+    '                showJeiDiagnosticResults();\n' +
+    '                if (location.protocol !== "file:") {\n' +
+    '                    fetch("/__gold-client-corpus", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({profile:"supplied-eaglercraft-1.12.2-js", localeTag:window.__goldClientJeiLocaleTag, category:"registered item types; one default metadata-0 stack per registry item", excluded:["creative variants","item stacks from inventory","ingredients","recipes"], items:items})}).catch(function(error) { console.warn("[JEI corpus export]", error); });\n' +
+    '                }\n' +
+    '            } catch (error) {\n' +
+    '                window.__goldClientJeiIndexing = false;\n' +
+    '                document.getElementById("gold-jei-status").textContent = "Index failed: " + error;\n' +
+    '                console.error("[JEI diagnostic index]", error);\n' +
+    '                return;\n' +
+    '            }\n' +
+    '            window.__goldClientJeiIndexing = false;\n' +
+    '        }\n' +
+    '        function showJeiDiagnosticResults() {\n' +
+    '            if (!window.__goldClientJeiIndexReady) return;\n' +
+    '            var query = document.getElementById("gold-jei-query").value;\n' +
+    '            window.__goldClientJeiFilterCallCount = (window.__goldClientJeiFilterCallCount || 0) + 1;\n' +
+    '            var matches = JSON.parse(window.goldClientJeiFilter(query));\n' +
+    '            var list = document.getElementById("gold-jei-results");\n' +
+    '            list.textContent = "";\n' +
+    '            matches.slice(0, 100).forEach(function(item) {\n' +
+    '                var row = document.createElement("li");\n' +
+    '                row.textContent = item.id + " â€” " + item.displayName;\n' +
+    '                list.appendChild(row);\n' +
+    '            });\n' +
+    '            document.getElementById("gold-jei-count").textContent = matches.length + " result(s)" + (matches.length > 100 ? " (first 100 shown)" : "");\n' +
+    '        }\n' +
+    '        function exportJeiDiagnosticCorpus() {\n' +
+    '            var data = JSON.stringify({profile:"supplied-eaglercraft-1.12.2-js", localeTag:window.__goldClientJeiLocaleTag, category:"registered item types; one default metadata-0 stack per registry item", excluded:["creative variants","item stacks from inventory","ingredients","recipes"], items:window.__goldClientJeiSourceItems}, null, 2);\n' +
+    '            var link = document.createElement("a");\n' +
+    '            link.href = URL.createObjectURL(new Blob([data], {type:"application/json"}));\n' +
+    '            link.download = "jei-real-item-corpus.json";\n' +
+    '            link.click();\n' +
+    '            setTimeout(function() { URL.revokeObjectURL(link.href); }, 1000);\n' +
+    '        }\n' +
+    '    </script>\n';
+
+output = output.slice(0, scriptOffset) + translatedScript + output.slice(scriptOffset);
+output = output.replace(itemRegistryCall,
+    'if (typeof window.__goldClientCaptureItems !== "function") {\n' +
+    '                window.__goldClientCaptureItems = function() {\n' +
+    '                    nmi_Item_$callClinit();\n' +
+    '                    var settings = nmc_Minecraft_getMinecraft().$gameSettings;\n' +
+    '                    var language = settings == null ? null : settings.$language;\n' +
+    '                    window.__goldClientJeiLocaleTag = language == null ? "en_us" : $rt_ustr(language);\n' +
+    '                    var registry = nmi_Item_REGISTRY;\n' +
+    '                    window.__goldClientJeiStacksById = Object.create(null);\n' +
+    '                    window.__goldClientJeiGetTooltipData = function(id, advanced) {\n' +
+    '                        var stack = window.__goldClientJeiStacksById[id];\n' +
+    '                        if (!stack) throw new Error("No live client ItemStack for " + id);\n' +
+    '                        var minecraft = nmc_Minecraft_getMinecraft();\n' +
+    '                        var lines = nmi_ItemStack_getTooltip(stack, minecraft.$player, !!advanced);\n' +
+    '                        var encoded = "";\n' +
+    '                        for (var index = 0; index < ju_ArrayList_size(lines); index++) {\n' +
+    '                            var line = $rt_ustr(ju_ArrayList_get(lines, index));\n' +
+    '                            encoded += line.length + ":" + line;\n' +
+    '                        }\n' +
+    '                        return encoded;\n' +
+    '                    };\n' +
+    '                    var iterator = nmur_RegistryNamespaced_iterator(registry);\n' +
+    '                    var items = [];\n' +
+    '                    while (iterator.$hasNext()) {\n' +
+    '                        var item = iterator.$next();\n' +
+    '                        var id = nmur_RegistryNamespaced_getNameForObject(registry, item);\n' +
+    '                        if (id === null) continue;\n' +
+    '                        var stack = nmi_ItemStack__init_10(item, 1);\n' +
+    '                        var idText = $rt_ustr(nmu_ResourceLocation_toString(id));\n' +
+    '                        window.__goldClientJeiStacksById[idText] = stack;\n' +
+    '                        items.push({id: idText, displayName: $rt_ustr(nmi_ItemStack_getDisplayName(stack)), normalTooltipData: window.__goldClientJeiGetTooltipData(idText, false), advancedTooltipData: window.__goldClientJeiGetTooltipData(idText, true)});\n' +
+    '                    }\n' +
+    '                    items.sort(function(a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });\n' +
+    '                    return items;\n' +
+    '                };\n' +
+    '            }\n' + itemRegistryCall);
+
+const absoluteOutput = path.resolve(outputPath);
+fs.mkdirSync(path.dirname(absoluteOutput), { recursive: true });
+fs.copyFileSync(translatedPath,
+    path.join(path.dirname(absoluteOutput), 'eagler-jei-ingredient-elements.js'));
+fs.writeFileSync(absoluteOutput, output, 'utf8');
+
+process.stdout.write(`Created isolated JEI JS-profile client: ${absoluteOutput}\n`);
+process.stdout.write('The original client HTML and mod JAR were left unchanged.\n');
+
+--- client-profiles\eaglercraft-1.12-js\inject-client.test.cjs ---
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const test = require('node:test');
+const vm = require('node:vm');
+
+const injector = path.join(__dirname, 'inject-client.cjs');
+
+test('keeps injected scripts outside the client script and launch options valid', t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gold-client-inject-'));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+
+    const client = path.join(directory, 'client.html');
+    const translated = path.join(directory, 'eagler-mod.js');
+    const output = path.join(directory, 'out', 'client.html');
+    const runtimeCall =
+        'var$1.$screenChangedHook.call($rt_ustr(var$2), var$3, var$4, var$5, var$6, var$7);';
+    fs.writeFileSync(client, [
+        '<title>Eaglercraft 1.12.2</title>',
+        '<script type="text/javascript">',
+        '        window.eaglercraftXOpts = {',
+        '            container: "game_frame",',
+        '            worldsDB: "worlds"',
+        '        };',
+        '</script>',
+        '<script type="text/javascript">',
+        'if(typeof window !== "undefined") window.eaglercraftXClientScriptElement = document.currentScript;',
+        runtimeCall,
+        '</script>'
+    ].join('\r\n'));
+    fs.writeFileSync(translated, '/* translated test bundle */');
+
+    const result = spawnSync(process.execPath, [injector, client, translated, output], {
+        encoding: 'utf8'
+    });
+    assert.equal(result.status, 0, result.stderr);
+
+    const html = fs.readFileSync(output, 'utf8');
+    const firstClose = html.indexOf('</script>');
+    const adapterScript = html.indexOf('<script src="eagler-jei-ingredient-elements.js">');
+    const runtimeScript = html.indexOf('if(typeof window !== "undefined")');
+    const adapterClose = html.indexOf('</script>', adapterScript);
+    assert.ok(firstClose >= 0);
+    assert.ok(adapterScript > firstClose, 'translated bundle must not be nested in launch-options script');
+    assert.ok(runtimeScript > adapterClose, 'client runtime must remain a separate script');
+    assert.equal((html.match(/<script src="eagler-jei-ingredient-elements\.js">/g) || []).length, 1);
+    assert.match(html,
+        /goldClientJeiInitializeWithTooltips\(ids, displayNames, normalTooltipData, advancedTooltipData\)/);
+    assert.match(html, /goldClientJeiSetLocale\(window\.__goldClientJeiLocaleTag\)/);
+    assert.match(html, /settings\.\$language/);
+    assert.match(html, /goldClientJeiFilter\(query\)/);
+    assert.match(html, /goldClientJeiTooltip/);
+    assert.match(html, /__goldClientJeiStacksById/);
+    assert.match(html, /nmi_ItemStack_getTooltip/);
+    assert.match(html, /ju_ArrayList_size/);
+    assert.match(html, /normalTooltipData/);
+    assert.match(html, /advancedTooltipData/);
+    assert.match(html, /__goldClientJeiProgressUpdate/);
+
+    const launchStart = html.indexOf('window.eaglercraftXOpts = {');
+    const launchScriptStart = html.lastIndexOf('<script', launchStart);
+    const launchEnd = html.indexOf('</script>', launchStart);
+    const launchScript = html.slice(html.indexOf('>', launchScriptStart) + 1, launchEnd);
+    const sandbox = { window: {} };
+    vm.runInNewContext(launchScript, sandbox);
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(sandbox.window.eaglercraftXOpts)),
+        {
+            container: 'game_frame',
+            worldsDB: 'worlds',
+            hooks: {}
+        });
+    assert.equal(
+        fs.readFileSync(path.join(path.dirname(output), 'eagler-jei-ingredient-elements.js'), 'utf8'),
+        '/* translated test bundle */');
+});
+
+--- client-profiles\eaglercraft-1.12-js\README.md ---
+# Eaglercraft 1.12.2 JS client profile â€” partial original JEI integration
+
+This is a partial integration, not complete JEI compatibility. It translates
+original JEI 4.16.1.301 bytecode from the external
+`test-mods/jei1.12.2.jar` (SHA-256
+`DAD60317D8FDF891AD7841ABF838564EA7CBD317EC85D92F57DCB8F55602124B`) and
+uses original JEI ingredient-element construction, suffix-tree search, and
+`IngredientFilter` with client-derived item IDs, display names, and real
+tooltip data from the supplied Eaglercraft 1.12.2 JavaScript client.
+
+## Run
+
+From the repository root:
+
+```powershell
+.\client-profiles\eaglercraft-1.12-js\run-demo.ps1
+```
+
+This verifies/downloads the pinned Forge/Minecraft baseline, runs injector and
+original-JVM/TeaVM parity tests, translates the selected JEI code, creates an
+isolated client under ignored `target/`, then serves it at
+`http://127.0.0.1:4173/`. Open that URL in a browser. After the client registry
+is ready, the panel titled **â€œPartial JEI original-code search â€” diagnostic
+UIâ€** invokes original `IngredientListElementFactory.createBaseList` and
+`IngredientFilter`; the search query and returned matches use JEI's original
+filter/indexing classes. The original suffix-tree tests remain a separate
+regression path. The panel displays up to 100 matching client-derived
+registry IDs and names. The server exports the runtime corpus to ignored
+`target/jei-suffix-tree/jei-real-item-corpus.json`.
+
+To verify the client-backed tooltip service in the browser developer console,
+run `window.goldClientJeiTooltip("minecraft:iron_ingot", false)`. The supplied
+build returns `["Iron IngotÂ§r"]`; passing `true` exercises the advanced
+`ITooltipFlag`.
+
+The build requires PowerShell, Node.js, Maven, and network access for the
+checksum-pinned official runtime bootstrap. It uses Temurin JDK 8 for the
+legacy ForgeGradle setup and Temurin JDK 17 for TeaVM/tests.
+
+To rebuild and compare against the exported browser corpus:
+
+```powershell
+.\client-profiles\eaglercraft-1.12-js\build.ps1
+```
+
+When the exact client-hash/JAR-hash corpus exists, the build compares original
+JVM and translated filter results over all 411 registered item types,
+including prefixed mod-name/tooltip queries, intersections, absent/repeated
+queries, case/Unicode/formatting behavior, and full-index replacement. It
+separately compares suffix-tree behavior and profile `NonNullList` operations
+with the original/mapped Minecraft implementations.
+
+## Data boundary
+
+The profile adapter enumerates the client's `Item.REGISTRY` after initialization.
+It represents **registered item types**, not inventory stacks, creative-tab
+variants, JEI ingredients, or recipes. For each registry entry it reads the
+registry `ResourceLocation` and asks the client for the display name of a
+one-count, metadata-0 `ItemStack`. Original JEI creates and sorts its
+`IngredientListElement` objects from those traced records. It does not
+synthesize IDs or names. Variants are excluded because this adapter does not
+enumerate them. The exported corpus is sorted by registry ID and includes the
+exact client and JEI input hashes.
+
+The JS profile is tied to the supplied readable client build. The injection
+adapter verifies its title/options/runtime/callback anchors and depends on
+generated identifiers including `nmi_Item_REGISTRY`,
+`nmur_RegistryNamespaced_iterator`, `nmur_RegistryNamespaced_getNameForObject`,
+`nmi_ItemStack__init_10`, and `nmi_ItemStack_getDisplayName`. These are
+client-build-specific symbols, not stable public APIs. A new client build must
+be re-inspected and separately verified.
+
+## Original code versus compatibility code
+
+The translated slice stages byte-identical original JEI classes for
+`IngredientListElementFactory`, `IngredientListElement`,
+`IngredientListElementComparator`, `IngredientOrderTracker`,
+`IngredientInformation`, `IngredientBlacklistInternal`, `IngredientFilter`,
+`IngredientFilterBackgroundBuilder`, `PrefixedSearchTree`, the required
+`Config`/`ConfigValues` classes, and the suffix-tree/search closure. The JVM
+oracle runs the unmodified JAR against mapped Minecraft 1.12.2 and Forge
+14.23.5.2816, then compares factory, filter, and suffix-tree results to TeaVM
+output on the client corpus. JEI's Minecraft-bound `Translator` is the one
+profile replacement: its locale-lowercase operation receives the real client
+language code. All other staged original JEI classes are byte-checked.
+
+Profile compatibility supplies actual item identifiers/display names,
+default metadata-0 client stacks and generated tooltips, item-registry/helper
+services, Minecraft `NonNullList` behavior, the real client language code,
+progress callbacks, and visible warning logging. Guava 21.0 and Commons Lang
+3.5 are staged from the matching Forge dependency cache. A mapped Forge/Minecraft
+JVM classpath is prepared from ForgeGradle artifacts and remains separate from
+TeaVM's browser services. The input JAR is not modified.
+
+## Limits and verification scope
+
+The original filter consumes actual client tooltip strings through the
+`IIngredientRenderer` boundary and original `ConfigValues` defaults. In the
+verified JAR those defaults require a prefix for mod-name search, enable
+tooltip search, and disable ore-dictionary, creative-tab, color, and resource-ID
+search. The client adapter uses the actual resource namespace as the mod ID;
+Forge's friendly mod display names, ore dictionary, creative tabs, color names,
+persisted blacklist, and mutable config are not available and are not
+synthesized.
+
+Original `IngredientFilterBackgroundBuilder` indexing completes synchronously
+for the tested 411-entry corpus within its 10-second budget. If indexing takes
+longer, JEI registers on Forge's event bus and waits for client ticks/player
+state; the supplied client has no Forge event lifecycle, and the profile
+explicitly fails that registration rather than silently dropping work.
+Deferred indexing, larger/slow corpora, runtime ingredient mutations, and
+config changes remain unsupported.
+
+The temporary panel is diagnostic UI, not JEI's original UI. The target client
+contains no Forge mod loader; the corpus is only the client's registered item
+types. No claim of complete or arbitrary mod compatibility is made.
+
+Minified JavaScript clients and the required 26.2 WebAssembly client remain
+unsupported. No minified-client generalization or WASM rewriting is included.
+
+--- client-profiles\eaglercraft-1.12-js\serve-demo.cjs ---
+'use strict';
+
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const http = require('node:http');
+const path = require('node:path');
+
+const repository = path.resolve(__dirname, '..', '..');
+const clientDirectory = path.join(repository, 'target', 'jei-ingredient-elements', 'client');
+const corpusPath = path.join(repository, 'target', 'jei-suffix-tree', 'jei-real-item-corpus.json');
+const clientFile = path.join(clientDirectory, 'Eaglercraft_1.12_Offline_en_US.html');
+const bundleFile = path.join(clientDirectory, 'eagler-jei-ingredient-elements.js');
+const port = Number(process.env.GOLD_CLIENT_DEMO_PORT || 4173);
+const maximumCorpusBytes = 5 * 1024 * 1024;
+
+function hashFile(file) {
+    return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex').toUpperCase();
+}
+
+function send(response, status, message) {
+    response.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
+    response.end(message);
+}
+
+const server = http.createServer((request, response) => {
+    const requestPath = new URL(request.url, `http://${request.headers.host}`).pathname;
+    if (request.method === 'POST' && requestPath === '/__gold-client-corpus') {
+        const chunks = [];
+        let received = 0;
+        request.on('data', chunk => {
+            received += chunk.length;
+            if (received > maximumCorpusBytes) {
+                send(response, 413, 'Corpus payload exceeds 5 MiB');
+                request.destroy();
+                return;
+            }
+            chunks.push(chunk);
+        });
+        request.on('end', () => {
+            if (response.writableEnded) return;
+            try {
+                const corpus = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+                if (corpus.profile !== 'supplied-eaglercraft-1.12.2-js' ||
+                    !Array.isArray(corpus.items) ||
+                    corpus.items.some(item =>
+                        !item || typeof item.id !== 'string' ||
+                        typeof item.displayName !== 'string')) {
+                    send(response, 400, 'Invalid client-derived corpus payload');
+                    return;
+                }
+                const ids = new Set(corpus.items.map(item => item.id));
+                if (ids.size !== corpus.items.length) {
+                    send(response, 400, 'Corpus contains duplicate registry identifiers');
+                    return;
+                }
+                corpus.sourceClientSha256 = hashFile(
+                    path.join(repository, 'unminified-clients', 'Eaglercraft_1.12_Offline_en_US.html'));
+                corpus.sourceModSha256 = hashFile(
+                    path.join(repository, 'test-mods', 'jei1.12.2.jar'));
+                corpus.count = corpus.items.length;
+                fs.mkdirSync(path.dirname(corpusPath), { recursive: true });
+                fs.writeFileSync(corpusPath, `${JSON.stringify(corpus, null, 2)}\n`);
+                response.writeHead(201, { 'Content-Type': 'text/plain; charset=utf-8' });
+                response.end(`Saved ${corpus.items.length} client registry entries`);
+                process.stdout.write(`Saved ${corpus.items.length} client-derived items to ${corpusPath}\n`);
+            } catch (error) {
+                send(response, 400, `Could not save client corpus: ${error.message}`);
+            }
+        });
+        return;
+    }
+
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+        send(response, 405, 'Method not allowed');
+        return;
+    }
+
+    let file;
+    let contentType;
+    if (requestPath === '/' || requestPath === '/Eaglercraft_1.12_Offline_en_US.html') {
+        file = clientFile;
+        contentType = 'text/html; charset=utf-8';
+    } else if (requestPath === '/eagler-jei-ingredient-elements.js') {
+        file = bundleFile;
+        contentType = 'text/javascript; charset=utf-8';
+    } else {
+        send(response, 404, 'Not found');
+        return;
+    }
+    if (!fs.existsSync(file)) {
+        send(response, 404, `Build output missing: ${path.basename(file)}`);
+        return;
+    }
+    const stat = fs.statSync(file);
+    response.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Length': stat.size,
+        'Cache-Control': 'no-store'
+    });
+    if (request.method === 'HEAD') response.end();
+    else fs.createReadStream(file).pipe(response);
+});
+
+server.listen(port, '127.0.0.1', () => {
+    process.stdout.write(`JEI diagnostic client: http://127.0.0.1:${port}/\n`);
+    process.stdout.write(`Client-derived corpus will be saved under ignored target/: ${corpusPath}\n`);
+});
+
+
