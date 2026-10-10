@@ -1,0 +1,335 @@
+package com.goldclient.planner;
+
+import com.google.gson.GsonBuilder;
+import com.goldclient.translator.TeaVmTranslator;
+import org.objectweb.asm.*;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.*;
+import java.util.zip.ZipFile;
+
+/**
+ * Explicit multi-JAR pipeline. Class-only staging; no automatic remapping,
+ * resource merging, reflection discovery or platform compatibility inference.
+ */
+public final class PipelineCommand {
+    private PipelineCommand() {}
+
+    public static int run(String[] args, PrintStream out, PrintStream err) {
+        Map<String, Object> report = new TreeMap<>();
+        Path reportFile = null;
+        List<MultiJarPlanner.Input> inputs = new ArrayList<>();
+
+        try {
+            List<String> roots = new ArrayList<>();
+            Set<String> external = new TreeSet<>();
+            Set<String> childFirst = new TreeSet<>();
+            Map<String, Path> overlays = new TreeMap<>();
+            Path staged = null;
+            Path jsDirectory = null;
+            String mainClass = null;
+            boolean teaVmReachability = false;
+            boolean reachabilitySpecified = false;
+
+            for (int i = 0; i < args.length; i++) {
+                String flag = args[i];
+                if (flag.equals("--help")) {
+                    usage(out);
+                    return 0;
+                }
+                if (++i >= args.length) {
+                    throw new IllegalArgumentException("Missing value for " + flag);
+                }
+                String value = args[i];
+                switch (flag) {
+                    case "--reachability" -> {
+                        if (reachabilitySpecified) throw duplicate(flag);
+                        reachabilitySpecified = true;
+                        if (!value.equals("strict") && !value.equals("teavm")) {
+                            throw new IllegalArgumentException(
+                                    "--reachability must be strict or teavm");
+                        }
+                        teaVmReachability = value.equals("teavm");
+                    }
+                    case "--input" -> inputs.add(new MultiJarPlanner.Input(
+                            Path.of(value), MultiJarPlanner.Role.TRANSLATION));
+                    case "--runtime" -> inputs.add(new MultiJarPlanner.Input(
+                            Path.of(value), MultiJarPlanner.Role.RUNTIME));
+                    case "--root" -> roots.add(value);
+                    case "--external" -> external.add(value);
+                    case "--overlay" -> {
+                        int separator = value.indexOf('=');
+                        if (separator <= 0 || separator == value.length() - 1) {
+                            throw new IllegalArgumentException(
+                                    "Overlay syntax: class.name=path-to.jar");
+                        }
+                        String name = value.substring(0, separator).replace('.', '/');
+                        Path jar = Path.of(value.substring(separator + 1));
+                        if (overlays.putIfAbsent(name, jar) != null) {
+                            throw new IllegalArgumentException(
+                                    "Duplicate overlay option: " + name);
+                        }
+                    }
+                    case "--report" -> {
+                        if (reportFile != null) throw duplicate(flag);
+                        reportFile = absolute(value);
+                    }
+                    case "--stage" -> {
+                        if (staged != null) throw duplicate(flag);
+                        staged = absolute(value);
+                    }
+                    case "--to-js" -> {
+                        if (jsDirectory != null) throw duplicate(flag);
+                        jsDirectory = absolute(value);
+                    }
+                    case "--main-class" -> {
+                        if (mainClass != null) throw duplicate(flag);
+                        mainClass = value.replace('/', '.');
+                    }
+                    case "--child-first" -> childFirst.add(value);
+                    default -> throw new IllegalArgumentException(
+                            "Unknown pipeline option: " + flag);
+                }
+            }
+
+            if (inputs.isEmpty() || roots.isEmpty() || reportFile == null) {
+                throw new IllegalArgumentException(
+                        "--input/--runtime, --root and --report are required");
+            }
+            if (jsDirectory != null && (staged == null || mainClass == null)) {
+                throw new IllegalArgumentException(
+                        "--to-js requires --stage and --main-class");
+            }
+            if (jsDirectory == null && (mainClass != null || !childFirst.isEmpty())) {
+                throw new IllegalArgumentException(
+                        "--main-class and --child-first require --to-js");
+            }
+            if (teaVmReachability && jsDirectory == null) {
+                throw new IllegalArgumentException(
+                        "--reachability teavm requires --to-js, "
+                        + "--stage and --main-class");
+            }
+            if (teaVmReachability && (!external.isEmpty()
+                    || inputs.stream().anyMatch(
+                        item -> item.role() == MultiJarPlanner.Role.RUNTIME))) {
+                throw new IllegalArgumentException(
+                        "TeaVM reachability mode does not accept explicit "
+                        + "runtime/external boundaries. Supply translation inputs.");
+            }
+            if (mainClass != null) roots.add(mainClass);
+
+            protectOutput(reportFile, inputs);
+            if (staged != null) {
+                protectOutput(staged, inputs);
+                if (samePath(reportFile, staged)) {
+                    throw new IllegalArgumentException(
+                            "Report and staged JAR must have different paths");
+                }
+            }
+            if (jsDirectory != null) {
+                Path js = jsDirectory.resolve("eagler-mod.js");
+                protectOutput(js, inputs);
+                if (samePath(reportFile, js) || samePath(staged, js)) {
+                    throw new IllegalArgumentException(
+                            "JavaScript output must not overwrite report or staged JAR");
+                }
+            }
+
+            TranslationPipeline pipeline = new TranslationPipeline();
+            var prepared = pipeline.prepare(inputs, roots, external, overlays);
+            var plan = prepared.plan();
+
+            report.put("schemaVersion", 1);
+            report.put("sourceSha256", prepared.sourceSha256());
+            report.put("roots", new TreeSet<>(roots));
+            report.put("selected", plan.selected());
+            report.put("runtimeClasses", plan.runtimeClasses());
+            report.put("missing", plan.missing());
+            report.put("duplicates", plan.duplicates());
+            report.put("replacedDefinitions", plan.replacedDefinitions());
+            report.put("scope", "Conservative class-level planning; class-only staging");
+
+            report.put("reachabilityMode", teaVmReachability ? "teavm" : "strict");
+
+            boolean blocked = !plan.duplicates().isEmpty()
+                    || (!teaVmReachability && !plan.missing().isEmpty());
+
+            if (blocked) {
+                report.put("status", "BLOCKED");
+                writeReport(reportFile, report);
+                err.println("Plan blocked. Inspect missing/duplicates in " + reportFile);
+                return 2;
+            }
+
+            var stagingPrepared = prepared;
+            if (teaVmReachability) {
+                report.put("deferredStructuralReferences", plan.missing());
+                report.put("verification",
+                        "Structural missing references are deferred to TeaVM compilation; "
+                        + "not declared supported or behaviorally verified.");
+                out.println("Structural references deferred to TeaVM: "
+                        + plan.missing().size());
+
+                var stagingPlan = new MultiJarPlanner.Plan(
+                        plan.selected(),
+                        plan.runtimeClasses(),
+                        Collections.unmodifiableSortedMap(
+                                new TreeMap<String, SortedSet<String>>()),
+                        plan.duplicates(),
+                        plan.replacedDefinitions());
+
+                stagingPrepared = new TranslationPipeline.Prepared(
+                        stagingPlan, prepared.sourceSha256());
+            }
+
+            report.put("status", "PLANNED");
+            writeReport(reportFile, report);
+
+            out.println("Selected classes: " + plan.selected().size());
+            out.println("Runtime boundaries: " + plan.runtimeClasses().size());
+            out.println("Approved overlays: " + plan.replacedDefinitions().size());
+
+            if (staged != null) {
+                var result = pipeline.stage(stagingPrepared, staged);
+                report.put("stagedJar", result.jar().toString());
+                report.put("stagedJarSha256", TranslationPipeline.sha256(result.jar()));
+                report.put("stagedClasses", result.classes());
+                report.put("status", teaVmReachability
+                        ? "STAGED_PENDING_TEAVM_VERIFICATION" : "STAGED");
+                writeReport(reportFile, report);
+                out.println("Staged: " + result.jar());
+            }
+
+            if (jsDirectory != null) {
+                if (!plan.runtimeClasses().isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "Translation requires a self-contained selected class set. "
+                            + "Runtime/external boundaries are allowed for planning "
+                            + "but are not automatically browser-compatible. "
+                            + "Supply required classes as translation inputs.");
+                }
+                requireMain(staged, mainClass);
+                TeaVmTranslator.translate(
+                        staged, jsDirectory, mainClass, childFirst);
+                Path js = jsDirectory.resolve("eagler-mod.js");
+                report.put("javascript", js.toString());
+                report.put("javascriptSha256", TranslationPipeline.sha256(js));
+                report.put("status", teaVmReachability
+                        ? "TRANSLATED_WITH_DEFERRED_STRUCTURAL_REFERENCES"
+                        : "TRANSLATED");
+                writeReport(reportFile, report);
+                out.println("Translated: " + js);
+            }
+
+            out.println("Report: " + reportFile);
+            return 0;
+        } catch (Exception exception) {
+            err.println("Pipeline failed: " + exception.getMessage());
+            if (reportFile != null) {
+                try {
+                    protectOutput(reportFile, inputs);
+                    report.put("status", "FAILED");
+                    report.put("error", exception.getMessage());
+                    writeReport(reportFile, report);
+                } catch (Exception reportingFailure) {
+                    err.println("Could not write failure report: "
+                            + reportingFailure.getMessage());
+                }
+            }
+            return 2;
+        }
+    }
+
+    private static void requireMain(Path jar, String className) throws IOException {
+        String entryName = className.replace('.', '/') + ".class";
+        boolean[] valid = {false};
+        try (ZipFile zip = new ZipFile(jar.toFile())) {
+            var entry = zip.getEntry(entryName);
+            if (entry == null) throw new IOException("Entry class not staged: " + className);
+            try (var stream = zip.getInputStream(entry)) {
+                new ClassReader(stream).accept(new ClassVisitor(Opcodes.ASM9) {
+                    @Override public MethodVisitor visitMethod(
+                            int access, String name, String desc,
+                            String signature, String[] exceptions) {
+                        int required = Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC;
+                        if (name.equals("main")
+                                && desc.equals("([Ljava/lang/String;)V")
+                                && (access & required) == required
+                                && (access & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) == 0) {
+                            valid[0] = true;
+                        }
+                        return null;
+                    }
+                }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            }
+        }
+        if (!valid[0]) throw new IOException(
+                "Entry must declare public static void main(String[]): " + className);
+    }
+
+    private static IllegalArgumentException duplicate(String flag) {
+        return new IllegalArgumentException("Option supplied more than once: " + flag);
+    }
+
+    private static Path absolute(String value) {
+        return Path.of(value).toAbsolutePath().normalize();
+    }
+
+    private static boolean samePath(Path first, Path second) throws IOException {
+        return first.equals(second)
+                || (Files.exists(first) && Files.exists(second)
+                    && Files.isSameFile(first, second));
+    }
+
+    private static void protectOutput(
+            Path output, List<MultiJarPlanner.Input> inputs) throws IOException {
+        for (var input : inputs) {
+            if (samePath(output, input.jar())) {
+                throw new IllegalArgumentException(
+                        "Output must not overwrite an input JAR: " + output);
+            }
+        }
+    }
+
+    private static void writeReport(Path path, Map<String, Object> report)
+            throws IOException {
+        Files.createDirectories(path.getParent());
+        Path temporary = Files.createTempFile(path.getParent(), ".gold-report-", ".json");
+        try {
+            Files.writeString(temporary,
+                    new GsonBuilder().setPrettyPrinting().create().toJson(report),
+                    StandardCharsets.UTF_8);
+            try {
+                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException exception) {
+                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private static void usage(PrintStream out) {
+        out.println("""
+                Usage:
+                  gold-client pipeline
+                    --input <jar>          repeatable translation input
+                    --runtime <jar>        repeatable planning-only boundary
+                    --root <class>         repeatable explicit root
+                    --reachability <mode>  strict (default) or teavm
+                                           teavm requires actual translation
+                    --external <class>     repeatable planning-only boundary
+                    --overlay <class=jar>  repeatable exact replacement
+                    --report <json>        required plan/provenance report
+                    --stage <jar>          optional selected class-only JAR
+                    --to-js <directory>    optional TeaVM compilation
+                    --main-class <class>   required with --to-js
+                    --child-first <prefix> optional TeaVM classloader policy
+
+                No resource merging, automatic remapping or compatibility inference.
+                """);
+    }
+}

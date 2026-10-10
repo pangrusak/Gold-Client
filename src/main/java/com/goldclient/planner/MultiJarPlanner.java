@@ -34,7 +34,8 @@ public final class MultiJarPlanner {
             SortedMap<String, Origin> selected,
             SortedSet<String> runtimeClasses,
             SortedMap<String, SortedSet<String>> missing,
-            SortedMap<String, List<Origin>> duplicates) {
+            SortedMap<String, List<Origin>> duplicates,
+            SortedMap<String, List<Origin>> replacedDefinitions) {
         public boolean hasBlockingDiagnostics() {
             return !missing.isEmpty() || !duplicates.isEmpty();
         }
@@ -44,6 +45,17 @@ public final class MultiJarPlanner {
 
     public Plan plan(List<Input> inputs, Collection<String> roots,
                      Set<String> externalClasses) throws IOException {
+        return plan(inputs, roots, externalClasses, Map.of());
+    }
+
+    /**
+     * Each override maps an exact class name to its approved supplying JAR.
+     * Overrides apply only to ambiguous classes and must select one definition.
+     */
+    public Plan plan(List<Input> inputs, Collection<String> roots,
+                     Set<String> externalClasses,
+                     Map<String, Path> overrides) throws IOException {
+        Objects.requireNonNull(overrides, "overrides");
         Objects.requireNonNull(inputs, "inputs");
         Objects.requireNonNull(roots, "roots");
         Objects.requireNonNull(externalClasses, "externalClasses");
@@ -99,6 +111,56 @@ public final class MultiJarPlanner {
                     }
                 }
             }
+        }
+
+        SortedMap<String, List<Origin>> replaced = new TreeMap<>();
+        SortedMap<String, Path> approved = new TreeMap<>();
+
+        for (var override : overrides.entrySet()) {
+            String name = normalize(override.getKey());
+            Path path = Objects.requireNonNull(
+                    override.getValue(), "override JAR").toAbsolutePath().normalize();
+
+            if (approved.putIfAbsent(name, path) != null) {
+                throw new IllegalArgumentException(
+                        "Multiple override keys normalize to the same class: " + name);
+            }
+            if (external.contains(name)) {
+                throw new IllegalArgumentException(
+                        "An external class cannot also have an overlay: " + name);
+            }
+        }
+
+        for (var override : approved.entrySet()) {
+            String name = override.getKey();
+            List<Indexed> definitions = index.get(name);
+
+            if (definitions == null || definitions.size() < 2) {
+                throw new IllegalArgumentException(
+                        "Overlay requires an ambiguous indexed class: " + name);
+            }
+
+            List<Indexed> winners = definitions.stream()
+                    .filter(item -> item.origin().jar()
+                            .equals(override.getValue().toString()))
+                    .toList();
+
+            if (winners.size() != 1) {
+                throw new IllegalArgumentException(
+                        "Overlay must select exactly one definition: " + name
+                                + " from " + override.getValue());
+            }
+
+            Indexed winner = winners.get(0);
+            List<Origin> losers = definitions.stream()
+                    .filter(item -> item != winner)
+                    .map(Indexed::origin)
+                    .sorted(Comparator.comparing(Origin::jar)
+                            .thenComparing(Origin::entry))
+                    .toList();
+
+            replaced.put(name, losers);
+            index.put(name, List.of(winner));
         }
 
         SortedMap<String, List<Origin>> duplicates = new TreeMap<>();
@@ -161,7 +223,8 @@ public final class MultiJarPlanner {
                 Collections.unmodifiableSortedMap(selected),
                 Collections.unmodifiableSortedSet(runtime),
                 freezeSets(missing),
-                Collections.unmodifiableSortedMap(duplicates));
+                Collections.unmodifiableSortedMap(duplicates),
+                Collections.unmodifiableSortedMap(replaced));
     }
 
     private static SortedMap<String, SortedSet<String>> freezeSets(

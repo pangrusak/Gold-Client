@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { installJeiReadiness } = require('./jei-readiness.cjs');
 const { installClientBridge } =
     require('../shared/client-bridge.cjs');
 const [clientPath, translatedPath, outputPath] = process.argv.slice(2);
@@ -132,16 +133,16 @@ const translatedScript =
     '                var elements = JSON.parse(window.goldClientJeiInitializeWithTooltips(ids, displayNames, normalTooltipData, advancedTooltipData));\n' +
     '                if (!Array.isArray(elements) || elements.length !== items.length) throw new Error("Original JEI factory returned an unexpected element count");\n' +
     '                window.__goldClientJeiItems = elements;\n' +
-    '                window.__goldClientJeiIndexReady = true;\n' +
+    '                window.__goldClientJeiIndexError = null; window.__goldClientJeiIndexReady = true;\n' +
     '                document.getElementById("gold-jei-status").textContent = "Original JEI factory created " + elements.length + " ingredient elements from " + items.length + " registered item types (default stack only).";\n' +
     '                document.getElementById("gold-jei-query").disabled = false;\n' +
     '                showJeiDiagnosticResults();\n' +
     '                if (location.protocol !== "file:") {\n' +
-    '                    fetch("/__gold-client-corpus", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({profile:"supplied-eaglercraft-1.12.2-js", localeTag:window.__goldClientJeiLocaleTag, category:"registered item types; one default metadata-0 stack per registry item", excluded:["creative variants","item stacks from inventory","ingredients","recipes"], items:items})}).catch(function(error) { console.warn("[JEI corpus export]", error); });\n' +
+    '                    fetch("/__gold-client-corpus", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({profile:"supplied-eaglercraft-1.12.2-js", localeTag:window.__goldClientJeiLocaleTag, category:"registered item types; one default metadata-0 stack per registry item", excluded:["creative variants","item stacks from inventory","ingredients","recipes"], items:items})}).then(function(response) { return response.text().then(function(message) { if (!response.ok) throw new Error(message || ("HTTP " + response.status)); window.__goldClientJeiCorpusExport = {ok:true, message:message, count:items.length}; var status = document.getElementById("gold-jei-status"); if (status) status.textContent += " | " + message; console.info("[JEI corpus export]", message); }); }).catch(function(error) { window.__goldClientJeiCorpusExport = {ok:false, message:String(error)}; var status = document.getElementById("gold-jei-status"); if (status) status.textContent += " | Corpus export failed: " + error; console.error("[JEI corpus export]", error); });\n' +
     '                }\n' +
     '            } catch (error) {\n' +
     '                window.__goldClientJeiIndexing = false;\n' +
-    '                document.getElementById("gold-jei-status").textContent = "Index failed: " + error;\n' +
+    '                window.__goldClientJeiIndexError = String(error); document.getElementById("gold-jei-status").textContent = "Index failed: " + error;\n' +
     '                console.error("[JEI diagnostic index]", error);\n' +
     '                return;\n' +
     '            }\n' +
@@ -171,8 +172,14 @@ const translatedScript =
     '        }\n' +
     '    </script>\n';
 
+const readinessScript =
+    '    <script>\n' +
+    '    (' + installJeiReadiness.toString() + ')(window);\n' +
+    '    </script>\n';
+
 output = output.slice(0, scriptOffset)
     + bridgeScript
+    + readinessScript
     + translatedScript
     + output.slice(scriptOffset);
 output = output.replace(itemRegistryCall,
@@ -211,6 +218,15 @@ output = output.replace(itemRegistryCall,
     '                    return items;\n' +
     '                };\n' +
     '            }\n' + itemRegistryCall);
+
+
+/* GOLD_CLIENT_RECIPE_PROBE_V1 */
+const recipeProbeSource = "\n(function() {\n    // GOLD_CLIENT_RECIPE_PROBE_V1\n    window.__goldClientCaptureRecipes = function() {\n        var registry = nmic_CraftingManager_field_193380_a;\n        var furnace = nmic_FurnaceRecipes_SMELTING_BASE;\n\n        if (!registry || !furnace || !furnace.$smeltingList) {\n            throw new Error(\"Client recipe registries are not initialized\");\n        }\n\n        function stackData(stack) {\n            if (!stack || stack.$field_190928_g ||\n                !stack.$item0 || stack.$stackSize <= 0) {\n                return null;\n            }\n\n            var name = nmur_RegistryNamespaced_getNameForObject(\n                nmi_Item_REGISTRY, stack.$item0);\n\n            if (name === null) {\n                throw new Error(\"Recipe stack item has no registry identifier\");\n            }\n\n            return {\n                id: $rt_ustr(nmu_ResourceLocation_toString(name)),\n                count: stack.$stackSize,\n                metadata: stack.$itemDamage\n            };\n        }\n\n        function ingredientData(ingredient) {\n            if (!ingredient || !ingredient.$field_193371_b ||\n                !ingredient.$field_193371_b.data) {\n                throw new Error(\"Unexpected client Ingredient representation\");\n            }\n\n            var stacks = ingredient.$field_193371_b.data;\n            var alternatives = [];\n\n            for (var i = 0; i < stacks.length; i++) {\n                var stack = stackData(stacks[i]);\n                if (stack) alternatives.push(stack);\n            }\n\n            return alternatives;\n        }\n\n        function ingredientList(list) {\n            if (!list) {\n                throw new Error(\"Recipe ingredient list is missing\");\n            }\n\n            var backing = list.$field_191198_a;\n            if (!backing || typeof backing.$size !== \"function\" ||\n                typeof backing.$get2 !== \"function\") {\n                throw new Error(\"Unexpected client recipe list representation\");\n            }\n\n            var result = [];\n            var size = backing.$size();\n\n            for (var i = 0; i < size; i++) {\n                result.push(ingredientData(backing.$get2(i)));\n            }\n\n            return result;\n        }\n\n        var recipes = [];\n        var unsupported = [];\n        var iterator = nmur_RegistryNamespaced_iterator(registry);\n\n        while (iterator.$hasNext()) {\n            var recipe = iterator.$next();\n            var name = nmur_RegistryNamespaced_getNameForObject(\n                registry, recipe);\n\n            if (name === null) {\n                throw new Error(\"Crafting recipe has no registry identifier\");\n            }\n\n            var id = $rt_ustr(nmu_ResourceLocation_toString(name));\n\n            if (Object.getPrototypeOf(recipe) === nmic_ShapedRecipes.prototype) {\n                var ingredients = ingredientList(recipe.$recipeItems);\n\n                if (ingredients.length !==\n                    recipe.$recipeWidth * recipe.$recipeHeight) {\n                    throw new Error(\"Shaped recipe dimensions mismatch: \" + id);\n                }\n\n                var output = stackData(recipe.$recipeOutput);\n                if (!output) {\n                    throw new Error(\"Shaped recipe output is empty: \" + id);\n                }\n\n                recipes.push({\n                    id: id,\n                    type: \"crafting_shaped\",\n                    width: recipe.$recipeWidth,\n                    height: recipe.$recipeHeight,\n                    ingredients: ingredients,\n                    output: output\n                });\n            } else if (Object.getPrototypeOf(recipe) === nmic_ShapelessRecipes.prototype) {\n                var output = stackData(recipe.$recipeOutput0);\n                if (!output) {\n                    throw new Error(\"Shapeless recipe output is empty: \" + id);\n                }\n\n                recipes.push({\n                    id: id,\n                    type: \"crafting_shapeless\",\n                    ingredients: ingredientList(recipe.$recipeItems0),\n                    output: output\n                });\n            } else {\n                unsupported.push({\n                    id: id,\n                    reason: \"Crafting class not handled by this probe\"\n                });\n            }\n        }\n\n        var entries = ju_HashMap_entrySet(furnace.$smeltingList);\n        var smelting = ju_HashMap$HashMapEntrySet_iterator(entries);\n        var smeltingIndex = 0;\n\n        while (ju_HashMap$AbstractMapIterator_hasNext(smelting)) {\n            var entry = ju_HashMap$EntryIterator_next(smelting);\n            var input = stackData(entry.$key);\n            var output = stackData(entry.$value3);\n\n            if (!input || !output) {\n                throw new Error(\"Smelting entry contains an empty stack\");\n            }\n\n            recipes.push({\n                diagnosticId: \"smelting-entry-\" + smeltingIndex++,\n                type: \"smelting\",\n                ingredients: [[input]],\n                output: output\n            });\n        }\n\n        return {\n            profile: \"supplied-eaglercraft-1.12.2-js\",\n            recipes: recipes,\n            unsupported: unsupported,\n            limitations: [\n                \"Stack NBT is not serialized\",\n                \"Smelting experience is not captured\",\n                \"Smelting diagnostic IDs are not stable registry IDs\",\n                \"Other crafting classes are not handled\"\n            ]\n        };\n    };\n})();\n";
+requireUnique(output, itemRegistryCall, 'recipe probe screen-change callback');
+output = output.replace(
+    itemRegistryCall,
+    recipeProbeSource + "\n" + itemRegistryCall
+);
 
 const absoluteOutput = path.resolve(outputPath);
 fs.mkdirSync(path.dirname(absoluteOutput), { recursive: true });

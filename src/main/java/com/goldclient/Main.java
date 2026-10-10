@@ -16,6 +16,13 @@ import org.objectweb.asm.Opcodes;
 
 public final class Main {
   public static void main(String[] args) {
+    if (args.length > 0 && args[0].equals("pipeline")) {
+      int code = com.goldclient.planner.PipelineCommand.run(
+          java.util.Arrays.copyOfRange(args, 1, args.length),
+          System.out, System.err);
+      if (code != 0) System.exit(code);
+      return;
+    }
     if (args.length < 1 || args.length > 9) {
       printUsage();
       System.exit(2);

@@ -1,0 +1,265 @@
+package com.goldclient.translator;
+
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
+import java.util.jar.*;
+import java.util.zip.*;
+
+/** Build-time discovery only: never loads or initializes the input mod. */
+public final class ForgeJarBootstrap {
+    private static final String MOD = "Lnet/minecraftforge/fml/common/Mod;";
+    private static final String HANDLER = "Lnet/minecraftforge/fml/common/Mod$EventHandler;";
+    private static final Map<String, String> PHASES = new LinkedHashMap<>();
+    static {
+        PHASES.put("preInit", "net/minecraftforge/fml/common/event/FMLPreInitializationEvent");
+        PHASES.put("init", "net/minecraftforge/fml/common/event/FMLInitializationEvent");
+        PHASES.put("postInit", "net/minecraftforge/fml/common/event/FMLPostInitializationEvent");
+        PHASES.put("loadComplete", "net/minecraftforge/fml/common/event/FMLLoadCompleteEvent");
+    }
+    record Annotation(String descriptor, Map<String, Object> values) {}
+    record Member(int access, String name, String descriptor, List<Annotation> annotations) {}
+    record Type(int access, String name, String parent, List<Member> fields,
+                List<Member> methods, List<Annotation> annotations) {}
+    public record Plan(String modId, String modClass, List<String> blockers,
+                       String bootstrapSource, int classCount) {}
+
+    public static void main(String[] args) throws Exception {
+        if (args.length != 2) {
+            throw new IllegalArgumentException("Usage: ForgeJarBootstrap <mod.jar> <output-directory>");
+        }
+        Path input = Path.of(args[0]);
+        Path output = Path.of(args[1]).toAbsolutePath().normalize();
+        Files.createDirectories(output);
+        Path generated = output.resolve("generated/gold/generated/ForgeModBootstrap.java");
+        Files.deleteIfExists(generated);
+        Plan plan = inspect(input);
+        String report = "Input: " + input.toRealPath() + "\n" +
+                "Classes scanned: " + plan.classCount() + "\n" +
+                "Mod ID: " + plan.modId() + "\n" +
+                "Mod class: " + plan.modClass() + "\n" +
+                "Bootstrap eligible: " + plan.blockers().isEmpty() + "\n" +
+                "Forge runtime verified: false\nFull mod equivalence verified: false\n" +
+                "Required host: per-mod original Forge events and loading context\n" +
+                "Blockers:\n" + String.join("\n", plan.blockers()) + "\n";
+        Files.writeString(output.resolve("forge-bootstrap-plan.txt"), report);
+        System.out.print(report);
+        if (!plan.blockers().isEmpty()) {
+            throw new IllegalStateException("Bootstrap preparation blocked; see forge-bootstrap-plan.txt");
+        }
+        Files.createDirectories(generated.getParent());
+        Files.writeString(generated, plan.bootstrapSource());
+        System.out.println("Generated original-handler bootstrap: " + generated);
+        System.out.println("This is source preparation, NOT browser mod execution.");
+    }
+
+    public static Plan inspect(Path jar) throws IOException {
+        List<Type> types = new ArrayList<>();
+        List<String> blockers = new ArrayList<>();
+        try (JarFile input = new JarFile(jar.toFile(), false)) {
+            Manifest manifest = input.getManifest();
+            if (manifest != null) {
+                for (String key : List.of("FMLCorePlugin", "FMLAT", "TweakClass", "MixinConfigs")) {
+                    String value = manifest.getMainAttributes().getValue(key);
+                    if (value != null && !value.isBlank()) {
+                        blockers.add("Loading transformation not implemented: " + key + "=" + value);
+                    }
+                }
+            }
+            List<JarEntry> entries = Collections.list(input.entries());
+            entries.sort(Comparator.comparing(JarEntry::getName));
+            for (JarEntry entry : entries) {
+                if (!entry.isDirectory() && entry.getName().endsWith(".class")) {
+                    try (InputStream stream = input.getInputStream(entry)) {
+                        types.add(new Reader(stream).type());
+                    }
+                }
+            }
+        }
+        List<Type> mods = types.stream().filter(t -> find(t.annotations(), MOD) != null).toList();
+        if (mods.size() != 1) blockers.add("Exactly one @Mod class is currently required; found " + mods.size());
+        for (Type type : types) {
+            for (Annotation annotation : type.annotations()) {
+                if (annotation.descriptor().equals("Lnet/minecraftforge/fml/common/Mod$EventBusSubscriber;")) {
+                    blockers.add("Automatic event subscriber registration not implemented: " + type.name());
+                }
+            }
+            for (Member field : type.fields()) {
+                for (Annotation annotation : field.annotations()) {
+                    if (Set.of("Lnet/minecraftforge/fml/common/Mod$Instance;",
+                            "Lnet/minecraftforge/fml/common/Mod$Metadata;",
+                            "Lnet/minecraftforge/fml/common/SidedProxy;").contains(annotation.descriptor())) {
+                        blockers.add("Field injection not implemented: " + type.name() + "." + field.name()
+                                + " " + annotation.descriptor());
+                    }
+                }
+            }
+            for (Member method : type.methods()) {
+                if (find(method.annotations(), "Lnet/minecraftforge/fml/common/Mod$InstanceFactory;") != null) {
+                    blockers.add("Instance factory not implemented: " + type.name() + "." + method.name());
+                }
+            }
+        }
+        if (mods.size() != 1) return new Plan("", "", List.copyOf(blockers), "", types.size());
+        Type mod = mods.get(0);
+        Annotation annotation = find(mod.annotations(), MOD);
+        String id = Objects.toString(annotation.values().get("modid"), "");
+        if (!id.matches("[a-z][a-z0-9_]{0,63}")) blockers.add("Mod ID requires unsupported validation: " + id);
+        String dependencies = Objects.toString(annotation.values().get("dependencies"), "");
+        if (!dependencies.isBlank()) blockers.add("Dependency/version ordering not implemented: " + dependencies);
+        if (Boolean.TRUE.equals(annotation.values().get("serverSideOnly"))) blockers.add("Server-only mod cannot be bootstrapped as client-only");
+        if ((mod.access() & 1) == 0 || (mod.access() & 0x600) != 0) blockers.add("Mod entry must be a public concrete class");
+        if (!"java/lang/Object".equals(mod.parent())) blockers.add("Inherited lifecycle discovery not implemented: " + mod.parent());
+        if (!mod.name().matches("[A-Za-z_$][A-Za-z0-9_$]*(/[A-Za-z_$][A-Za-z0-9_$]*)*")) blockers.add("Mod class name requires unsupported Java-source escaping");
+        if (mod.name().contains("$")) blockers.add("Nested mod entry source naming not implemented");
+        if (mod.methods().stream().noneMatch(m -> m.name().equals("<init>") && m.descriptor().equals("()V") && (m.access() & 1) != 0)) {
+            blockers.add("Public no-argument constructor required; custom construction not implemented");
+        }
+        Map<String, List<Member>> handlers = new LinkedHashMap<>();
+        for (String phase : PHASES.keySet()) handlers.put(phase, new ArrayList<>());
+        for (Member method : mod.methods()) {
+            if (find(method.annotations(), HANDLER) == null) continue;
+            String phase = null;
+            for (var candidate : PHASES.entrySet()) {
+                if (method.descriptor().equals("(L" + candidate.getValue() + ";)V")) phase = candidate.getKey();
+            }
+            if (phase == null || (method.access() & 1) == 0 || (method.access() & 0x408) != 0 ||
+                    !method.name().matches("[A-Za-z_$][A-Za-z0-9_$]*")) {
+                blockers.add("Lifecycle handler needs unsupported dispatch: " + method.name() + method.descriptor());
+            } else handlers.get(phase).add(method);
+        }
+        for (var phase : handlers.entrySet()) {
+            if (phase.getValue().size() > 1) blockers.add("Multiple-handler ordering not implemented for " + phase.getKey());
+        }
+        return new Plan(id, mod.name().replace('/', '.'), List.copyOf(blockers),
+                blockers.isEmpty() ? generate(id, mod, handlers) : "", types.size());
+    }
+
+    private static String generate(String id, Type mod, Map<String, List<Member>> handlers) {
+        String type = mod.name().replace('/', '.');
+        StringBuilder code = new StringBuilder("package gold.generated;\npublic final class ForgeModBootstrap {\n");
+        code.append("  public interface Host {\n")
+            .append("    void beforeConstruction(String modId);\n")
+            .append("    Object eventFor(String modId, String phase);\n")
+            .append("    void afterPhase(String modId, String phase);\n  }\n")
+            .append("  private static Host host;\n  private static boolean started;\n")
+            .append("  public static void bindHost(Host value) {\n")
+            .append("    if (started || host != null || value == null) throw new IllegalStateException(\"Invalid lifecycle host binding\");\n")
+            .append("    host = value;\n  }\n")
+            .append("  public static void main(String[] args) throws Exception {\n")
+            .append("    if (host == null) throw new IllegalStateException(\"Original Forge lifecycle host is required; refusing synthetic events\");\n")
+            .append("    if (started) throw new IllegalStateException(\"Mod bootstrap already started\");\n")
+            .append("    started = true;\n    host.beforeConstruction(\"").append(id).append("\");\n")
+            .append("    ").append(type).append(" mod = new ").append(type).append("();\n");
+        for (var phase : handlers.entrySet()) {
+            String phaseName = phase.getKey();
+            if (!phase.getValue().isEmpty()) {
+                String eventType = PHASES.get(phaseName).replace('/', '.');
+                code.append("    Object ").append(phaseName).append(" = host.eventFor(\"").append(id)
+                    .append("\", \"").append(phaseName).append("\");\n")
+                    .append("    if (!(").append(phaseName).append(" instanceof ").append(eventType)
+                    .append(")) throw new IllegalStateException(\"Invalid original event for ").append(phaseName).append("\");\n")
+                    .append("    mod.").append(phase.getValue().get(0).name()).append("((").append(eventType).append(") ")
+                    .append(phaseName).append(");\n");
+            }
+            code.append("    host.afterPhase(\"").append(id).append("\", \"").append(phaseName).append("\");\n");
+        }
+        return code.append("  }\n}\n").toString();
+    }
+
+    private static Annotation find(List<Annotation> annotations, String descriptor) {
+        return annotations.stream().filter(a -> a.descriptor().equals(descriptor)).findFirst().orElse(null);
+    }
+
+    private static final class Reader {
+        final DataInputStream input;
+        Object[] pool;
+        Reader(InputStream stream) { input = new DataInputStream(stream); }
+        String utf(int index) throws IOException {
+            if (index <= 0 || index >= pool.length || !(pool[index] instanceof String)) throw new IOException("Invalid UTF constant");
+            return (String) pool[index];
+        }
+        String className(int index) throws IOException { return index == 0 ? "" : utf((Integer) pool[index]); }
+        Type type() throws IOException {
+            if (input.readInt() != 0xCAFEBABE) throw new IOException("Invalid class file magic");
+            input.readUnsignedShort(); input.readUnsignedShort();
+            pool = new Object[input.readUnsignedShort()];
+            for (int i = 1; i < pool.length; i++) {
+                int tag = input.readUnsignedByte();
+                switch (tag) {
+                    case 1 -> pool[i] = input.readUTF();
+                    case 3 -> pool[i] = input.readInt();
+                    case 4 -> pool[i] = input.readFloat();
+                    case 5 -> { pool[i] = input.readLong(); i++; }
+                    case 6 -> { pool[i] = input.readDouble(); i++; }
+                    case 7, 8, 16, 19, 20 -> pool[i] = input.readUnsignedShort();
+                    case 9, 10, 11, 12, 17, 18 -> { input.readUnsignedShort(); input.readUnsignedShort(); }
+                    case 15 -> { input.readUnsignedByte(); input.readUnsignedShort(); }
+                    default -> throw new IOException("Unsupported constant pool tag: " + tag);
+                }
+            }
+            int access = input.readUnsignedShort();
+            String name = className(input.readUnsignedShort());
+            String parent = className(input.readUnsignedShort());
+            int interfaces = input.readUnsignedShort();
+            for (int i = 0; i < interfaces; i++) input.readUnsignedShort();
+            List<Member> fields = members();
+            List<Member> methods = members();
+            return new Type(access, name, parent, fields, methods, attributes(input));
+        }
+        List<Member> members() throws IOException {
+            int count = input.readUnsignedShort();
+            List<Member> members = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                int access = input.readUnsignedShort();
+                String name = utf(input.readUnsignedShort());
+                String descriptor = utf(input.readUnsignedShort());
+                members.add(new Member(access, name, descriptor, attributes(input)));
+            }
+            return members;
+        }
+        List<Annotation> attributes(DataInputStream stream) throws IOException {
+            List<Annotation> annotations = new ArrayList<>();
+            int count = stream.readUnsignedShort();
+            for (int i = 0; i < count; i++) {
+                String name = utf(stream.readUnsignedShort());
+                long length = Integer.toUnsignedLong(stream.readInt());
+                if (name.equals("RuntimeVisibleAnnotations") || name.equals("RuntimeInvisibleAnnotations")) {
+                    if (length > 16 * 1024 * 1024) throw new IOException("Annotation attribute exceeds preparation limit");
+                    byte[] bytes = stream.readNBytes((int) length);
+                    if (bytes.length != length) throw new EOFException();
+                    try (var data = new DataInputStream(new ByteArrayInputStream(bytes))) {
+                        int size = data.readUnsignedShort();
+                        for (int j = 0; j < size; j++) annotations.add(annotation(data));
+                        if (data.available() != 0) throw new IOException("Trailing annotation attribute bytes");
+                    }
+                } else stream.skipNBytes(length);
+            }
+            return annotations;
+        }
+        Annotation annotation(DataInputStream stream) throws IOException {
+            String descriptor = utf(stream.readUnsignedShort());
+            Map<String, Object> values = new LinkedHashMap<>();
+            int count = stream.readUnsignedShort();
+            for (int i = 0; i < count; i++) values.put(utf(stream.readUnsignedShort()), element(stream));
+            return new Annotation(descriptor, values);
+        }
+        Object element(DataInputStream stream) throws IOException {
+            int tag = stream.readUnsignedByte();
+            return switch (tag) {
+                case 's', 'c' -> utf(stream.readUnsignedShort());
+                case 'Z' -> ((Integer) pool[stream.readUnsignedShort()]) != 0;
+                case 'B', 'C', 'D', 'F', 'I', 'J', 'S' -> pool[stream.readUnsignedShort()];
+                case 'e' -> List.of(utf(stream.readUnsignedShort()), utf(stream.readUnsignedShort()));
+                case '@' -> annotation(stream);
+                case '[' -> {
+                    List<Object> array = new ArrayList<>();
+                    int count = stream.readUnsignedShort();
+                    for (int i = 0; i < count; i++) array.add(element(stream));
+                    yield array;
+                }
+                default -> throw new IOException("Unsupported annotation element: " + tag);
+            };
+        }
+    }
+}

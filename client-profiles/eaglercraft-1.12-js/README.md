@@ -117,3 +117,43 @@ types. No claim of complete or arbitrary mod compatibility is made.
 
 Minified JavaScript clients and the required 26.2 WebAssembly client remain
 unsupported. No minified-client generalization or WASM rewriting is included.
+
+
+## Multi-JAR pipeline build
+
+The browser build now packages and tests the project, runs the two-input
+JEI-slice plus fastutil pipeline, compares its JavaScript against the JVM
+expectations, and injects that pipeline output into the isolated client.
+It checks that the injected bundle has the same SHA-256 as the pipeline output.
+
+Initial build and browser launch:
+
+```powershell
+.\client-profiles\eaglercraft-1.12-js\run-demo.ps1
+```
+
+Open the local demo and wait for the diagnostic index and corpus-export
+acknowledgement. The acknowledgement is also available as:
+
+```javascript
+window.__goldClientJeiCorpusExport
+```
+
+After the browser has saved the real corpus, stop the server or use another
+PowerShell window and run:
+
+```powershell
+.\client-profiles\eaglercraft-1.12-js\build.ps1 -RequireClientCorpus
+```
+
+This rejects the small fixture fallback and requires the existing 411-record
+client-corpus contract.
+
+Correction to the earlier original-code description: the current milestone
+preserves JEI's original Translator.class and uses the remapped original
+Minecraft Language overlay. Generated compatibility replacements for either
+Translator.class or Language.class are rejected by the milestone.
+
+Deferred structural references are retained in the pipeline report. Successful
+TeaVM compilation and corpus comparison do not establish full JEI, Forge,
+resource-merging, reflection, or arbitrary-mod compatibility.

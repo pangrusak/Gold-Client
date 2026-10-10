@@ -66,9 +66,47 @@ public class TeaVmTranslator {
         translate(jarPath, outputDir, teaVmEntryClass, Set.of());
     }
 
+    // GOLD_TRANSLATOR_DEPENDENCIES_V1
     public static void translate(Path jarPath, Path outputDir,
                                  String teaVmEntryClass,
                                  Set<String> childFirstPackages)
+            throws TranslationException, IOException {
+        translate(jarPath, outputDir, teaVmEntryClass, childFirstPackages,
+                java.util.List.of());
+    }
+
+    public static void translate(Path jarPath, Path outputDir,
+                                 String teaVmEntryClass,
+                                 Set<String> childFirstPackages,
+                                 java.util.List<Path> dependencies)
+            throws TranslationException, IOException {
+        Path root = outputDir.toAbsolutePath().normalize();
+        Files.createDirectories(root);
+        Path javascript = root.resolve("eagler-mod.js");
+        Path provenance = root.resolve("translation-inputs.properties");
+        Files.deleteIfExists(javascript);
+        Files.deleteIfExists(provenance);
+        boolean complete = false;
+        try {
+            // GOLD_VERIFIED_FORGE_ACCESS_V1
+            VerifiedForgeAccess.verifyClasspath(jarPath, dependencies);
+            translateInternal(jarPath, root, teaVmEntryClass,
+                    childFirstPackages, dependencies);
+            writeInputProvenance(jarPath, dependencies, teaVmEntryClass,
+                    javascript, provenance);
+            complete = true;
+        } finally {
+            if (!complete) {
+                Files.deleteIfExists(javascript);
+                Files.deleteIfExists(provenance);
+            }
+        }
+    }
+
+    private static void translateInternal(Path jarPath, Path outputDir,
+                                 String teaVmEntryClass,
+                                 Set<String> childFirstPackages,
+                                 java.util.List<Path> dependencies)
             throws TranslationException, IOException {
 
         // --- validate entry class (milestone requirement: fail explicitly) ---
@@ -100,7 +138,7 @@ public class TeaVmTranslator {
         Path outputJs = outputDir.resolve("eagler-mod.js");
         Files.deleteIfExists(outputJs);
 
-        URL[] urls = {jarPath.toUri().toURL()};
+        URL[] urls = translationUrls(jarPath, dependencies);
         try (URLClassLoader classLoader =
                      new PackagePriorityClassLoader(
                              urls, TeaVmTranslator.class.getClassLoader(), childFirstPackages)) {
@@ -151,6 +189,75 @@ public class TeaVmTranslator {
 
             // --- copy non-class resources (assets, JSON, etc.) ---
             copyResources(jarPath, outputDir, outputJs);
+        }
+    }
+
+    static URL[] translationUrls(Path jarPath, java.util.List<Path> dependencies)
+            throws IOException {
+        if (jarPath == null || dependencies == null) {
+            throw new IOException("Input JAR and dependency list must not be null");
+        }
+        java.util.LinkedHashSet<Path> paths = new java.util.LinkedHashSet<>();
+        paths.add(jarPath.toRealPath());
+        for (Path dependency : dependencies) {
+            if (dependency == null) {
+                throw new IOException("Dependency paths must not be null");
+            }
+            paths.add(dependency.toRealPath());
+        }
+        java.util.ArrayList<URL> urls = new java.util.ArrayList<>();
+        for (Path input : paths) {
+            if (!Files.isRegularFile(input)) {
+                throw new IOException("Classpath input is not a file: " + input);
+            }
+            try (ZipFile zip = new ZipFile(input.toFile())) {
+                // Validate the archive without loading or initializing mod classes.
+                zip.size();
+            }
+            System.out.println("[classpath] " + input);
+            urls.add(input.toUri().toURL());
+        }
+        return urls.toArray(URL[]::new);
+    }
+
+    private static String inputSha256(Path input) throws IOException {
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            try (InputStream stream = Files.newInputStream(input)) {
+                byte[] buffer = new byte[8192];
+                int length;
+                while ((length = stream.read(buffer)) != -1) {
+                    digest.update(buffer, 0, length);
+                }
+            }
+            return java.util.HexFormat.of().formatHex(digest.digest());
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IOException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private static void writeInputProvenance(Path jarPath,
+            java.util.List<Path> dependencies, String entryClass,
+            Path javascript, Path destination) throws IOException {
+        var properties = new java.util.Properties();
+        properties.setProperty("format", "gold-translation-inputs-v1");
+        properties.setProperty("entryClass", entryClass.replace('/', '.'));
+        properties.setProperty("scope", "reachable code from explicit entry point");
+        properties.setProperty("forgeLifecycleVerified", "false");
+        properties.setProperty("fullModEquivalenceVerified", "false");
+        var inputs = new java.util.LinkedHashSet<Path>();
+        inputs.add(jarPath.toRealPath());
+        for (Path dependency : dependencies) inputs.add(dependency.toRealPath());
+        int index = 0;
+        for (Path input : inputs) {
+            properties.setProperty("input." + index + ".path", input.toString());
+            properties.setProperty("input." + index + ".sha256", inputSha256(input));
+            index++;
+        }
+        properties.setProperty("input.count", Integer.toString(index));
+        properties.setProperty("javascript.sha256", inputSha256(javascript));
+        try (var stream = Files.newOutputStream(destination)) {
+            properties.store(stream, "Input provenance; not a semantic-equivalence certificate");
         }
     }
 
