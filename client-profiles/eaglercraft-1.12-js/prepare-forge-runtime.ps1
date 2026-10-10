@@ -51,30 +51,74 @@ if (-not (Test-Path -LiteralPath (Join-Path $mdk "gradlew.bat"))) {
     Expand-Archive -LiteralPath $mdkArchive -DestinationPath $mdk -Force
 }
 
+# Gold-Client cached SRG baseline preparation
 $minecraftJar = Join-Path $mdk "build\tmp\deobfMcSRG\deobfed.jar"
-if (-not (Test-Path -LiteralPath $minecraftJar)) {
+$cacheRoot = Join-Path $env:USERPROFILE ".gradle\caches\minecraft\net\minecraftforge\forge\1.12.2-14.23.5.2816\snapshot\20171003"
+$cachedMinecraft = Join-Path $cacheRoot "forge-1.12.2-14.23.5.2816-srgBin.jar"
+
+if (-not (Test-Path -LiteralPath $cachedMinecraft -PathType Leaf)) {
     $previousJavaHome = $env:JAVA_HOME
     $previousPath = $env:PATH
-    $env:JAVA_HOME = $jdkHome
-    $env:PATH = (Join-Path $jdkHome "bin") + ";" + $previousPath
-    Push-Location $mdk
+    $previousPreference = $ErrorActionPreference
+    $gradleExit = $null
+    $setupLog = Join-Path $root "deobf-baseline-setup.log"
+
     try {
-        & .\gradlew.bat setupDecompWorkspace --no-daemon
-        if ($LASTEXITCODE -ne 0) {
-            throw "ForgeGradle setupDecompWorkspace failed ($LASTEXITCODE)"
+        $env:JAVA_HOME = $jdkHome
+        $env:PATH = (Join-Path $jdkHome "bin") + ";" + $previousPath
+
+        Push-Location $mdk
+        try {
+            $ErrorActionPreference = "Continue"
+
+            & .\gradlew.bat deobfMcSRG --no-daemon --stacktrace 2>&1 |
+                ForEach-Object { $_.ToString() } |
+                Tee-Object -FilePath $setupLog
+
+            $gradleExit = $LASTEXITCODE
+        }
+        finally {
+            Pop-Location
         }
     }
     finally {
-        Pop-Location
         $env:JAVA_HOME = $previousJavaHome
         $env:PATH = $previousPath
+        $ErrorActionPreference = $previousPreference
+    }
+
+    if ($gradleExit -ne 0) {
+        throw "ForgeGradle deobfMcSRG failed ($gradleExit). See $setupLog"
     }
 }
 
-if (-not (Test-Path -LiteralPath $minecraftJar -PathType Leaf)) {
-    throw "ForgeGradle did not produce the mapped Minecraft 1.12.2 runtime: $minecraftJar"
+if (-not (Test-Path -LiteralPath $cachedMinecraft -PathType Leaf)) {
+    throw "ForgeGradle SRG runtime output is missing: $cachedMinecraft"
 }
-$cacheRoot = Join-Path $env:USERPROFILE ".gradle\caches\minecraft\net\minecraftforge\forge\1.12.2-14.23.5.2816\snapshot\20171003"
+
+if ((Get-Item -LiteralPath $cachedMinecraft).Length -eq 0) {
+    throw "ForgeGradle SRG runtime output is empty: $cachedMinecraft"
+}
+
+$sourceMinecraftHash = (
+    Get-FileHash -LiteralPath $cachedMinecraft -Algorithm SHA256
+).Hash
+
+New-Item -ItemType Directory -Force `
+    -Path (Split-Path -Parent $minecraftJar) | Out-Null
+
+Copy-Item -LiteralPath $cachedMinecraft `
+    -Destination $minecraftJar -Force
+
+$copiedMinecraftHash = (
+    Get-FileHash -LiteralPath $minecraftJar -Algorithm SHA256
+).Hash
+
+if ($copiedMinecraftHash -ne $sourceMinecraftHash) {
+    throw "Minecraft SRG runtime copy SHA-256 mismatch: $minecraftJar"
+}
+
+Write-Output "Minecraft SRG baseline copy matches its cached source."
 $cachedForge = Join-Path $cacheRoot "forgeSrc-1.12.2-14.23.5.2816.jar"
 if (-not (Test-Path -LiteralPath $cachedForge -PathType Leaf)) {
     throw "ForgeGradle did not produce the mapped Forge runtime: $cachedForge"
