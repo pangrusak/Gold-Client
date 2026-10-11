@@ -26,18 +26,21 @@ public final class ForgeJarBootstrap {
 
     public static void main(String[] args) throws Exception {
         // GOLD_FORGE_ACCESS_PROXY_V1
-        if (args.length != 2 && args.length != 3) {
-            throw new IllegalArgumentException("Usage: ForgeJarBootstrap <mod.jar> <output-directory> [verified-transformed-dependency.jar]");
+        // GOLD_FORGE_SUBSCRIBER_RUNTIME_V1
+        if (args.length < 2 || args.length > 4) {
+            throw new IllegalArgumentException("Usage: ForgeJarBootstrap <mod.jar> <output-directory> [verified-transformed-dependency.jar] [runtime-evidence.properties]");
         }
         Path input = Path.of(args[0]);
         Path output = Path.of(args[1]).toAbsolutePath().normalize();
         Files.createDirectories(output);
         Path generated = output.resolve("generated/gold/generated/ForgeModBootstrap.java");
         Files.deleteIfExists(generated);
-        Path verifiedDependency = args.length == 3 ? Path.of(args[2]) : null;
-        Plan plan = inspect(input, verifiedDependency);
+        Path verifiedDependency = args.length >= 3 ? Path.of(args[2]) : null;
+        Path runtimeEvidence = args.length == 4 ? Path.of(args[3]) : null;
+        Plan plan = inspect(input, verifiedDependency, runtimeEvidence);
         String report = "Input: " + input.toRealPath() + "\n" +
                 "Verified AT dependency: " + (verifiedDependency == null ? "not supplied" : verifiedDependency.toRealPath()) + "\n" +
+                "Forge version evidence: " + (runtimeEvidence == null ? "not supplied" : ForgeRuntimeEvidence.verify(runtimeEvidence, verifiedDependency)) + "\n" +
                 "Classes scanned: " + plan.classCount() + "\n" +
                 "Mod ID: " + plan.modId() + "\n" +
                 "Mod class: " + plan.modClass() + "\n" +
@@ -60,7 +63,11 @@ public final class ForgeJarBootstrap {
         return inspect(jar, null);
     }
     public static Plan inspect(Path jar, Path verifiedDependency) throws IOException {
+        return inspect(jar, verifiedDependency, null);
+    }
+    public static Plan inspect(Path jar, Path verifiedDependency, Path runtimeEvidence) throws IOException {
         if (verifiedDependency != null) VerifiedForgeAccess.verify(jar, verifiedDependency);
+        if (runtimeEvidence != null) ForgeRuntimeEvidence.verify(runtimeEvidence, verifiedDependency);
         List<Type> types = new ArrayList<>();
         List<String> blockers = new ArrayList<>();
         try (JarFile input = new JarFile(jar.toFile(), false)) {
@@ -86,11 +93,6 @@ public final class ForgeJarBootstrap {
         List<Type> mods = types.stream().filter(t -> find(t.annotations(), MOD) != null).toList();
         if (mods.size() != 1) blockers.add("Exactly one @Mod class is currently required; found " + mods.size());
         for (Type type : types) {
-            for (Annotation annotation : type.annotations()) {
-                if (annotation.descriptor().equals("Lnet/minecraftforge/fml/common/Mod$EventBusSubscriber;")) {
-                    blockers.add("Automatic event subscriber registration not implemented: " + type.name());
-                }
-            }
             for (Member field : type.fields()) {
                 for (Annotation annotation : field.annotations()) {
                     if (Set.of("Lnet/minecraftforge/fml/common/Mod$Instance;",
@@ -113,7 +115,8 @@ public final class ForgeJarBootstrap {
         if (!id.matches("[a-z][a-z0-9_]{0,63}")) blockers.add("Mod ID requires unsupported validation: " + id);
         List<ProxyBinding> proxies = clientProxies(types, mod, id, blockers);
         String dependencies = Objects.toString(annotation.values().get("dependencies"), "");
-        if (!dependencies.isBlank()) blockers.add("Dependency/version ordering not implemented: " + dependencies);
+        if (!dependencies.isBlank()) ForgeRuntimeEvidence.dependencies(dependencies, runtimeEvidence, verifiedDependency, blockers);
+        List<SubscriberBinding> subscriberBindings = subscribers(types, id, blockers);
         if (Boolean.TRUE.equals(annotation.values().get("serverSideOnly"))) blockers.add("Server-only mod cannot be bootstrapped as client-only");
         if ((mod.access() & 1) == 0 || (mod.access() & 0x600) != 0) blockers.add("Mod entry must be a public concrete class");
         if (!"java/lang/Object".equals(mod.parent())) blockers.add("Inherited lifecycle discovery not implemented: " + mod.parent());
@@ -139,10 +142,53 @@ public final class ForgeJarBootstrap {
             if (phase.getValue().size() > 1) blockers.add("Multiple-handler ordering not implemented for " + phase.getKey());
         }
         return new Plan(id, mod.name().replace('/', '.'), List.copyOf(blockers),
-                blockers.isEmpty() ? generate(id, mod, handlers, proxies) : "", types.size());
+                blockers.isEmpty() ? generate(id, mod, handlers, proxies, subscriberBindings) : "", types.size());
     }
 
-    record ProxyBinding(String owner, String field, String implementation) {}
+    // GOLD_PRIVATE_PROXY_BRIDGE_V1
+    record SubscriberBinding(String owner, String method, String eventType, String priority, boolean receiveCanceled) {}
+    private static List<SubscriberBinding> subscribers(List<Type> types, String modId, List<String> blockers) {
+        List<SubscriberBinding> result=new ArrayList<>();
+        for(Type type:types){
+            Annotation registration=find(type.annotations(),"Lnet/minecraftforge/fml/common/Mod$EventBusSubscriber;");
+            if(registration==null)continue;
+            String ownerMod=Objects.toString(registration.values().get("modid"),"");
+            if(!ownerMod.isEmpty()&&!ownerMod.equals(modId)){blockers.add("Cross-mod subscriber ownership not implemented: "+type.name());continue;}
+            Object sides=registration.values().get("value");
+            if(sides!=null){
+                if(!(sides instanceof List<?> list)){blockers.add("Unsupported subscriber side metadata: "+type.name());continue;}
+                boolean client=false,valid=true;
+                for(Object side:list){
+                    if(!(side instanceof List<?> pair)||pair.size()!=2||!"Lnet/minecraftforge/fml/relauncher/Side;".equals(pair.get(0))||!Set.of("CLIENT","SERVER").contains(pair.get(1))){valid=false;break;}
+                    if("CLIENT".equals(pair.get(1)))client=true;
+                }
+                if(!valid){blockers.add("Unsupported subscriber side metadata: "+type.name());continue;}
+                if(!client)continue;
+            }
+            if((type.access()&1)==0||type.name().contains("$")||!type.parent().equals("java/lang/Object")){
+                blockers.add("Subscriber visibility/inheritance needs unsupported handling: "+type.name());continue;
+            }
+            for(Member method:type.methods()){
+                Annotation annotation=find(method.annotations(),"Lnet/minecraftforge/fml/common/eventhandler/SubscribeEvent;");
+                if(annotation==null)continue;
+                var signature=java.util.regex.Pattern.compile("^\\(L([^;]+);\\)V$").matcher(method.descriptor());
+                if(!signature.matches()||(method.access()&9)!=9||(method.access()&0x400)!=0||!method.name().matches("[A-Za-z_$][A-Za-z0-9_$]*")){
+                    blockers.add("Static subscriber signature unsupported: "+type.name()+"."+method.name()+method.descriptor());continue;
+                }
+                String priority="NORMAL";Object configured=annotation.values().get("priority");
+                if(configured!=null){
+                    if(!(configured instanceof List<?> pair)||pair.size()!=2||!"Lnet/minecraftforge/fml/common/eventhandler/EventPriority;".equals(pair.get(0))||!Set.of("HIGHEST","HIGH","NORMAL","LOW","LOWEST").contains(pair.get(1))){
+                        blockers.add("Subscriber priority metadata unsupported: "+type.name()+"."+method.name());continue;
+                    }
+                    priority=pair.get(1).toString();
+                }
+                result.add(new SubscriberBinding(type.name().replace('/','.'),method.name(),signature.group(1).replace('/','.').replace('$','.'),priority,Boolean.TRUE.equals(annotation.values().get("receiveCanceled"))));
+            }
+        }
+        return result;
+    }
+
+    record ProxyBinding(String owner, String field, String implementation, String setter) {}
     private static List<ProxyBinding> clientProxies(List<Type> types, Type mod, String modId,
                                                    List<String> blockers) {
         Map<String, Type> indexed = new HashMap<>();
@@ -155,7 +201,7 @@ public final class ForgeJarBootstrap {
             String requestedMod = Objects.toString(annotation.values().get("modId"), "");
             Type proxy = indexed.get(implementation);
             boolean valid = owner.name().equals(mod.name()) &&
-                    ((field.access() & 0x19) == 0x9) &&
+                    ((field.access() & 0x18) == 0x8) &&
                     field.name().matches("[A-Za-z_$][A-Za-z0-9_$]*") &&
                     (requestedMod.isEmpty() || requestedMod.equals(modId)) &&
                     proxy != null && (proxy.access() & 1) != 0 && (proxy.access() & 0x600) == 0 &&
@@ -163,6 +209,12 @@ public final class ForgeJarBootstrap {
                     implementation.matches("[A-Za-z_$][A-Za-z0-9_$]*(/[A-Za-z_$][A-Za-z0-9_$]*)*") &&
                     proxy.methods().stream().anyMatch(m -> m.name().equals("<init>") &&
                             m.descriptor().equals("()V") && (m.access() & 1) != 0);
+            String setter = (field.access() & 1) != 0 ? "" : "$gold$setProxy$" + field.name();
+            if (!setter.isEmpty()) {
+                String setterDescriptor = "(" + field.descriptor() + ")V";
+                valid &= owner.methods().stream().anyMatch(m -> m.name().equals(setter) &&
+                        m.descriptor().equals(setterDescriptor) && (m.access() & 0x1009) == 0x1009);
+            }
             String declared = field.descriptor();
             if (!declared.startsWith("L") || !declared.endsWith(";")) valid = false;
             else {
@@ -178,19 +230,21 @@ public final class ForgeJarBootstrap {
                 valid &= assignable;
             }
             if (!valid) blockers.add("Client proxy requires unsupported injection/typing: " + owner.name() + "." + field.name());
-            else bindings.add(new ProxyBinding(owner.name().replace('/', '.'), field.name(), implementation.replace('/', '.')));
+            else bindings.add(new ProxyBinding(owner.name().replace('/', '.'), field.name(), implementation.replace('/', '.'), setter));
         }
         return bindings;
     }
 
     private static String generate(String id, Type mod, Map<String, List<Member>> handlers,
-                                   List<ProxyBinding> proxies) {
+                                   List<ProxyBinding> proxies, List<SubscriberBinding> subscribers) {
         String type = mod.name().replace('/', '.');
         StringBuilder code = new StringBuilder("package gold.generated;\npublic final class ForgeModBootstrap {\n");
-        code.append("  public interface Host {\n")
+        code.append("  public interface SubscriberInvoker { void invoke(Object event) throws Exception; }\n")
+            .append("  public interface Host {\n")
             .append("    void beforeConstruction(String modId);\n")
             .append("    Object eventFor(String modId, String phase);\n")
-            .append("    void afterPhase(String modId, String phase);\n  }\n")
+            .append("    void afterPhase(String modId, String phase);\n")
+            .append("    void registerStaticSubscriber(String modId, Class<?> owner, Class<?> eventType, String method, String priority, boolean receiveCanceled, SubscriberInvoker invoker);\n  }\n")
             .append("  private static Host host;\n  private static boolean started;\n")
             .append("  public static void bindHost(Host value) {\n")
             .append("    if (started || host != null || value == null) throw new IllegalStateException(\"Invalid lifecycle host binding\");\n")
@@ -201,8 +255,30 @@ public final class ForgeJarBootstrap {
             .append("    started = true;\n    host.beforeConstruction(\"").append(id).append("\");\n")
             .append("    ").append(type).append(" mod = new ").append(type).append("();\n");
         for (ProxyBinding proxy : proxies) {
-            code.append("    ").append(proxy.owner()).append(".").append(proxy.field())
-                .append(" = new ").append(proxy.implementation()).append("();\n");
+            if (proxy.setter().isEmpty()) {
+                code.append("    ").append(proxy.owner()).append(".").append(proxy.field())
+                    .append(" = new ").append(proxy.implementation()).append("();\n");
+            } else {
+                code.append("    ").append(proxy.owner()).append(".").append(proxy.setter())
+                    .append("(new ").append(proxy.implementation()).append("());\n");
+            }
+        }
+        for (SubscriberBinding subscriber : subscribers) {
+            code.append("    host.registerStaticSubscriber(")
+                .append((char) 34).append(id).append((char) 34)
+                .append(", ").append(subscriber.owner()).append(".class, ")
+                .append(subscriber.eventType()).append(".class, ")
+                .append((char) 34).append(subscriber.method()).append((char) 34)
+                .append(", ")
+                .append((char) 34).append(subscriber.priority()).append((char) 34)
+                .append(", ").append(subscriber.receiveCanceled())
+                .append(", new SubscriberInvoker() {").append((char) 10)
+                .append("      public void invoke(Object event) throws Exception { ")
+                .append(subscriber.owner()).append(".")
+                .append(subscriber.method()).append("((")
+                .append(subscriber.eventType()).append(")event); }")
+                .append((char) 10)
+                .append("    });").append((char) 10);
         }
         for (var phase : handlers.entrySet()) {
             String phaseName = phase.getKey();

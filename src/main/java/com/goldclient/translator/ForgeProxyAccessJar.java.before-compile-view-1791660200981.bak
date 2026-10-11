@@ -1,0 +1,209 @@
+package com.goldclient.translator;
+
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
+import java.util.jar.*;
+
+/** Adds fixed synthetic access glue; preserves existing constant-pool indices and method bytes. */
+public final class ForgeProxyAccessJar {
+    record Field(int access, int nameIndex, int descriptorIndex, boolean proxy) {}
+    record Layout(Object[] pool, int poolEnd, int thisClass, List<Field> fields,
+                  int fieldsStart, int fieldsEnd, int methodsOffset, int methodsEnd,
+                  Map<String, byte[]> methods) {}
+    record Addition(String name, String descriptor, Field field) {}
+    public static void main(String[] args) throws Exception {
+        if (args.length != 2) throw new IllegalArgumentException("Usage: ForgeProxyAccessJar <original-mod.jar> <derived-mod.jar>");
+        prepare(Path.of(args[0]), Path.of(args[1]));
+    }
+    public static void prepare(Path sourceJar, Path destination) throws IOException {
+        Path source = sourceJar.toRealPath(), output = destination.toAbsolutePath().normalize();
+        if (output.equals(source) || (Files.exists(output) && Files.isSameFile(source, output))) throw new IOException("Output must not overwrite original mod");
+        boolean strip = Boolean.getBoolean("gold.forge.proxy.allowUnsignedOutput");
+        Path proof = Path.of(output.toString() + ".proxy-access.properties");
+        Files.createDirectories(output.getParent()); Files.deleteIfExists(output); Files.deleteIfExists(proof);
+        Path staged = Files.createTempFile(output.getParent(), "proxy-access-", ".jar");
+        String sourceHash = VerifiedForgeAccess.sha256(source); int changed = 0;
+        boolean complete = false;
+        try {
+            try (JarFile input = new JarFile(source.toFile(), false);
+                 JarOutputStream result = new JarOutputStream(Files.newOutputStream(staged))) {
+                for (JarEntry entry : Collections.list(input.entries())) {
+                    String name = entry.getName();
+                    if (ForgeOriginalAccessTransform.signatureEntry(name)) {
+                        if (!strip) throw new IOException("Signed mod requires explicit unsigned-derivative policy");
+                        continue;
+                    }
+                    byte[] before; try (var stream = input.getInputStream(entry)) { before = stream.readAllBytes(); }
+                    byte[] after = before;
+                    if (!entry.isDirectory() && name.endsWith(".class")) {
+                        after = bridge(before);
+                        if (!Arrays.equals(before, after)) changed++;
+                    } else if (strip && name.equalsIgnoreCase("META-INF/MANIFEST.MF")) {
+                        after = ForgeOriginalAccessTransform.unsignedManifest(before);
+                    }
+                    result.putNextEntry(new JarEntry(name)); result.write(after); result.closeEntry();
+                }
+            }
+            if (!sourceHash.equals(VerifiedForgeAccess.sha256(source))) throw new IOException("Original mod changed during preparation");
+            Files.move(staged, output, StandardCopyOption.REPLACE_EXISTING);
+            Properties properties = new Properties();
+            properties.setProperty("engine", "gold-static-proxy-access-v1");
+            properties.setProperty("source.path", source.toString());
+            properties.setProperty("source.sha256", sourceHash);
+            properties.setProperty("output.sha256", VerifiedForgeAccess.sha256(output));
+            properties.setProperty("changedClasses", Integer.toString(changed));
+            properties.setProperty("originalMethodBytesPreserved", "true");
+            properties.setProperty("originalFieldBytesPreserved", "true");
+            properties.setProperty("signature.policy", strip ? "strip-on-derived-output" : "reject-signed-input");
+            properties.setProperty("fullModEquivalenceVerified", "false");
+            try (var stream = Files.newOutputStream(proof)) { properties.store(stream, "Synthetic access glue; not whole-mod equivalence"); }
+            originalSource(output);
+            complete = true;
+            System.out.println("Proxy access derivative created: " + output + " (changed classes: " + changed + ")");
+        } finally {
+            Files.deleteIfExists(staged);
+            if (!complete) { Files.deleteIfExists(output); Files.deleteIfExists(proof); }
+        }
+    }
+    public static Path originalSource(Path supplied) throws IOException {
+        Path derived = supplied.toRealPath();
+        Path proof = Path.of(derived.toString() + ".proxy-access.properties");
+        if (!Files.exists(proof)) return derived;
+        Properties properties = new Properties();
+        try (var stream = Files.newInputStream(proof)) { properties.load(stream); }
+        if (!"gold-static-proxy-access-v1".equals(properties.getProperty("engine"))) throw new IOException("Unknown proxy access provenance");
+        String sourcePath = properties.getProperty("source.path");
+        if (sourcePath == null) throw new IOException("Original mod path missing from provenance");
+        Path source = Path.of(sourcePath).toRealPath();
+        if (source.equals(derived)) throw new IOException("Proxy derivative cannot be its own origin");
+        if (!VerifiedForgeAccess.sha256(source).equals(properties.getProperty("source.sha256")) ||
+            !VerifiedForgeAccess.sha256(derived).equals(properties.getProperty("output.sha256"))) throw new IOException("Proxy derivative/origin hash mismatch");
+        boolean strip = "strip-on-derived-output".equals(properties.getProperty("signature.policy"));
+        Set<String> expectedNames = new HashSet<>();
+        try (JarFile original = new JarFile(source.toFile(), false); JarFile output = new JarFile(derived.toFile(), false)) {
+            for (JarEntry entry : Collections.list(original.entries())) {
+                String name = entry.getName();
+                if (strip && ForgeOriginalAccessTransform.signatureEntry(name)) continue;
+                if (!expectedNames.add(name)) throw new IOException("Duplicate original JAR entry");
+                JarEntry result = output.getJarEntry(name); if (result == null) throw new IOException("Derived mod entry missing: " + name);
+                byte[] before, after;
+                try (var stream = original.getInputStream(entry)) { before = stream.readAllBytes(); }
+                try (var stream = output.getInputStream(result)) { after = stream.readAllBytes(); }
+                byte[] expected = before;
+                if (!entry.isDirectory() && name.endsWith(".class")) expected = bridge(before);
+                else if (strip && name.equalsIgnoreCase("META-INF/MANIFEST.MF")) expected = ForgeOriginalAccessTransform.unsignedManifest(before);
+                if (!Arrays.equals(expected, after)) throw new IOException("Unexpected derived-mod mutation: " + name);
+            }
+            Set<String> actualNames = new HashSet<>();
+            for (JarEntry entry : Collections.list(output.entries())) if (!actualNames.add(entry.getName())) throw new IOException("Duplicate derivative entry");
+            if (!actualNames.equals(expectedNames)) throw new IOException("Unexpected derivative JAR entries");
+        }
+        return source;
+    }
+    static byte[] bridge(byte[] original) throws IOException {
+        Layout layout = layout(original);
+        List<Addition> additions = new ArrayList<>();
+        for (Field field : layout.fields()) {
+            String name = (String) layout.pool()[field.nameIndex()];
+            String descriptor = (String) layout.pool()[field.descriptorIndex()];
+            if (!field.proxy() || (field.access() & 1) != 0 || (field.access() & 0x18) != 0x8) continue;
+            if (!descriptor.startsWith("L") || !descriptor.endsWith(";")) throw new IOException("Proxy field is not a reference type");
+            String method = "$gold$setProxy$" + name;
+            String signature = "(" + descriptor + ")V";
+            if (layout.methods().keySet().stream().anyMatch(key -> key.startsWith(method + "("))) throw new IOException("Synthetic setter name collision: " + method);
+            additions.add(new Addition(method, signature, field));
+        }
+        if (additions.isEmpty()) return original;
+        if (layout.pool().length + additions.size() * 5 >= 65535 || layout.methods().size() + additions.size() >= 65535) throw new IOException("Classfile table limit exceeded");
+        ByteArrayOutputStream constants = new ByteArrayOutputStream(), methods = new ByteArrayOutputStream();
+        try (DataOutputStream cp = new DataOutputStream(constants); DataOutputStream code = new DataOutputStream(methods)) {
+            int index = layout.pool().length;
+            for (Addition addition : additions) {
+                int methodName = index++; cp.writeByte(1); cp.writeUTF(addition.name());
+                int methodDescriptor = index++; cp.writeByte(1); cp.writeUTF(addition.descriptor());
+                int codeName = index++; cp.writeByte(1); cp.writeUTF("Code");
+                int nameAndType = index++; cp.writeByte(12); cp.writeShort(addition.field().nameIndex()); cp.writeShort(addition.field().descriptorIndex());
+                int fieldReference = index++; cp.writeByte(9); cp.writeShort(layout.thisClass()); cp.writeShort(nameAndType);
+                code.writeShort(0x1009); code.writeShort(methodName); code.writeShort(methodDescriptor); code.writeShort(1);
+                code.writeShort(codeName); code.writeInt(17);
+                code.writeShort(1); code.writeShort(1); code.writeInt(5);
+                code.writeByte(0x2a); code.writeByte(0xb3); code.writeShort(fieldReference); code.writeByte(0xb1);
+                code.writeShort(0); code.writeShort(0);
+            }
+        }
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream output = new DataOutputStream(bytes)) {
+            output.write(original, 0, 8); output.writeShort(layout.pool().length + additions.size() * 5);
+            output.write(original, 10, layout.poolEnd() - 10); output.write(constants.toByteArray());
+            output.write(original, layout.poolEnd(), layout.methodsOffset() - layout.poolEnd());
+            output.writeShort(layout.methods().size() + additions.size());
+            output.write(original, layout.methodsOffset() + 2, layout.methodsEnd() - layout.methodsOffset() - 2);
+            output.write(methods.toByteArray()); output.write(original, layout.methodsEnd(), original.length - layout.methodsEnd());
+        }
+        byte[] result = bytes.toByteArray(); Layout checked = layout(result);
+        for (var method : layout.methods().entrySet()) {
+            if (!Arrays.equals(method.getValue(), checked.methods().get(method.getKey()))) throw new IOException("Original method bytes changed");
+        }
+        byte[] beforeFields = Arrays.copyOfRange(original, layout.fieldsStart(), layout.fieldsEnd());
+        byte[] afterFields = Arrays.copyOfRange(result, checked.fieldsStart(), checked.fieldsEnd());
+        if (!Arrays.equals(beforeFields, afterFields)) throw new IOException("Original field metadata changed");
+        return result;
+    }
+    private static Layout layout(byte[] bytes) throws IOException {
+        try (var input = new DataInputStream(new ByteArrayInputStream(bytes))) {
+            if (input.readInt() != 0xCAFEBABE) throw new IOException("Invalid class magic");
+            input.readUnsignedShort(); input.readUnsignedShort(); Object[] pool = new Object[input.readUnsignedShort()];
+            for (int i=1;i<pool.length;i++) switch(input.readUnsignedByte()) {
+                case 1 -> pool[i]=input.readUTF();
+                case 3,4 -> input.readInt();
+                case 5,6 -> {input.readLong();i++;}
+                case 7,8,16,19,20 -> pool[i]=input.readUnsignedShort();
+                case 9,10,11,12,17,18 -> {input.readUnsignedShort();input.readUnsignedShort();}
+                case 15 -> {input.readUnsignedByte();input.readUnsignedShort();}
+                default -> throw new IOException("Unsupported constant pool entry");
+            }
+            int poolEnd=bytes.length-input.available(); input.readUnsignedShort(); int owner=input.readUnsignedShort();input.readUnsignedShort();
+            int interfaces=input.readUnsignedShort();for(int i=0;i<interfaces;i++)input.readUnsignedShort();
+            int fieldsStart=bytes.length-input.available(), count=input.readUnsignedShort(); List<Field> fields=new ArrayList<>();
+            for(int i=0;i<count;i++) {
+                int access=input.readUnsignedShort(), name=input.readUnsignedShort(),descriptor=input.readUnsignedShort();
+                boolean proxy=false;int attributes=input.readUnsignedShort();
+                for(int j=0;j<attributes;j++) {
+                    String attribute=(String)pool[input.readUnsignedShort()];long length=Integer.toUnsignedLong(input.readInt());
+                    if(attribute.equals("RuntimeVisibleAnnotations")||attribute.equals("RuntimeInvisibleAnnotations")) {
+                        if(length>16*1024*1024)throw new IOException("Annotation preparation limit exceeded");
+                        byte[] data=input.readNBytes((int)length);if(data.length!=length)throw new EOFException();
+                        try(var annotations=new DataInputStream(new ByteArrayInputStream(data))) {
+                            int annotationsCount=annotations.readUnsignedShort();
+                            for(int a=0;a<annotationsCount;a++) proxy |= annotation(annotations,pool);
+                        }
+                    } else input.skipNBytes(length);
+                }
+                fields.add(new Field(access,name,descriptor,proxy));
+            }
+            int fieldsEnd=bytes.length-input.available(), methodsOffset=fieldsEnd;
+            int methodsCount=input.readUnsignedShort();Map<String,byte[]> methods=new LinkedHashMap<>();
+            for(int i=0;i<methodsCount;i++) {
+                int start=bytes.length-input.available();input.readUnsignedShort();String name=(String)pool[input.readUnsignedShort()],descriptor=(String)pool[input.readUnsignedShort()];
+                int attrs=input.readUnsignedShort();for(int j=0;j<attrs;j++){input.readUnsignedShort();input.skipNBytes(Integer.toUnsignedLong(input.readInt()));}
+                if(methods.put(name+descriptor,Arrays.copyOfRange(bytes,start,bytes.length-input.available()))!=null)throw new IOException("Duplicate method signature");
+            }
+            return new Layout(pool,poolEnd,owner,fields,fieldsStart,fieldsEnd,methodsOffset,bytes.length-input.available(),methods);
+        }
+    }
+    private static boolean annotation(DataInputStream input,Object[] pool)throws IOException {
+        String type=(String)pool[input.readUnsignedShort()];int count=input.readUnsignedShort();
+        for(int i=0;i<count;i++){input.readUnsignedShort();element(input,pool);}
+        return type.equals("Lnet/minecraftforge/fml/common/SidedProxy;");
+    }
+    private static void element(DataInputStream input,Object[] pool)throws IOException {
+        switch(input.readUnsignedByte()) {
+            case 'B','C','D','F','I','J','S','Z','s','c' -> input.readUnsignedShort();
+            case 'e' -> {input.readUnsignedShort();input.readUnsignedShort();}
+            case '@' -> annotation(input,pool);
+            case '[' -> {int count=input.readUnsignedShort();for(int i=0;i<count;i++)element(input,pool);}
+            default -> throw new IOException("Unsupported annotation element");
+        }
+    }
+}

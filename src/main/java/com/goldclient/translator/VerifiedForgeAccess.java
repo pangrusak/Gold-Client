@@ -9,6 +9,8 @@ import java.util.jar.*;
 /** Local artifact consistency checks, not publisher authenticity or whole-mod equivalence. */
 public final class VerifiedForgeAccess {
     public static void verify(Path modJar, Path transformedJar) throws IOException {
+        // GOLD_PRIVATE_PROXY_ORIGIN_V1
+        modJar = ForgeProxyAccessJar.originalSource(modJar);
         Path output = transformedJar.toRealPath();
         Path sidecar = Path.of(output.toString() + ".provenance.properties");
         Properties properties = new Properties();
@@ -60,6 +62,10 @@ public final class VerifiedForgeAccess {
         List<Path> classpath = new ArrayList<>(); classpath.add(input); classpath.addAll(dependencies);
         for (Path candidate : classpath) {
             if (candidate == null) throw new IOException("Null classpath entry");
+            ForgeProxyAccessJar.originalSource(candidate);
+        }
+        for (Path candidate : classpath) {
+            if (candidate == null) throw new IOException("Null classpath entry");
             Path sidecar = Path.of(candidate.toAbsolutePath().normalize().toString() + ".provenance.properties");
             if (!Files.exists(sidecar)) continue;
             Properties properties = new Properties();
@@ -68,7 +74,8 @@ public final class VerifiedForgeAccess {
             Path originalMod = null;
             for (Path supplied : classpath) {
                 String hash = sha256(supplied);
-                if (hash.equalsIgnoreCase(Objects.toString(modHash, ""))) originalMod = supplied;
+                String originHash = sha256(ForgeProxyAccessJar.originalSource(supplied));
+                if (originHash.equalsIgnoreCase(Objects.toString(modHash, ""))) originalMod = supplied;
                 if (hash.equalsIgnoreCase(Objects.toString(properties.getProperty("target.sha256"), "")) &&
                         !supplied.toRealPath().equals(candidate.toRealPath())) {
                     throw new IOException("Classpath supplies original and transformed target together: " + supplied);

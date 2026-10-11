@@ -1,0 +1,54 @@
+package com.goldclient.translator;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import java.nio.file.*;
+import java.net.*;
+import java.util.*;
+import java.util.jar.*;
+import javax.tools.ToolProvider;
+import static org.junit.jupiter.api.Assertions.*;
+class ForgePrivateProxyBootstrapTest {
+    @TempDir Path temp;
+    private Path fixture() throws Exception {
+        Path root=temp.resolve("src"),classes=temp.resolve("classes");Files.createDirectories(classes);
+        Map<String,String> sources=new LinkedHashMap<>();
+        sources.put("net/minecraftforge/fml/common/Mod.java","package net.minecraftforge.fml.common;import java.lang.annotation.*;@Retention(RetentionPolicy.RUNTIME) public @interface Mod{String modid();}");
+        sources.put("net/minecraftforge/fml/common/SidedProxy.java","package net.minecraftforge.fml.common;import java.lang.annotation.*;@Retention(RetentionPolicy.RUNTIME) public @interface SidedProxy{String clientSide();String serverSide();}");
+        sources.put("fixture/Common.java","package fixture;public class Common{}");
+        sources.put("fixture/Client.java","package fixture;public class Client extends Common{}");
+        sources.put("fixture/Example.java","package fixture;import net.minecraftforge.fml.common.*;@Mod(modid=\"example\") public class Example{@SidedProxy(clientSide=\"fixture.Client\",serverSide=\"fixture.Common\") private static Common proxy;public static String proxyName(){return proxy.getClass().getName();}}");
+        List<String> args=new ArrayList<>(List.of("--release","8","-d",classes.toString()));
+        for(var e:sources.entrySet()){Path f=root.resolve(e.getKey());Files.createDirectories(f.getParent());Files.writeString(f,e.getValue());args.add(f.toString());}
+        assertEquals(0,ToolProvider.getSystemJavaCompiler().run(null,null,null,args.toArray(String[]::new)));
+        Path jar=temp.resolve("original.jar");try(var output=new JarOutputStream(Files.newOutputStream(jar));var paths=Files.walk(classes)){
+            for(Path f:paths.filter(Files::isRegularFile).sorted().toList()){output.putNextEntry(new JarEntry(classes.relativize(f).toString().replace('\\','/')));Files.copy(f,output);output.closeEntry();}
+        }return jar;
+    }
+    @Test void keepsFieldPrivateAndExecutesOriginalProxyThroughGeneratedGlue()throws Exception {
+        Path original=fixture(),derived=temp.resolve("derived.jar");byte[] originalBytes=Files.readAllBytes(original);
+        assertFalse(ForgeJarBootstrap.inspect(original).blockers().isEmpty());
+        ForgeProxyAccessJar.prepare(original,derived);assertArrayEquals(originalBytes,Files.readAllBytes(original));
+        assertEquals(original.toRealPath(),ForgeProxyAccessJar.originalSource(derived));
+        var plan=ForgeJarBootstrap.inspect(derived);assertTrue(plan.blockers().isEmpty(),plan.blockers().toString());
+        Path generated=temp.resolve("generated/gold/generated/ForgeModBootstrap.java"),compiled=temp.resolve("bootstrap-classes");
+        Files.createDirectories(generated.getParent());Files.createDirectories(compiled);Files.writeString(generated,plan.bootstrapSource());
+        assertEquals(0,ToolProvider.getSystemJavaCompiler().run(null,null,null,"--release","8","-classpath",derived.toString(),"-d",compiled.toString(),generated.toString()));
+        try(var loader=new URLClassLoader(new URL[]{compiled.toUri().toURL(),derived.toUri().toURL()},ClassLoader.getPlatformClassLoader())){
+            Class<?> mod=loader.loadClass("fixture.Example"),bootstrap=loader.loadClass("gold.generated.ForgeModBootstrap"),hostType=loader.loadClass("gold.generated.ForgeModBootstrap$Host");
+            assertTrue(java.lang.reflect.Modifier.isPrivate(mod.getDeclaredField("proxy").getModifiers()));
+            assertTrue(mod.getMethod("$gold$setProxy$proxy",loader.loadClass("fixture.Common")).isSynthetic());
+            Object host=java.lang.reflect.Proxy.newProxyInstance(loader,new Class<?>[]{hostType},(p,m,a)->null);
+            bootstrap.getMethod("bindHost",hostType).invoke(null,host);bootstrap.getMethod("main",String[].class).invoke(null,(Object)new String[0]);
+            assertEquals("fixture.Client",mod.getMethod("proxyName").invoke(null));
+        }
+    }
+    @Test void rejectsTamperedDerivative()throws Exception {
+        Path original=fixture(),derived=temp.resolve("derived.jar");ForgeProxyAccessJar.prepare(original,derived);
+        Files.write(derived,new byte[]{0},StandardOpenOption.APPEND);
+        assertThrows(java.io.IOException.class,()->ForgeProxyAccessJar.originalSource(derived));
+    }
+    @Test void neverOverwritesOriginalMod()throws Exception {
+        Path original=fixture();byte[] bytes=Files.readAllBytes(original);
+        assertThrows(java.io.IOException.class,()->ForgeProxyAccessJar.prepare(original,original));assertArrayEquals(bytes,Files.readAllBytes(original));
+    }
+}

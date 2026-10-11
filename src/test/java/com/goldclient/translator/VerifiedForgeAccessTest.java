@@ -21,8 +21,8 @@ class VerifiedForgeAccessTest {
     }
     @Test void checksHashesFlagsAndClasspathWithoutClaimingEquivalence() throws Exception {
         Path classes = temp.resolve("classes"); Files.createDirectories(classes);
-        Path java = temp.resolve("Target.java"); Files.writeString(java, "package sample; public class Target { public int value; }");
-        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null, "--release", "8", "-d", classes.toString(), java.toString()));
+        Path sourceFile = temp.resolve("Target.java"); Files.writeString(sourceFile, "package sample; public class Target { public int value; }");
+        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null, "--release", "8", "-d", classes.toString(), sourceFile.toString()));
         Path mod = jar("mod.jar", Map.of("META-INF/example_at.cfg", "public sample.Target value\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)), true);
         Path original = jar("original.jar", Map.of("original.txt", new byte[]{1}), false);
         Path transformed = jar("transformed.jar", Map.of("sample/Target.class", Files.readAllBytes(classes.resolve("sample/Target.class"))), false);
