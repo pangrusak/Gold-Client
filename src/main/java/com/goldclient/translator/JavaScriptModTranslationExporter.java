@@ -637,7 +637,23 @@ public final class JavaScriptModTranslationExporter {
             }
             if (owner === "java.lang.String") {
               if (method === "valueOf") return this.javaString(args[0]);
-              if (method === "format") return String(args[0]).replace(/%s/g, () => String(args.shift()));
+              if (method === "format") {
+                const formatIndex = typeof args[0] === "string" ? 0 : 1;
+                const format = String(args[formatIndex] ?? "");
+                const values = args.slice(formatIndex + 1);
+                let valueIndex = 0;
+                return format.replace(/%%|%0?(\\d+)?(?:\\.(\\d+))?([sdif])/g,
+                  (token, width, precision, type) => {
+                    if (token === "%%") return "%";
+                    const value = values[valueIndex++];
+                    let rendered;
+                    if (type === "d" || type === "i") rendered = String(Math.trunc(Number(value)));
+                    else if (type === "f") rendered = Number(value).toFixed(precision === undefined ? 6 : Number(precision));
+                    else rendered = this.javaString(value);
+                    if (width) rendered = rendered.padStart(Number(width), token.startsWith("%0") ? "0" : " ");
+                    return rendered;
+                  });
+              }
             }
             if (owner === "java.lang.System" && method === "currentTimeMillis") return Date.now();
             const translated = this.classes.get(owner);
