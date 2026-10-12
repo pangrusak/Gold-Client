@@ -563,8 +563,8 @@ public final class IntermediateRepresentationAnalyzer {
     if (opcode.endsWith("OR")) return "|";
     if (opcode.endsWith("XOR")) return "^";
     if (opcode.endsWith("SHL")) return "<<";
-    if (opcode.endsWith("SHR")) return ">>";
     if (opcode.endsWith("USHR")) return ">>>";
+    if (opcode.endsWith("SHR")) return ">>";
     return "?";
   }
 
