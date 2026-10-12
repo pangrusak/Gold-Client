@@ -612,7 +612,6 @@ public final class JavaScriptModTranslationExporter {
           }
           static matches(regex, input) { return new RegExp("^(?:" + regex + ")$").test(String(input)); }
           static quote(value) { return Array.from(String(value), character => ".^$*+?()[]{}|".includes(character) ? "\\\\" + character : character).join(""); }
-          constructor(value, present = value !== null && value !== undefined) {"); }
         }
 
         class GoldClientJavaOptional {
