@@ -86,7 +86,7 @@ public final class Main {
       ModAnalysis a = new ModAnalyzer().analyze(Path.of(jar));
       boolean methodDebug = classFilter != null || methodFilter != null;
       boolean wholeModExport = translate && classFilter == null && methodFilter == null;
-      printAnalysis(a, methodDebug);
+      printAnalysis(a, methodDebug || wholeModExport);
 
       if (methodDebug)
         printBytecode(a.classes(), classFilter, methodFilter);
