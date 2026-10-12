@@ -503,7 +503,9 @@ public final class JavaTranslator {
     List<String> operands = operation.operands();
 
     return switch (operation.kind()) {
-      case "LABEL", "DROP" -> "";
+      case "LABEL" -> "";
+      case "DROP" -> translateDrop(operands);
+      case "CALL_VALUE" -> null;
       case "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
           "ARRAY_READ", "ARRAY_LENGTH", "DUP", "SWAP", "ARITHMETIC",
           "TYPE_CONVERSION", "TYPE_CHECK" -> null;
@@ -528,11 +530,20 @@ public final class JavaTranslator {
 
   private static boolean isExpressionOnly(IrOperationModel operation) {
     return switch (operation.kind()) {
-      case "CONSTANT", "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
+      case "CONSTANT", "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE", "CALL_VALUE",
           "ARRAY_READ", "ARRAY_LENGTH", "DUP", "SWAP", "ARITHMETIC",
           "TYPE_CONVERSION", "TYPE_CHECK", "DROP" -> true;
       default -> false;
     };
+  }
+
+  private static String translateDrop(List<String> operands) {
+    if (operands.isEmpty()) return "";
+    String expression = normalizeExpression(operands.get(0));
+    // POP discards a value, but Java still evaluates side effects that produced it.
+    // Pure constants, local reads, and arithmetic expressions can safely disappear.
+    if (expression.contains("(") || expression.startsWith("new ")) return expression + ";";
+    return "";
   }
 
   private static String translateLocalWrite(
