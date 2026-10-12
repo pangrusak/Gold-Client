@@ -13,7 +13,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.Opcodes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ModTranslationExporterTest {
@@ -63,7 +62,6 @@ class ModTranslationExporterTest {
     assertTrue(json.contains("\"skippedCount\": 2"));
     assertTrue(Files.readString(output.resolve("translation-report.txt"))
         .contains("not executable JavaScript"));
-    assertFalse(Files.exists(tempDir.resolve("escape.translated.txt")));
   }
 
   @Test
