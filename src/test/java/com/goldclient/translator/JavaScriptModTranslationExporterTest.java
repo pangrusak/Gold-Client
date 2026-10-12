@@ -279,9 +279,10 @@ class JavaScriptModTranslationExporterTest {
         if (!matcher.find() || matcher.group(1) !== "mod" || matcher.group(2) !== "1122") throw new Error("Pattern.Matcher find/group");
         if (!matcher.find() || matcher.group(1) !== "forge" || matcher.group(2) !== "12") throw new Error("Pattern.Matcher repeated find");
         if (r.invokeJavaStatic("java.util.regex.Pattern", "matches", "[A-Z]+", "JAVA") !== true) throw new Error("Pattern.matches");
-        const stream = list.stream().filter(value => value.length > 4).map(value => value.toUpperCase());
-        if (stream.count() !== 2) throw new Error("Stream count");
-        if (stream.toList().toString() !== "[ALPHA, INSERTED, GAMMA]") throw new Error("Stream toList");
+        const stream = list.stream().filter(value => value.length > 4);
+        if (stream.count() !== 3) throw new Error("Stream count");
+        const mappedStream = list.stream().filter(value => value.length > 4).map(value => value.toUpperCase());
+        if (mappedStream.toList().toString() !== "[ALPHA, INSERTED, GAMMA]") throw new Error("Stream toList");
         const collected = r.invokeJavaStatic("java.util.stream.Stream", "of", 2, 3, 4)
           .map(value => value * 2)
           .collect(r.invokeJavaStatic("java.util.stream.Collectors", "toList"));
