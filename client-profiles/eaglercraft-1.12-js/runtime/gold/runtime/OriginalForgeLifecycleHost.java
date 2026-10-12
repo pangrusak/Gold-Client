@@ -36,6 +36,12 @@ public final class OriginalForgeLifecycleHost implements ForgeModBootstrap.Host 
         if(active(modId).getMod()!=originalModInstance)throw new IllegalStateException("Container does not hold the exact constructed original instance");
         instance=originalModInstance;
     }
+    public Object metadataFor(String modId) {
+        FMLModContainer container=active(modId);
+        Object metadata=container.getMetadata();
+        if(metadata==null)throw new IllegalStateException("Original Forge metadata is missing for "+modId);
+        return metadata;
+    }
     public Object eventFor(String modId,String phase) {
         if(instance==null)throw new IllegalStateException("Original mod instance has not been bound");
         services.enterPhase(modId,phase);enteredPhase=phase;
