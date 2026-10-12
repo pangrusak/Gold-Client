@@ -332,7 +332,7 @@ public final class JavaScriptTranslator {
     // seeing the original argument list. Remove that slot so the emitted call is
     // valid JavaScript and the adapter receives exactly zero arguments.
     result = result.replaceAll(
-        "(GoldClientRuntime\\.(?:invokeJavaStatic|invokeStaticClass)\\([^\\n]*),\\s*\\)",
+        "(GoldClientRuntime\\.(?:invokeJavaStatic|invokeStaticClass|invokePlatformStatic)\\([^\\n]*),\\s*\\)",
         "$1)");
 
     // Static field writes must target the generated class constructor rather than
