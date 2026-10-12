@@ -544,6 +544,77 @@ public final class JavaScriptModTranslationExporter {
           toObject() { return Object.fromEntries(this.items); }
           [Symbol.iterator]() { return this.items[Symbol.iterator](); }
         }
+        class GoldClientJavaMatcher {
+          constructor(pattern, input) {
+            this.pattern = pattern;
+            this.input = String(input);
+            this.cursor = 0;
+            this.last = null;
+          }
+          find() {
+            const flags = this.pattern.flags.includes("g") ? this.pattern.flags : this.pattern.flags + "g";
+            const regex = new RegExp(this.pattern.source, flags);
+            regex.lastIndex = this.cursor;
+            const match = regex.exec(this.input);
+            if (!match) { this.last = null; return false; }
+            this.last = match;
+            this.cursor = match.index + Math.max(match[0].length, 1);
+            return true;
+          }
+          matches() {
+            const regex = new RegExp("^(?:" + this.pattern.source + ")$", this.pattern.flags.replace(/[gy]/g, ""));
+            this.last = regex.exec(this.input);
+            return this.last !== null;
+          }
+          lookingAt() {
+            const regex = new RegExp("^(?:" + this.pattern.source + ")", this.pattern.flags.replace(/[gy]/g, ""));
+            this.last = regex.exec(this.input);
+            return this.last !== null;
+          }
+          group(index = 0) {
+            if (!this.last) throw new Error("IllegalStateException: No match available");
+            if (index < 0 || index >= this.last.length) throw new RangeError("IndexOutOfBoundsException");
+            return this.last[index] ?? null;
+          }
+          groupCount() { return Math.max(0, (this.last?.length ?? 1) - 1); }
+          start(index = 0) {
+            if (!this.last) throw new Error("IllegalStateException: No match available");
+            if (index === 0) return this.last.index;
+            const prefix = this.last[0].indexOf(this.last[index] ?? "");
+            return prefix < 0 ? -1 : this.last.index + prefix;
+          }
+          end(index = 0) {
+            const start = this.start(index);
+            const value = this.group(index);
+            return start < 0 || value == null ? -1 : start + value.length;
+          }
+          reset(input = this.input) { this.input = String(input); this.cursor = 0; this.last = null; return this; }
+          replaceAll(replacement) { return this.input.replace(new RegExp(this.pattern.source, this.pattern.flags.replace(/[gy]/g, "") + "g"), String(replacement)); }
+          replaceFirst(replacement) { return this.input.replace(new RegExp(this.pattern.source, this.pattern.flags.replace(/[gy]/g, "")), String(replacement)); }
+          usePattern(pattern) { this.pattern = pattern; this.cursor = 0; this.last = null; return this; }
+        }
+        class GoldClientJavaPattern {
+          constructor(source, flags = "") { this.source = String(source); this.flags = flags; this.regex = new RegExp(this.source, this.flags); }
+          matcher(input) { return new GoldClientJavaMatcher(this, input); }
+          pattern() { return this.source; }
+          flagsValue() { return this.flags; }
+          split(input, limit = 0) { return String(input).split(this.regex, limit === 0 ? undefined : limit); }
+          toString() { return this.source; }
+          static compile(source, flags = "") {
+            let jsFlags = "";
+            if (typeof flags === "string") jsFlags = flags;
+            else {
+              if (flags & 2) jsFlags += "i";
+              if (flags & 4) jsFlags += "m";
+              if (flags & 32) jsFlags += "s";
+            }
+            return new GoldClientJavaPattern(source, [...new Set(jsFlags)].join(""));
+          }
+          static matches(regex, input) { return new RegExp("^(?:" + regex + ")$").test(String(input)); }
+          static quote(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\        class GoldClientJavaOptional {
+          constructor(value, present = value !== null && value !== undefined) {"); }
+        }
+
         class GoldClientJavaOptional {
           constructor(value, present = value !== null && value !== undefined) {
             this.present = Boolean(present);
@@ -715,6 +786,8 @@ public final class JavaScriptModTranslationExporter {
                 return new GoldClientJavaStringBuilder(args[0] ?? "");
               case "java.util.Optional":
                 return new GoldClientJavaOptional(args[0]);
+              case "java.util.regex.Pattern":
+                return new GoldClientJavaPattern(args[0] ?? "");
               case "java.lang.String":
                 return String(args[0] ?? "");
               default:
@@ -874,6 +947,11 @@ public final class JavaScriptModTranslationExporter {
                 }
                 return;
               }
+            }
+            if (owner === "java.util.regex.Pattern") {
+              if (method === "compile") return GoldClientJavaPattern.compile(args[0], args[1] ?? "");
+              if (method === "matches") return GoldClientJavaPattern.matches(args[0], args[1]);
+              if (method === "quote") return GoldClientJavaPattern.quote(args[0]);
             }
             if (owner === "java.util.Optional") {
               if (method === "empty") return GoldClientJavaOptional.empty();
