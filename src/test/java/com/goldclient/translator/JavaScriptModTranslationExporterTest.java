@@ -47,7 +47,7 @@ class JavaScriptModTranslationExporterTest {
     String moduleSource = Files.readString(module);
     assertTrue(moduleSource.contains("export class Translated_example_Feature"), moduleSource);
     assertTrue(moduleSource.contains("GoldClientRuntime.invoke(this, __goldMethods"), moduleSource);
-    assertTrue(Files.readString(output.resolve("gold-client-runtime.js")).contains("registerClass(name, constructor)"));
+    assertTrue(Files.readString(output.resolve("gold-client-runtime.js")).contains("registerClass(name, constructor, staticInitializer"));
     assertEquals(1, report.classCount());
     assertEquals(3, report.methodCount());
     assertEquals(1, report.completeCount());
