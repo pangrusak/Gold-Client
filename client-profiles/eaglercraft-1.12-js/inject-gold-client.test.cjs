@@ -32,7 +32,7 @@ test('injects a module entrypoint without rewriting the original client', () => 
     });
     assert.equal(result.status, 0, result.stderr);
     assert.match(fs.readFileSync(f.output, 'utf8'),
-        /<script type="module" src="\.\.\/\.\.\/translated-js\/eaglercraft-forge-entry\.js"><\/script>/);
+        /<script type="module" src="\.\.\/translated-js\/eaglercraft-forge-entry\.js"><\/script>/);
     assert.equal(fs.readFileSync(f.client, 'utf8'), original);
     assert.match(result.stdout, /goldClientForgeBindings/);
 });
