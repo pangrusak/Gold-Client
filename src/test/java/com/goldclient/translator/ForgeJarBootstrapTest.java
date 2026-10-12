@@ -81,8 +81,8 @@ class ForgeJarBootstrapTest {
 
     @Test void injectsOriginalModInstanceAndMetadataFromHost() throws Exception {
         Path jar = fixture("""
-              @Mod.Instance public static Example instance;
-              @Mod.Metadata public static net.minecraftforge.fml.common.ModMetadata metadata;
+              @Mod.Instance private static Example instance;
+              @Mod.Metadata private static net.minecraftforge.fml.common.ModMetadata metadata;
             """, null);
         var plan = ForgeJarBootstrap.inspect(jar);
         assertTrue(plan.blockers().isEmpty(), plan.blockers().toString());
@@ -115,8 +115,10 @@ class ForgeJarBootstrapTest {
                     });
             bootstrap.getMethod("bindHost", hostType).invoke(null, host);
             bootstrap.getMethod("main", String[].class).invoke(null, (Object) new String[0]);
-            assertSame(example.getField("current").get(null), example.getField("instance").get(null));
-            assertSame(metadata, example.getField("metadata").get(null));
+            Field instanceField = example.getDeclaredField("instance"); instanceField.setAccessible(true);
+            Field metadataField = example.getDeclaredField("metadata"); metadataField.setAccessible(true);
+            assertSame(example.getField("current").get(null), instanceField.get(null));
+            assertSame(metadata, metadataField.get(null));
         }
     }
 
