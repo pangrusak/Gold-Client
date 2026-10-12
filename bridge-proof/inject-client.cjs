@@ -60,6 +60,30 @@ const tickAdapter = `    var goldClientBridgePlayerSnapshot = null;
         if (!goldClientBridgePlayerSnapshot) return null;
         return Object.assign({}, goldClientBridgePlayerSnapshot);
     };
+    var goldClientBridgeTickListeners = [];
+    window.goldClientClientApi = Object.freeze({
+        apiVersion: 1,
+        profileId: "supplied-eaglercraft-1.12.2-js",
+        getPlayerSnapshot: window.goldClientReadPlayerSnapshot,
+        getCapabilities: function() {
+            var snapshot = goldClientBridgePlayerSnapshot;
+            return snapshot && snapshot.capabilities ? Object.assign({}, snapshot.capabilities) : {
+                position: false, health: false, hunger: false, saturation: false,
+                exhaustion: false, blockSampling: false
+            };
+        },
+        onClientTick: function(listener) {
+            if (typeof listener !== "function") throw new TypeError("Tick listener must be a function");
+            goldClientBridgeTickListeners.push(listener);
+            var active = true;
+            return function() {
+                if (!active) return;
+                active = false;
+                var index = goldClientBridgeTickListeners.indexOf(listener);
+                if (index >= 0) goldClientBridgeTickListeners.splice(index, 1);
+            };
+        }
+    });
     var goldClientBridgeOriginalRunTick = nmc_Minecraft_runTick;
     nmc_Minecraft_runTick = function($minecraft) {
         var $player = $minecraft.$player;
@@ -85,6 +109,13 @@ const tickAdapter = `    var goldClientBridgePlayerSnapshot = null;
                 blockSampling: false
             }
         };
+        for (var listenerIndex = 0; listenerIndex < goldClientBridgeTickListeners.length; listenerIndex++) {
+            try {
+                goldClientBridgeTickListeners[listenerIndex](window.goldClientReadPlayerSnapshot());
+            } catch (listenerError) {
+                window.__goldClientLastTickListenerError = listenerError;
+            }
+        }
         if (typeof window.onClientTick !== "function") {
             throw new Error("Gold Client TeaVM bridge export did not load");
         }
