@@ -441,9 +441,8 @@ public final class IntermediateRepresentationAnalyzer {
         .matcher(operands.size() > 4 ? operands.get(4) : "");
     if (!lambdaMetafactory || operands.size() < 6 || !handle.matches()) {
       String detail = name + " " + callSiteDescriptor + " " + bootstrap;
-      String unsupported = "GoldClientRuntime.unsupported(\\\"invokedynamic\\\", \\\"";
-      unsupported += detail.replace("\\\\", "/").replace("\\\"", "'") + "\\")";
-          + "\\"" + detail.replace("\\", "\\\\").replace("\\"", "\\\\"") + "\\")";
+      String unsupported = "GoldClientRuntime.unsupported(\"invokedynamic\", \"";
+      unsupported += detail.replace("\\", "/").replace("\"", "'") + "\")";
       if (!returnsVoid(callSiteDescriptor)) {
         stack.push(unsupported);
         operations.add(op("CALL_VALUE", List.of(unsupported), sourceInstruction));
