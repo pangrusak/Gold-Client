@@ -6,6 +6,7 @@ import com.goldclient.model.IrMethodModel;
 import com.goldclient.model.IrOperationModel;
 import com.goldclient.model.MethodModel;
 import java.util.*;
+import org.objectweb.asm.Opcodes;
 
 public final class IntermediateRepresentationAnalyzer {
   public IrMethodModel analyze(MethodModel method) {
@@ -374,6 +375,10 @@ public final class IntermediateRepresentationAnalyzer {
       List<IrOperationModel> operations,
       int sourceInstruction) {
     String opcode = instruction.opcodeName();
+    if ("INVOKEDYNAMIC".equals(opcode)) {
+      translateInvokeDynamic(instruction, stack, operations, sourceInstruction);
+      return;
+    }
     List<String> operands = instruction.operands();
     if (operands.size() < 3) {
       operations.add(op("METHOD_CALL", operands, sourceInstruction));
@@ -414,6 +419,91 @@ public final class IntermediateRepresentationAnalyzer {
     } else {
       operations.add(op("METHOD_CALL", List.of(call), sourceInstruction));
     }
+  }
+
+  private static void translateInvokeDynamic(
+      InstructionModel instruction,
+      Deque<String> stack,
+      List<IrOperationModel> operations,
+      int sourceInstruction) {
+    List<String> operands = instruction.operands();
+    String name = operands.isEmpty() ? "dynamicCall" : operands.get(0);
+    String callSiteDescriptor = operands.size() > 1 ? operands.get(1) : "()Ljava/lang/Object;";
+    String bootstrap = operands.size() > 2 ? operands.get(2) : "";
+    int capturedCount = argumentCount(callSiteDescriptor);
+    List<String> captured = new ArrayList<>();
+    for (int i = 0; i < capturedCount; i++) captured.add(0, pop(stack));
+
+    boolean lambdaMetafactory = bootstrap.contains("java/lang/invoke/LambdaMetafactory")
+        && (bootstrap.contains(",metafactory,") || bootstrap.contains(",altMetafactory,"));
+    java.util.regex.Matcher handle = java.util.regex.Pattern
+        .compile("^Handle\\((\\d+),([^,]+),([^,]+),(.+),(true|false)\\)$")
+        .matcher(operands.size() > 4 ? operands.get(4) : "");
+    if (!lambdaMetafactory || operands.size() < 6 || !handle.matches()) {
+      String detail = name + " " + callSiteDescriptor + " " + bootstrap;
+      String unsupported = "GoldClientRuntime.unsupported(\\"invokedynamic\\", "
+          + "\\"" + detail.replace("\\", "\\\\").replace("\\"", "\\\\"") + "\\")";
+      if (!returnsVoid(callSiteDescriptor)) {
+        stack.push(unsupported);
+        operations.add(op("CALL_VALUE", List.of(unsupported), sourceInstruction));
+      } else {
+        operations.add(op("METHOD_CALL", List.of(unsupported), sourceInstruction));
+      }
+      operations.add(op("UNSUPPORTED_DYNAMIC", List.of(name, callSiteDescriptor), sourceInstruction));
+      return;
+    }
+
+    int tag = Integer.parseInt(handle.group(1));
+    String owner = handle.group(2).replace('/', '.');
+    String implementationName = handle.group(3);
+    String implementationDescriptor = handle.group(4);
+    String samDescriptor = descriptorFromType(operands.get(3));
+    int lambdaArity = samDescriptor == null ? 0 : argumentCount(samDescriptor);
+    List<String> lambdaArguments = new ArrayList<>();
+    for (int i = 0; i < lambdaArity; i++) lambdaArguments.add("lambdaArg" + i);
+
+    List<String> callArguments = new ArrayList<>();
+    String call;
+    if (tag == Opcodes.H_INVOKESTATIC) {
+      callArguments.addAll(captured);
+      callArguments.addAll(lambdaArguments);
+      call = "GoldClientRuntime.invokeStaticClass(\\"" + owner + "\\", \\""
+          + implementationName + "\\", " + String.join(", ", callArguments) + ")";
+    } else if (tag == Opcodes.H_NEWINVOKESPECIAL) {
+      callArguments.addAll(captured);
+      callArguments.addAll(lambdaArguments);
+      String helperName = owner.startsWith("java.") ? "createJava" : "create";
+      call = "GoldClientRuntime." + helperName + "(\\"" + owner + "\\", "
+          + String.join(", ", callArguments) + ")";
+    } else if (tag == Opcodes.H_INVOKEVIRTUAL || tag == Opcodes.H_INVOKEINTERFACE
+        || tag == Opcodes.H_INVOKESPECIAL) {
+      String receiver;
+      if (!captured.isEmpty()) {
+        receiver = captured.get(0);
+        callArguments.addAll(captured.subList(1, captured.size()));
+        callArguments.addAll(lambdaArguments);
+      } else if (!lambdaArguments.isEmpty()) {
+        receiver = lambdaArguments.get(0);
+        callArguments.addAll(lambdaArguments.subList(1, lambdaArguments.size()));
+      } else {
+        receiver = "null";
+      }
+      call = "GoldClientRuntime.invokeInstance(" + receiver + ", \\"" + implementationName
+          + "\\", " + String.join(", ", callArguments) + ")";
+    } else {
+      String detail = "unsupported lambda handle tag " + tag + " for " + owner + "." + implementationName;
+      call = "GoldClientRuntime.unsupported(\\"lambda-handle\\", \\"" + detail + "\\")";
+      operations.add(op("UNSUPPORTED_DYNAMIC", List.of(name, detail), sourceInstruction));
+    }
+
+    String lambda = "(" + String.join(", ", lambdaArguments) + ") => " + call;
+    stack.push(lambda);
+    operations.add(op("CALL_VALUE", List.of(lambda), sourceInstruction));
+  }
+
+  private static String descriptorFromType(String value) {
+    if (value == null || !value.startsWith("Type(") || !value.endsWith(")")) return null;
+    return value.substring(5, value.length() - 1);
   }
 
   private static void translateArithmetic(
