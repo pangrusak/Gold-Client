@@ -461,17 +461,19 @@ public final class IntermediateRepresentationAnalyzer {
     int lambdaArity = samDescriptor == null ? 0 : argumentCount(samDescriptor);
     List<String> lambdaArguments = new ArrayList<>();
     for (int i = 0; i < lambdaArity; i++) lambdaArguments.add("lambdaArg" + i);
+    List<String> capturedNames = new ArrayList<>();
+    for (int i = 0; i < captured.size(); i++) capturedNames.add("capturedArg" + i);
 
     List<String> callArguments = new ArrayList<>();
     String call;
     if (tag == Opcodes.H_INVOKESTATIC) {
-      callArguments.addAll(captured);
+      callArguments.addAll(capturedNames);
       callArguments.addAll(lambdaArguments);
       String helperName = owner.startsWith("java.") ? "invokeJavaStatic" : "invokeStaticClass";
       call = "GoldClientRuntime." + helperName + "(\\"" + owner + "\\", \\""
           + implementationName + "\\", " + String.join(", ", callArguments) + ")";
     } else if (tag == Opcodes.H_NEWINVOKESPECIAL) {
-      callArguments.addAll(captured);
+      callArguments.addAll(capturedNames);
       callArguments.addAll(lambdaArguments);
       String helperName = owner.startsWith("java.") ? "createJava" : "create";
       call = "GoldClientRuntime." + helperName + "(\\"" + owner + "\\", "
@@ -479,9 +481,9 @@ public final class IntermediateRepresentationAnalyzer {
     } else if (tag == Opcodes.H_INVOKEVIRTUAL || tag == Opcodes.H_INVOKEINTERFACE
         || tag == Opcodes.H_INVOKESPECIAL) {
       String receiver;
-      if (!captured.isEmpty()) {
-        receiver = captured.get(0);
-        callArguments.addAll(captured.subList(1, captured.size()));
+      if (!capturedNames.isEmpty()) {
+        receiver = capturedNames.get(0);
+        callArguments.addAll(capturedNames.subList(1, capturedNames.size()));
         callArguments.addAll(lambdaArguments);
       } else if (!lambdaArguments.isEmpty()) {
         receiver = lambdaArguments.get(0);
@@ -498,6 +500,10 @@ public final class IntermediateRepresentationAnalyzer {
     }
 
     String lambda = "(" + String.join(", ", lambdaArguments) + ") => " + call;
+    if (!captured.isEmpty()) {
+      lambda = "((" + String.join(", ", capturedNames) + ") => " + lambda + ")("
+          + String.join(", ", captured) + ")";
+    }
     stack.push(lambda);
     operations.add(op("CALL_VALUE", List.of(lambda), sourceInstruction));
   }
