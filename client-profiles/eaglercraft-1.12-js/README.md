@@ -157,3 +157,9 @@ Translator.class or Language.class are rejected by the milestone.
 Deferred structural references are retained in the pipeline report. Successful
 TeaVM compilation and corpus comparison do not establish full JEI, Forge,
 resource-merging, reflection, or arbitrary-mod compatibility.
+
+## Live client bridge progress (AppleSkin / Xaero groundwork)
+
+The generic Eaglercraft injector now requires the supplied 1.12.2 client to expose exactly one verified `nmc_Minecraft_runTick($this)` hook. It wraps that hook and publishes `window.goldClientClientApi` (API version 1), with tick subscriptions, a defensive player snapshot, and capability flags. The snapshot currently probes position plus best-effort health, hunger, saturation, and exhaustion fields; unavailable values remain `null`. The injector does not modify the original input HTML and refuses clients missing the known hook.
+
+This is a live-data bridge, not yet full AppleSkin or Xaero's Minimap support. AppleSkin's original Forge event subscribers and game-GL HUD/tooltip drawing are not yet mapped to the browser client renderer. Xaero's terrain map additionally requires a verified live block/chunk sampling adapter, which is explicitly reported as `blockSampling: false`; the bridge must not fabricate terrain. These are the next compatibility gates before claiming either original mod works. The current CI tests execute the generated injector against a mock TeaVM-shaped player/world and verify snapshot/tick dispatch; they do not replace a real browser run of either mod.
