@@ -108,7 +108,7 @@ public final class JavaScriptModTranslationExporter {
           .toList();
       List<ResourceRecord> copied = new ArrayList<>();
       for (ZipEntry entry : entries) {
-        String name = entry.getName().replace('\\\\', '/');
+        String name = entry.getName().replace('\\', '/');
         if (name.endsWith(".class") || isSignatureFile(name)) continue;
         Path destination = resourceRoot.resolve(name).normalize();
         if (!destination.startsWith(resourceRoot)) {
