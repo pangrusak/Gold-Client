@@ -2,6 +2,7 @@ package com.goldclient;
 
 import com.goldclient.analyzer.*;
 import com.goldclient.translator.JavaTranslator;
+import com.goldclient.translator.ModTranslationExporter;
 import com.goldclient.translator.TranslationException;
 import com.goldclient.translator.TranslationResult;
 import com.goldclient.model.BasicBlockModel;
@@ -23,7 +24,7 @@ public final class Main {
       if (code != 0) System.exit(code);
       return;
     }
-    if (args.length < 1 || args.length > 9) {
+    if (args.length < 1) {
       printUsage();
       System.exit(2);
     }
@@ -33,6 +34,7 @@ public final class Main {
     String methodFilter = null;
     boolean translate = false;
     String toJsDir = null;
+    String outputDir = null;
     String mainClass = null;
 
     for (int i = 1; i < args.length; i++) {
@@ -51,6 +53,13 @@ public final class Main {
             System.exit(2);
           }
           toJsDir = args[i];
+        }
+        case "--output-dir" -> {
+          if (++i >= args.length) {
+            printUsage();
+            System.exit(2);
+          }
+          outputDir = args[i];
         }
         case "--main-class" -> {
           if (++i >= args.length) {
@@ -75,18 +84,40 @@ public final class Main {
 
     try {
       ModAnalysis a = new ModAnalyzer().analyze(Path.of(jar));
-      boolean debug = classFilter != null || methodFilter != null || translate;
-      printAnalysis(a, debug);
+      boolean methodDebug = classFilter != null || methodFilter != null;
+      boolean wholeModExport = translate && classFilter == null && methodFilter == null;
+      if (wholeModExport) printTranslationSummary(a);
+      else printAnalysis(a, methodDebug);
 
-      if (debug)
+      if (methodDebug)
         printBytecode(a.classes(), classFilter, methodFilter);
 
       if (translate) {
-        if (classFilter == null || methodFilter == null) {
-          System.err.println("--translate requires both --class and --method.");
+        if ((classFilter == null) != (methodFilter == null)) {
+          System.err.println("Single-method translation requires both --class and --method.");
           System.exit(2);
         }
-        printTranslation(a.classes(), classFilter, methodFilter);
+        if (wholeModExport) {
+          if (outputDir == null) {
+            System.err.println("Whole-mod translation requires --output-dir <dir>.");
+            System.err.println("Use --translate --output-dir <dir>, or add --class and --method for one method.");
+            System.exit(2);
+          }
+          ModTranslationExporter.TranslationReport report =
+              new ModTranslationExporter().export(a.classes(), Path.of(outputDir));
+          System.out.println("\n=== Whole-Mod Translation Export ===");
+          System.out.println("Output: " + Path.of(outputDir).toAbsolutePath().normalize());
+          System.out.println("Classes visited: " + report.classCount());
+          System.out.println("Methods inspected: " + report.methodCount());
+          System.out.println("Complete: " + report.completeCount());
+          System.out.println("Incomplete: " + report.incompleteCount());
+          System.out.println("Skipped: " + report.skippedCount());
+          System.out.println("Files written: " + (report.fileCount() + 2));
+          System.out.println("Report: " + Path.of(outputDir).resolve("translation-report.txt"));
+          System.out.println("Note: output is Java-like intermediate source, not executable JavaScript.");
+        } else {
+          printTranslation(a.classes(), classFilter, methodFilter);
+        }
       }
       
       if (toJsDir != null) {
@@ -132,7 +163,18 @@ public final class Main {
   }
 
   private static void printUsage() {
-    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate] [--class <class>] [--method <method>] [--to-js <output_dir>] [--main-class <class>]");
+    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate [--class <class> --method <method> | --output-dir <dir>]] [--to-js <output_dir> --main-class <class>]");
+  }
+
+  private static void printTranslationSummary(ModAnalysis analysis) {
+    System.out.println("=== Gold Client Mod Translation ===\n");
+    System.out.println("Mod: " + analysis.metadata().getName());
+    System.out.println("Version: " + analysis.metadata().getVersion());
+    System.out.println("Minecraft: " + analysis.metadata().getMinecraftVersion());
+    System.out.println("Loader: " + analysis.metadata().getLoader());
+    System.out.println("Classes: " + analysis.totalClasses());
+    System.out.println("Methods: " + analysis.totalMethods());
+    System.out.println("Fields: " + analysis.totalFields());
   }
 
   private static void printAnalysis(ModAnalysis a, boolean debug) {
