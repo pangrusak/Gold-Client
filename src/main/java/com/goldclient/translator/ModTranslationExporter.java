@@ -84,7 +84,7 @@ public final class ModTranslationExporter {
         statuses.add(new MethodStatus(
             clazz.name(), method.name(), method.descriptor(), status,
             result.complete() ? null : "Translator emitted one or more unsupported operations.",
-            root.relativize(classFile).toString().replace('\\\\', '/')));
+            root.relativize(classFile).toString().replace('\\', '/')));
         output.append("// Method: ").append(method.name()).append(method.descriptor())
             .append("\n// Translation status: ").append(status).append("\n")
             .append(result.source()).append("\n\n");
