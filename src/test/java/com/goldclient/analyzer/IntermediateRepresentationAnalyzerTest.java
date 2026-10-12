@@ -34,7 +34,7 @@ class IntermediateRepresentationAnalyzerTest {
             && o.operands().get(0).equals("example.Test.CONFIG != null")));
 
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("METHOD_CALL")
+        o.kind().equals("CALL_VALUE")
             && o.operands().get(0).contains("new java.lang.IllegalStateException")));
 
     assertTrue(ir.operations().stream().anyMatch(o -> o.kind().equals("THROW")));
