@@ -100,7 +100,7 @@ public final class JavaScriptModTranslationExporter {
     if (inputJar == null) return 0;
     Path resourceRoot = root.resolve("resources").normalize();
     Files.createDirectories(resourceRoot);
-    List<ZipEntry> entries;
+    List<? extends ZipEntry> entries;
     try (ZipFile zip = new ZipFile(inputJar.toFile())) {
       entries = Collections.list(zip.entries()).stream()
           .filter(entry -> !entry.isDirectory())
