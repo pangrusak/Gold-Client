@@ -279,6 +279,14 @@ class JavaScriptModTranslationExporterTest {
         if (!matcher.find() || matcher.group(1) !== "mod" || matcher.group(2) !== "1122") throw new Error("Pattern.Matcher find/group");
         if (!matcher.find() || matcher.group(1) !== "forge" || matcher.group(2) !== "12") throw new Error("Pattern.Matcher repeated find");
         if (r.invokeJavaStatic("java.util.regex.Pattern", "matches", "[A-Z]+", "JAVA") !== true) throw new Error("Pattern.matches");
+        const stream = list.stream().filter(value => value.length > 4).map(value => value.toUpperCase());
+        if (stream.count() !== 2) throw new Error("Stream count");
+        if (stream.toList().toString() !== "[ALPHA, INSERTED, GAMMA]") throw new Error("Stream toList");
+        const collected = r.invokeJavaStatic("java.util.stream.Stream", "of", 2, 3, 4)
+          .map(value => value * 2)
+          .collect(r.invokeJavaStatic("java.util.stream.Collectors", "toList"));
+        if (collected.toString() !== "[4, 6, 8]") throw new Error("Stream Collectors.toList");
+        if (r.invokeJavaStatic("java.util.stream.Stream", "of", 1, 2, 3).reduce((a, b) => a + b).get() !== 6) throw new Error("Stream reduce");
         console.log("java-compatibility-ok");
         """, StandardCharsets.UTF_8);
     Process node;
