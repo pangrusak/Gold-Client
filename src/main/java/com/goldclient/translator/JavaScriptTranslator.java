@@ -247,7 +247,7 @@ public final class JavaScriptTranslator {
 
     // JVM numeric literals carry suffixes which are not valid JavaScript.
     result = result.replaceAll(
-        "\\b(-?(?:0[xX][0-9a-fA-F]+|(?:[0-9]+(?:\\\\.[0-9]*)?|\\\\.[0-9]+)(?:[eE][+-]?[0-9]+)?))[lLfFdD]\\b",
+        "\\b(-?(?:0[xX][0-9a-fA-F]+|(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?))[lLfFdD]\\b",
         "$1");
 
     // Primitive casts are compile-time hints on the JS target; int conversion
