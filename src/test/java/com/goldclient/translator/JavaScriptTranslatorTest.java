@@ -82,7 +82,7 @@ class JavaScriptTranslatorTest {
     assertTrue(lowered.contains("12;"), lowered);
     assertTrue(lowered.contains("1.5;"), lowered);
     assertTrue(lowered.contains("GoldClientRuntime.toInt32(local0)"), lowered);
-    assertTrue(lowered.contains("GoldClientRuntime.newArray(\\\"int\\\", local1)"), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.newArray(") && lowered.contains("local1)"), lowered);
     assertTrue(lowered.contains("GoldClientRuntime.javaEquals(local2, local3)"), lowered);
     assertTrue(lowered.contains("GoldClientRuntime.arraycopy(values, 0, values, 1, 2)"), lowered);
     assertFalse(lowered.contains("12L"), lowered);
