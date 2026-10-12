@@ -1412,8 +1412,37 @@ public final class JavaScriptModTranslationExporter {
             }
             if (owner === "java.lang.Integer" || owner === "java.lang.Long") {
               if (method === "parseInt" || method === "parseLong" || method === "valueOf") return Number.parseInt(args[0], args[1] ?? 10);
+              if (method === "decode") {
+                const value = String(args[0]);
+                if (/^-?0x/i.test(value)) return Number.parseInt(value.replace(/^(-?)0x/i, "$1"), 16) * (value.startsWith("-") ? -1 : 1);
+                if (/^-?#/i.test(value)) return Number.parseInt(value.replace(/^(-?)#/i, "$1"), 16) * (value.startsWith("-") ? -1 : 1);
+                if (/^-?0[0-7]+$/.test(value)) return Number.parseInt(value.replace(/^-?0/, ""), 8) * (value.startsWith("-") ? -1 : 1);
+                return Number.parseInt(value, 10);
+              }
               if (method === "toString") return String(args[0]);
+              if (method === "toHexString") return (Number(args[0]) >>> 0).toString(16);
+              if (method === "toBinaryString") return (Number(args[0]) >>> 0).toString(2);
+              if (method === "toOctalString") return (Number(args[0]) >>> 0).toString(8);
               if (method === "compare") return Math.sign(args[0] - args[1]);
+              if (method === "sum") return (Number(args[0]) + Number(args[1])) | 0;
+              if (method === "max") return Math.max(args[0], args[1]);
+              if (method === "min") return Math.min(args[0], args[1]);
+              if (method === "bitCount") {
+                let value = Number(args[0]) >>> 0, count = 0;
+                while (value) { value &= value - 1; count++; }
+                return count;
+              }
+              if (method === "highestOneBit") {
+                const value = Number(args[0]) | 0;
+                if (!value) return 0;
+                return (1 << (31 - Math.clz32(value >>> 0))) | 0;
+              }
+              if (method === "lowestOneBit") return (Number(args[0]) | 0) & -(Number(args[0]) | 0);
+              if (method === "numberOfLeadingZeros") return Math.clz32(Number(args[0]) >>> 0);
+              if (method === "numberOfTrailingZeros") {
+                const value = Number(args[0]) >>> 0;
+                return value === 0 ? 32 : 31 - Math.clz32(value & -value);
+              }
             }
             if (owner === "java.lang.Boolean") {
               if (method === "parseBoolean" || method === "valueOf") return String(args[0]).toLowerCase() === "true";
