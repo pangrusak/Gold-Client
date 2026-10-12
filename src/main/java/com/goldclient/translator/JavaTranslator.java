@@ -203,6 +203,12 @@ public final class JavaTranslator {
 
     int catchBodyStart = catchBegin + 1;
     String exceptionVariable = "caughtException";
+    // A handler label is normally the first instruction after CATCH_BEGIN.
+    // Skip labels before looking for the JVM's exception-stack-to-local store.
+    while (catchBodyStart < handlerEnd
+        && "LABEL".equals(operations.get(catchBodyStart).kind())) {
+      catchBodyStart++;
+    }
     if (catchBodyStart < handlerEnd) {
       IrOperationModel first = operations.get(catchBodyStart);
       if ("LOCAL_WRITE".equals(first.kind()) && first.operands().size() >= 2
