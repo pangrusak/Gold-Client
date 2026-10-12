@@ -115,6 +115,20 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void routesModClassConstructionAndStaticCallsThroughRuntime() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object value = new mezz.jei.ingredients.IngredientFilter();
+          Object runtime = mezz.jei.Internal.getRuntime();
+          Object math = java.lang.Math.max(2, 3);
+        }
+        """);
+    assertTrue(lowered.contains("GoldClientRuntime.create(\\"mezz.jei.ingredients.IngredientFilter\\""), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.invokeStaticClass(\\"mezz.jei.Internal\\", \\"getRuntime\\""), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.invokeJavaStatic(\\"java.lang.Math\\", \\"max\\""), lowered);
+  }
+
+  @Test
   void emitsSyntaxAcceptedByNodeWhenAvailable() throws Exception {
     var method = new IrMethodModel("isReady", "()Z", List.of(
         op("CONSTANT", "true"), op("RETURN", "true")));
