@@ -24,9 +24,12 @@ class ForgeJarBootstrapTest {
             @Retention(RetentionPolicy.RUNTIME) public @interface Mod {
               String modid(); String dependencies() default "";
               @Retention(RetentionPolicy.RUNTIME) public @interface EventHandler {}
-              @Retention(RetentionPolicy.RUNTIME) public @interface Instance {}
+              @Retention(RetentionPolicy.RUNTIME) public @interface Instance { String value() default ""; }
+              @Retention(RetentionPolicy.RUNTIME) public @interface Metadata {}
             }
             """);
+        files.put("net/minecraftforge/fml/common/ModMetadata.java",
+                "package net.minecraftforge.fml.common; public class ModMetadata {}");
         files.put("net/minecraftforge/fml/common/event/FMLInitializationEvent.java",
                 "package net.minecraftforge.fml.common.event; public class FMLInitializationEvent {}");
         files.put("fixture/Example.java", """
@@ -70,11 +73,51 @@ class ForgeJarBootstrapTest {
         assertArrayEquals(original, Files.readAllBytes(jar));
     }
 
-    @Test void blocksInjectionAndTransformers() throws Exception {
-        var plan = ForgeJarBootstrap.inspect(fixture("@Mod.Instance public static Example instance;", "FMLCorePlugin"));
-        assertTrue(plan.blockers().stream().anyMatch(s -> s.contains("Field injection")));
+    @Test void blocksUnimplementedTransformers() throws Exception {
+        var plan = ForgeJarBootstrap.inspect(fixture("", "FMLCorePlugin"));
         assertTrue(plan.blockers().stream().anyMatch(s -> s.contains("FMLCorePlugin")));
         assertEquals("", plan.bootstrapSource());
+    }
+
+    @Test void injectsOriginalModInstanceAndMetadataFromHost() throws Exception {
+        Path jar = fixture("""
+              @Mod.Instance public static Example instance;
+              @Mod.Metadata public static net.minecraftforge.fml.common.ModMetadata metadata;
+            """, null);
+        var plan = ForgeJarBootstrap.inspect(jar);
+        assertTrue(plan.blockers().isEmpty(), plan.blockers().toString());
+        assertTrue(plan.bootstrapSource().contains("Example.instance = mod;"));
+        assertTrue(plan.bootstrapSource().contains("Example.metadata = ((net.minecraftforge.fml.common.ModMetadata) host.metadataFor(\"example\"));"));
+
+        Path source = temp.resolve("injection/gold/generated/ForgeModBootstrap.java");
+        Path compiled = temp.resolve("injection/classes");
+        Files.createDirectories(source.getParent());
+        Files.createDirectories(compiled);
+        Files.writeString(source, plan.bootstrapSource());
+        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null,
+                "--release", "8", "-classpath", jar.toString(), "-d", compiled.toString(), source.toString()));
+
+        try (var loader = new URLClassLoader(new URL[] {compiled.toUri().toURL(), jar.toUri().toURL()},
+                ClassLoader.getPlatformClassLoader())) {
+            Class<?> bootstrap = loader.loadClass("gold.generated.ForgeModBootstrap");
+            Class<?> example = loader.loadClass("fixture.Example");
+            Class<?> metadataType = loader.loadClass("net.minecraftforge.fml.common.ModMetadata");
+            Object metadata = metadataType.getConstructor().newInstance();
+            Class<?> hostType = loader.loadClass("gold.generated.ForgeModBootstrap$Host");
+            Object host = java.lang.reflect.Proxy.newProxyInstance(loader, new Class<?>[] {hostType},
+                    (proxy, method, args) -> {
+                        if (method.getName().equals("metadataFor")) return metadata;
+                        if (method.getName().equals("eventFor")) {
+                            return loader.loadClass("net.minecraftforge.fml.common.event.FMLInitializationEvent")
+                                    .getConstructor().newInstance();
+                        }
+                        return null;
+                    });
+            bootstrap.getMethod("bindHost", hostType).invoke(null, host);
+            bootstrap.getMethod("main", String[].class).invoke(null, (Object) new String[0]);
+            assertSame(example.getField("current").get(null), example.getField("instance").get(null));
+            assertSame(metadata, example.getField("metadata").get(null));
+        }
     }
 
     @Test void dispatchesEveryHandlerForTheSameLifecyclePhaseInClassFileOrder() throws Exception {
