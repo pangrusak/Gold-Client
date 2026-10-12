@@ -487,7 +487,7 @@ public final class JavaScriptModTranslationExporter {
             };
           }
           forEach(callback) { this.items.forEach(callback); }
-          stream() { return this.items.slice(); }
+          stream() { return new GoldClientJavaStream(this.items); }
           toString() { return "[" + this.items.map(value => value == null ? "null" : String(value)).join(", ") + "]"; }
           #checkIndex(index) {
             if (!Number.isInteger(index) || index < 0 || index >= this.items.length) throw new RangeError("IndexOutOfBoundsException: " + index);
@@ -512,7 +512,7 @@ public final class JavaScriptModTranslationExporter {
           toArray() { return Array.from(this.items); }
           forEach(callback) { this.items.forEach(callback); }
           iterator() { return this.items[Symbol.iterator](); }
-          stream() { return Array.from(this.items); }
+          stream() { return new GoldClientJavaStream(this.items); }
           [Symbol.iterator]() { return this.items[Symbol.iterator](); }
         }
         class GoldClientJavaMap {
@@ -544,6 +544,91 @@ public final class JavaScriptModTranslationExporter {
           toObject() { return Object.fromEntries(this.items); }
           [Symbol.iterator]() { return this.items[Symbol.iterator](); }
         }
+        class GoldClientJavaStream {
+          constructor(values = []) {
+            this.values = Array.from(values?.items ?? values ?? []);
+            this.closed = false;
+          }
+          #assertOpen() { if (this.closed) throw new Error("IllegalStateException: stream has already been operated upon or closed"); }
+          #next(values) { this.#assertOpen(); return new GoldClientJavaStream(values); }
+          map(mapper) { this.#assertOpen(); return this.#next(this.values.map(mapper)); }
+          filter(predicate) { this.#assertOpen(); return this.#next(this.values.filter(predicate)); }
+          flatMap(mapper) {
+            this.#assertOpen();
+            const flattened = [];
+            for (const value of this.values) {
+              const mapped = mapper(value);
+              flattened.push(...Array.from(mapped?.values ?? mapped?.items ?? mapped ?? []));
+            }
+            return this.#next(flattened);
+          }
+          peek(action) { this.#assertOpen(); this.values.forEach(action); return this; }
+          distinct() { this.#assertOpen(); return this.#next(Array.from(new Set(this.values))); }
+          sorted(comparator) {
+            this.#assertOpen();
+            const values = this.values.slice();
+            values.sort(typeof comparator === "function" ? comparator : ((a, b) => a < b ? -1 : a > b ? 1 : 0));
+            return this.#next(values);
+          }
+          limit(count) { this.#assertOpen(); if (count < 0) throw new RangeError("IllegalArgumentException: negative limit"); return this.#next(this.values.slice(0, count)); }
+          skip(count) { this.#assertOpen(); if (count < 0) throw new RangeError("IllegalArgumentException: negative skip"); return this.#next(this.values.slice(count)); }
+          sequential() { this.#assertOpen(); return this; }
+          parallel() { this.#assertOpen(); return this; }
+          unordered() { this.#assertOpen(); return this; }
+          onClose(callback) { this.closeCallback = callback; return this; }
+          close() { if (!this.closed) { this.closed = true; this.closeCallback?.(); } }
+          forEach(action) { this.#assertOpen(); this.values.forEach(action); this.close(); }
+          forEachOrdered(action) { return this.forEach(action); }
+          toArray(generator) { this.#assertOpen(); return generator ? generator(this.values.length).map((_, i) => this.values[i]) : this.values.slice(); }
+          count() { this.#assertOpen(); return this.values.length; }
+          anyMatch(predicate) { this.#assertOpen(); return this.values.some(predicate); }
+          allMatch(predicate) { this.#assertOpen(); return this.values.every(predicate); }
+          noneMatch(predicate) { this.#assertOpen(); return !this.values.some(predicate); }
+          findFirst() { this.#assertOpen(); return this.values.length ? new GoldClientJavaOptional(this.values[0]) : GoldClientJavaOptional.empty(); }
+          findAny() { return this.findFirst(); }
+          reduce(...args) {
+            this.#assertOpen();
+            if (args.length > 1) return this.values.reduce(args[1], args[0]);
+            return this.values.length ? new GoldClientJavaOptional(this.values.reduce(args[0])) : GoldClientJavaOptional.empty();
+          }
+          min(comparator) {
+            this.#assertOpen();
+            if (!this.values.length) return GoldClientJavaOptional.empty();
+            const compare = typeof comparator === "function" ? comparator : ((a, b) => a < b ? -1 : a > b ? 1 : 0);
+            return new GoldClientJavaOptional(this.values.reduce((a, b) => compare(a, b) <= 0 ? a : b));
+          }
+          max(comparator) {
+            this.#assertOpen();
+            if (!this.values.length) return GoldClientJavaOptional.empty();
+            const compare = typeof comparator === "function" ? comparator : ((a, b) => a < b ? -1 : a > b ? 1 : 0);
+            return new GoldClientJavaOptional(this.values.reduce((a, b) => compare(a, b) >= 0 ? a : b));
+          }
+          collect(collector, valueMapper, mergeFunction) {
+            this.#assertOpen();
+            if (collector && typeof collector === "function") return this.values.reduce(collector, valueMapper);
+            if (collector?.kind === "list") return new GoldClientJavaList(this.values);
+            if (collector?.kind === "set") return new GoldClientJavaSet(this.values);
+            if (collector?.kind === "joining") return this.values.map(String).join(collector.delimiter ?? "");
+            if (collector?.kind === "counting") return this.values.length;
+            if (collector?.kind === "toMap") {
+              const map = new GoldClientJavaMap();
+              for (const value of this.values) {
+                const key = collector.keyMapper(value);
+                const mapped = collector.valueMapper(value);
+                if (map.containsKey(key)) {
+                  if (!collector.mergeFunction) throw new Error("IllegalStateException: duplicate key " + key);
+                  map.put(key, collector.mergeFunction(map.get(key), mapped));
+                } else map.put(key, mapped);
+              }
+              return map;
+            }
+            return this.values.slice();
+          }
+          toList() { this.#assertOpen(); return new GoldClientJavaList(this.values); }
+          iterator() { this.#assertOpen(); return this.values[Symbol.iterator](); }
+          [Symbol.iterator]() { this.#assertOpen(); return this.values[Symbol.iterator](); }
+        }
+
         class GoldClientJavaMatcher {
           constructor(pattern, input) {
             this.pattern = pattern;
@@ -641,7 +726,7 @@ public final class JavaScriptModTranslationExporter {
             return result;
           }
           filter(predicate) { return !this.present || predicate(this.value) ? this : new GoldClientJavaOptional(null, false); }
-          stream() { return this.present ? [this.value] : []; }
+          stream() { return new GoldClientJavaStream(this.present ? [this.value] : []); }
           toString() { return this.present ? "Optional[" + String(this.value) + "]" : "Optional.empty"; }
           static empty() { return new GoldClientJavaOptional(null, false); }
           static of(value) {
@@ -946,6 +1031,30 @@ public final class JavaScriptModTranslationExporter {
                 }
                 return;
               }
+            }
+            if (owner === "java.util.stream.Stream") {
+              if (method === "empty") return new GoldClientJavaStream();
+              if (method === "of") return new GoldClientJavaStream(args.length === 1 && Array.isArray(args[0]) ? args[0] : args);
+              if (method === "ofNullable") return new GoldClientJavaStream(args[0] == null ? [] : [args[0]]);
+              if (method === "concat") return new GoldClientJavaStream([...(args[0]?.values ?? args[0] ?? []), ...(args[1]?.values ?? args[1] ?? [])]);
+              if (method === "iterate") {
+                const values = [];
+                let value = args[0];
+                const predicate = args[2];
+                for (let i = 0; i < 10000 && (!predicate || predicate(value)); i++) {
+                  values.push(value);
+                  value = args[1](value);
+                }
+                return new GoldClientJavaStream(values);
+              }
+              if (method === "generate") return new GoldClientJavaStream(Array.from({ length: 1000 }, () => args[0]()));
+            }
+            if (owner === "java.util.stream.Collectors") {
+              if (method === "toList") return { kind: "list" };
+              if (method === "toSet") return { kind: "set" };
+              if (method === "joining") return { kind: "joining", delimiter: args[0] ?? "" };
+              if (method === "counting") return { kind: "counting" };
+              if (method === "toMap") return { kind: "toMap", keyMapper: args[0], valueMapper: args[1], mergeFunction: args[2] };
             }
             if (owner === "java.util.regex.Pattern") {
               if (method === "compile") return GoldClientJavaPattern.compile(args[0], args[1] ?? "");
