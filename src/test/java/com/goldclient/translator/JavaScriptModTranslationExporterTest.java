@@ -8,6 +8,8 @@ import com.goldclient.model.FieldModel;
 import com.goldclient.model.MethodModel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.List;
@@ -63,6 +65,24 @@ class JavaScriptModTranslationExporterTest {
     assertTrue(Files.readString(module).contains("untranslated-method"));
     assertTrue(Files.readString(output.resolve("javascript-report.txt"))
         .contains("not the same as a working mod"));
+
+    Path runner = output.resolve("run-generated-class.mjs");
+    Files.writeString(runner, """
+        import { Translated_example_Feature } from "./example/Feature.translated.js";
+        const instance = new Translated_example_Feature();
+        console.log(instance.isReady());
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "generated class execution timed out");
+    String nodeOutput = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), nodeOutput);
+    assertEquals("true", nodeOutput);
   }
 
   @Test
