@@ -78,6 +78,27 @@ public final class JavaScriptTranslator {
     return new TranslationResult(output.toString(), complete);
   }
 
+  /**
+   * Emits an explicit executable stub when bytecode is unavailable. Keeping
+   * the symbol present makes the module graph complete without pretending
+   * that native/abstract behavior was reconstructed.
+   */
+  public TranslationResult translateStub(String methodName, String descriptor, String reason) {
+    String signatureSource = structuredTranslator.translate(
+        new IrMethodModel(methodName, descriptor, List.of())).source();
+    Matcher signature = SIGNATURE.matcher(signatureSource);
+    String parameters = "";
+    String exportName = exportedName(methodName, descriptor);
+    if (signature.find()) parameters = lowerParameters(signature.group(2));
+    String detail = methodName + (descriptor == null ? "" : descriptor) + ": "
+        + (reason == null ? "bytecode unavailable" : reason);
+    String source = "// Status: stubbed; original implementation was unavailable.\n"
+        + "export function " + exportName + "(" + parameters + ") {\n"
+        + "  return GoldClientRuntime.unsupported(\"untranslated-method\", " + quote(detail) + ");\n"
+        + "}\n";
+    return new TranslationResult(source, false);
+  }
+
   /** Lowers the source-like output while preserving quoted strings and comments. */
   String lowerJavaSyntax(String source) {
     StringBuilder tokens = new StringBuilder(source.length() + 32);

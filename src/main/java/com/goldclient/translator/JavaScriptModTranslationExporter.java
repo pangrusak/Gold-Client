@@ -46,20 +46,24 @@ public final class JavaScriptModTranslationExporter {
       for (MethodModel method : clazz.methods().stream()
           .sorted(Comparator.comparing(MethodModel::name).thenComparing(MethodModel::descriptor))
           .toList()) {
-        if ((method.access() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0) {
-          statuses.add(new MethodStatus(clazz.name(), method.name(), method.descriptor(),
-              "skipped", "Abstract/native method has no bytecode."));
-          continue;
+        boolean unavailable = (method.access() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0
+            || method.intermediateRepresentation().operations().isEmpty();
+        TranslationResult result;
+        String status;
+        String reason;
+        if (unavailable) {
+          String why = (method.access() & Opcodes.ACC_NATIVE) != 0 ? "native method"
+              : (method.access() & Opcodes.ACC_ABSTRACT) != 0 ? "abstract method"
+              : "semantic IR was not recovered";
+          result = translator.translateStub(method.name(), method.descriptor(), why);
+          status = "stubbed";
+          reason = why;
+        } else {
+          result = translator.translate(method.intermediateRepresentation());
+          status = result.complete() ? "complete" : "incomplete";
+          reason = result.complete() ? null : incompleteReason(result.source());
         }
-        if (method.intermediateRepresentation().operations().isEmpty()) {
-          statuses.add(new MethodStatus(clazz.name(), method.name(), method.descriptor(),
-              "skipped", "No semantic IR operations were recovered."));
-          continue;
-        }
-        TranslationResult result = translator.translate(method.intermediateRepresentation());
-        statuses.add(new MethodStatus(clazz.name(), method.name(), method.descriptor(),
-            result.complete() ? "complete" : "incomplete",
-            result.complete() ? null : incompleteReason(result.source())));
+        statuses.add(new MethodStatus(clazz.name(), method.name(), method.descriptor(), status, reason));
         module.append(result.source()).append("\n");
       }
       Files.writeString(destination, module, StandardCharsets.UTF_8);
@@ -74,7 +78,7 @@ public final class JavaScriptModTranslationExporter {
     ExportReport report = new ExportReport(
         "gold-client-javascript-export-v1", classes.size(), statuses.size(),
         count(statuses, "complete"), count(statuses, "incomplete"),
-        count(statuses, "skipped"), filesWritten, statuses);
+        count(statuses, "skipped"), count(statuses, "stubbed"), filesWritten, statuses);
     Files.writeString(root.resolve("javascript-report.json"),
         new GsonBuilder().setPrettyPrinting().create().toJson(report) + System.lineSeparator(),
         StandardCharsets.UTF_8);
@@ -253,7 +257,7 @@ public final class JavaScriptModTranslationExporter {
   }
 
   public record ExportReport(String formatVersion, int classCount, int methodCount,
-      int completeCount, int incompleteCount, int skippedCount, int fileCount,
+      int completeCount, int incompleteCount, int skippedCount, int stubbedCount, int fileCount,
       List<MethodStatus> methods) {
     public ExportReport { methods = List.copyOf(methods); }
   }

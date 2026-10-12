@@ -45,7 +45,9 @@ class JavaScriptModTranslationExporterTest {
     assertEquals(3, report.methodCount());
     assertEquals(1, report.completeCount());
     assertEquals(1, report.incompleteCount());
-    assertEquals(1, report.skippedCount());
+    assertEquals(0, report.skippedCount());
+    assertEquals(1, report.stubbedCount());
+    assertTrue(Files.readString(module).contains("untranslated-method"));
     assertTrue(Files.readString(output.resolve("javascript-report.txt"))
         .contains("not the same as a working mod"));
   }
