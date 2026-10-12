@@ -44,6 +44,10 @@ class JavaScriptModTranslationExporterTest {
     assertTrue(Files.isRegularFile(output.resolve("mod-manifest.json")));
     assertTrue(Files.readString(output.resolve("mod-index.js")).contains("export function getClass"));
     assertTrue(Files.readString(output.resolve("mod-manifest.json")).contains("example.Feature"));
+    String moduleSource = Files.readString(module);
+    assertTrue(moduleSource.contains("export class Translated_example_Feature"), moduleSource);
+    assertTrue(moduleSource.contains("GoldClientRuntime.invoke(this, __goldMethods"), moduleSource);
+    assertTrue(Files.readString(output.resolve("gold-client-runtime.js")).contains("registerClass(name, constructor)"));
     assertEquals(1, report.classCount());
     assertEquals(3, report.methodCount());
     assertEquals(1, report.completeCount());
