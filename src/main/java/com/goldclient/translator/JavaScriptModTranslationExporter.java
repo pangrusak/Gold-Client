@@ -416,7 +416,7 @@ public final class JavaScriptModTranslationExporter {
           constructor(initial = []) {
             this.items = Array.isArray(initial) ? initial.slice() : [];
           }
-          add(value) { this.items.push(value); return true; }
+          add(...args) { if (args.length > 1) { this.addAt(args[0], args[1]); return; } this.items.push(args[0]); return true; }
           addAt(index, value) { this.#checkPosition(index); this.items.splice(index, 0, value); return; }
           addAll(values) {
             const list = values?.items ?? values;
@@ -700,7 +700,7 @@ public final class JavaScriptModTranslationExporter {
               case "java.util.LinkedList":
               case "java.util.Vector":
               case "java.util.Stack":
-                return new GoldClientJavaList(Array.isArray(args[0]) ? args[0] : []);
+                return new GoldClientJavaList(Array.from(args[0]?.items ?? args[0] ?? []));
               case "java.util.HashSet":
               case "java.util.LinkedHashSet":
               case "java.util.TreeSet":
