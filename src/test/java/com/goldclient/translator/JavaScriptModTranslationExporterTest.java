@@ -242,6 +242,10 @@ class JavaScriptModTranslationExporterTest {
         if (list.remove("beta") !== true || list.toString() !== "[alpha, inserted, gamma]") throw new Error("list removal");
         const copiedList = r.createJava("java.util.ArrayList", list);
         if (copiedList.size() !== 3 || copiedList.get(1) !== "inserted") throw new Error("list copy constructor");
+        const readOnly = r.invokeJavaStatic("java.util.Collections", "unmodifiableList", list);
+        let rejectedMutation = false;
+        try { readOnly.add("blocked"); } catch (error) { rejectedMutation = error.message.includes("UnsupportedOperationException"); }
+        if (!rejectedMutation || list.size() !== 3) throw new Error("unmodifiableList contract");
         if (list.subList(0, 1).get(0) !== "alpha") throw new Error("list subList");
         const map = r.createJava("java.util.HashMap");
         map.put("n", 2);
