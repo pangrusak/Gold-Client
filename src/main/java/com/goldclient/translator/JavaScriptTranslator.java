@@ -288,9 +288,15 @@ public final class JavaScriptTranslator {
     StringBuffer staticCalls = new StringBuffer();
     while (staticCall.find()) {
       String owner = staticCall.group(1);
-      if (owner.startsWith("java.") || owner.startsWith("javax.")
-          || owner.startsWith("org.") || owner.startsWith("com.google.")
-          || owner.startsWith("GoldClientRuntime")
+      if (owner.startsWith("java.") || owner.startsWith("javax.")) {
+        String replacement = "GoldClientRuntime.invokeJavaStatic(" + quote(owner.replace('/', '.'))
+            + ", " + quote(staticCall.group(2)) + ", ";
+        staticCall.appendReplacement(staticCalls, java.util.regex.Matcher.quoteReplacement(replacement));
+      } else if (owner.startsWith("org.") || owner.startsWith("com.google.")) {
+        String replacement = "GoldClientRuntime.invokeStaticClass(" + quote(owner.replace('/', '.'))
+            + ", " + quote(staticCall.group(2)) + ", ";
+        staticCall.appendReplacement(staticCalls, java.util.regex.Matcher.quoteReplacement(replacement));
+      } else if (owner.startsWith("GoldClientRuntime")
           || java.util.Set.of("String", "Integer", "Boolean", "Math", "System", "Objects",
               "Collections", "Arrays", "Character", "Long", "Double", "Float", "Byte",
               "Short", "Thread", "Class", "Enum", "Runtime", "Throwable", "Exception",
@@ -311,7 +317,10 @@ public final class JavaScriptTranslator {
         .matcher(result);
     StringBuffer allocations = new StringBuffer();
     while (allocation.find()) {
-      String replacement = "GoldClientRuntime.create(" + quote(allocation.group(1).replace('/', '.')) + ", ";
+      String className = allocation.group(1).replace('/', '.');
+      String helper = className.startsWith("java.") || className.startsWith("javax.")
+          ? "createJava" : "create";
+      String replacement = "GoldClientRuntime." + helper + "(" + quote(className) + ", ";
       allocation.appendReplacement(allocations, java.util.regex.Matcher.quoteReplacement(replacement));
     }
     allocation.appendTail(allocations);
