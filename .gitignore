@@ -3,7 +3,6 @@ target/
 .vscode/
 *.class
 *.log
-test-mods/*.jar
 output/*
 !output/.gitkeep
 .gold-client-jre
