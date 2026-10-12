@@ -980,6 +980,27 @@ public final class JavaScriptModTranslationExporter {
             return Array(size).fill(Object.prototype.hasOwnProperty.call(defaults, kind)
               ? defaults[kind] : null);
           },
+          unmodifiable(collection) {
+            const mutators = new Set([
+              "add", "addAt", "addAll", "addAllAt", "remove", "removeAt", "removeAll",
+              "retainAll", "removeIf", "replaceAll", "set", "clear", "put", "putAll",
+              "putIfAbsent", "compute", "computeIfAbsent", "computeIfPresent", "merge",
+              "replace", "replacePair", "removePair", "setProperty", "setTime", "flip",
+              "and", "or", "xor", "andNot", "poll", "pollFirst", "pollLast", "push", "pop",
+              "addFirst", "addLast", "offer", "offerFirst", "offerLast", "removeFirst", "removeLast"
+            ]);
+            return new Proxy(collection, {
+              get(target, property) {
+                const value = Reflect.get(target, property, target);
+                if (typeof property === "string" && mutators.has(property) && typeof value === "function") {
+                  return () => { throw new Error("UnsupportedOperationException: unmodifiable collection"); };
+                }
+                return typeof value === "function" ? value.bind(target) : value;
+              },
+              set() { throw new Error("UnsupportedOperationException: unmodifiable collection"); },
+              deleteProperty() { throw new Error("UnsupportedOperationException: unmodifiable collection"); }
+            });
+          },
           javaString(value) {
             if (value === null || value === undefined) return "null";
             if (typeof value === "boolean") return value ? "true" : "false";
@@ -1195,8 +1216,8 @@ public final class JavaScriptModTranslationExporter {
               if (method === "singletonList") return new GoldClientJavaList([args[0]]);
               if (method === "singleton") return new GoldClientJavaSet([args[0]]);
               if (method === "singletonMap") return new GoldClientJavaMap([[args[0], args[1]]]);
-              if (["unmodifiableList", "unmodifiableSet", "unmodifiableMap",
-                   "synchronizedList", "synchronizedSet", "synchronizedMap"].includes(method)) return args[0];
+              if (["unmodifiableList", "unmodifiableSet", "unmodifiableMap"].includes(method)) return this.unmodifiable(args[0]);
+              if (["synchronizedList", "synchronizedSet", "synchronizedMap"].includes(method)) return args[0];
               if (method === "addAll") {
                 const collection = args[0];
                 const values = args.slice(1);
