@@ -111,6 +111,7 @@ class IntermediateRepresentationAnalyzerTest {
     List<InstructionModel> instructions = List.of(
         instruction(25, "ALOAD", "0"),
         instruction(21, "ILOAD", "1"),
+        instruction(21, "ILOAD", "1"),
         instruction(21, "ILOAD", "2"),
         instruction(126, "IAND"),
         instruction(79, "IASTORE"),
