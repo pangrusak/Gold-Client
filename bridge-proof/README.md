@@ -36,3 +36,10 @@ no Java source tree or source maps, and its documented `hooks` config does not
 include world/player/tick callbacks. Runtime verification must use the built
 copy; `test-bridge.cjs` alone verifies only the translated fixture's callback
 and no-world behavior.
+
+
+## Player HUD data bridge
+
+The injected tick adapter also publishes `window.goldClientReadPlayerSnapshot()` with best-effort health, hunger, saturation, and exhaustion values when the supplied TeaVM player object exposes the expected fields. Unavailable values are `null`, and the snapshot's `capabilities` flags indicate which values were actually found; the adapter does not invent health or hunger defaults.
+
+`blockSampling` intentionally remains `false` until a verified live block-state accessor is wired. A terrain minimap must not draw unknown cells as if they were observed terrain. This is groundwork for AppleSkin-style hunger/health overlays and Xaero-style mapping, not proof that either original mod is already running.
