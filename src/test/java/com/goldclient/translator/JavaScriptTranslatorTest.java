@@ -226,4 +226,19 @@ class JavaScriptTranslatorTest {
   private static IrOperationModel op(String kind, String... operands) {
     return new IrOperationModel(kind, List.of(operands), 0);
   }
+
+  @Test
+  void routesMinecraftAndForgeStaticCallsThroughPlatformBindings() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object client = net.minecraft.client.Minecraft.getMinecraft();
+          Object registry = net.minecraftforge.fml.common.registry.GameRegistry.findRegistry();
+        }
+        """);
+    assertTrue(lowered.contains("GoldClientRuntime.invokePlatformStatic("), lowered);
+    assertTrue(lowered.contains("net.minecraft.client.Minecraft") && lowered.contains("getMinecraft"), lowered);
+    assertTrue(lowered.contains("net.minecraftforge.fml.common.registry.GameRegistry"), lowered);
+    assertFalse(lowered.contains("invokeStaticClass(\"net.minecraft.client.Minecraft\""), lowered);
+  }
+
 }
