@@ -19,6 +19,7 @@ public final class ForgeJarBootstrap {
     }
     record Annotation(String descriptor, Map<String, Object> values) {}
     record Member(int access, String name, String descriptor, List<Annotation> annotations) {}
+    record FieldInjection(String owner, String field, String descriptor, boolean isStatic, String kind) {}
     record Type(int access, String name, String parent, List<Member> fields,
                 List<Member> methods, List<Annotation> annotations) {}
     public record Plan(String modId, String modClass, List<String> blockers,
@@ -93,15 +94,6 @@ public final class ForgeJarBootstrap {
         List<Type> mods = types.stream().filter(t -> find(t.annotations(), MOD) != null).toList();
         if (mods.size() != 1) blockers.add("Exactly one @Mod class is currently required; found " + mods.size());
         for (Type type : types) {
-            for (Member field : type.fields()) {
-                for (Annotation annotation : field.annotations()) {
-                    if (Set.of("Lnet/minecraftforge/fml/common/Mod$Instance;",
-                            "Lnet/minecraftforge/fml/common/Mod$Metadata;").contains(annotation.descriptor())) {
-                        blockers.add("Field injection not implemented: " + type.name() + "." + field.name()
-                                + " " + annotation.descriptor());
-                    }
-                }
-            }
             for (Member method : type.methods()) {
                 if (find(method.annotations(), "Lnet/minecraftforge/fml/common/Mod$InstanceFactory;") != null) {
                     blockers.add("Instance factory not implemented: " + type.name() + "." + method.name());
@@ -113,6 +105,7 @@ public final class ForgeJarBootstrap {
         Annotation annotation = find(mod.annotations(), MOD);
         String id = Objects.toString(annotation.values().get("modid"), "");
         if (!id.matches("[a-z][a-z0-9_]{0,63}")) blockers.add("Mod ID requires unsupported validation: " + id);
+        List<FieldInjection> injections = fieldInjections(types, mod, id, blockers);
         List<ProxyBinding> proxies = clientProxies(types, mod, id, blockers);
         String dependencies = Objects.toString(annotation.values().get("dependencies"), "");
         if (!dependencies.isBlank()) ForgeRuntimeEvidence.dependencies(dependencies, runtimeEvidence, verifiedDependency, blockers);
@@ -141,7 +134,7 @@ public final class ForgeJarBootstrap {
         // Methods are collected in class-file declaration order. Preserve that order
         // when dispatching multiple handlers for the same Forge lifecycle phase.
         return new Plan(id, mod.name().replace('/', '.'), List.copyOf(blockers),
-                blockers.isEmpty() ? generate(id, mod, handlers, proxies, subscriberBindings) : "", types.size());
+                blockers.isEmpty() ? generate(id, mod, handlers, injections, proxies, subscriberBindings) : "", types.size());
     }
 
     // GOLD_PRIVATE_PROXY_BRIDGE_V1
@@ -182,6 +175,60 @@ public final class ForgeJarBootstrap {
                     priority=pair.get(1).toString();
                 }
                 result.add(new SubscriberBinding(type.name().replace('/','.'),method.name(),signature.group(1).replace('/','.').replace('$','.'),priority,Boolean.TRUE.equals(annotation.values().get("receiveCanceled"))));
+            }
+        }
+        return result;
+    }
+
+    private static List<FieldInjection> fieldInjections(
+            List<Type> types, Type mod, String modId, List<String> blockers) {
+        List<FieldInjection> result = new ArrayList<>();
+        String instanceAnnotation = "Lnet/minecraftforge/fml/common/Mod$Instance;";
+        String metadataAnnotation = "Lnet/minecraftforge/fml/common/Mod$Metadata;";
+        String metadataType = "Lnet/minecraftforge/fml/common/ModMetadata;";
+        for (Type type : types) {
+            for (Member field : type.fields()) {
+                Annotation instance = find(field.annotations(), instanceAnnotation);
+                Annotation metadata = find(field.annotations(), metadataAnnotation);
+                if (instance == null && metadata == null) continue;
+                if (instance != null && metadata != null) {
+                    blockers.add("Conflicting Forge field injections: " + type.name() + "." + field.name());
+                    continue;
+                }
+                if (!type.name().equals(mod.name())) {
+                    blockers.add("Forge field injection outside the @Mod entry class is not implemented: "
+                            + type.name() + "." + field.name());
+                    continue;
+                }
+                if ((field.access() & 1) == 0 || (field.access() & 0x10) != 0) {
+                    blockers.add("Forge injected fields must be public and non-final: "
+                            + type.name() + "." + field.name());
+                    continue;
+                }
+                String kind;
+                if (instance != null) {
+                    String requested = Objects.toString(instance.values().get("value"), "");
+                    if (!requested.isEmpty() && !requested.equals(modId)) {
+                        blockers.add("Cross-mod @Mod.Instance injection is not implemented: "
+                                + type.name() + "." + field.name() + " -> " + requested);
+                        continue;
+                    }
+                    if (!field.descriptor().equals("L" + mod.name() + ";")) {
+                        blockers.add("@Mod.Instance field type must exactly match the mod entry class: "
+                                + type.name() + "." + field.name() + " " + field.descriptor());
+                        continue;
+                    }
+                    kind = "instance";
+                } else {
+                    if (!field.descriptor().equals(metadataType)) {
+                        blockers.add("@Mod.Metadata field must use Forge ModMetadata: "
+                                + type.name() + "." + field.name() + " " + field.descriptor());
+                        continue;
+                    }
+                    kind = "metadata";
+                }
+                result.add(new FieldInjection(type.name().replace('/', '.'),
+                        field.name(), field.descriptor(), (field.access() & 0x0008) != 0, kind));
             }
         }
         return result;
@@ -235,13 +282,15 @@ public final class ForgeJarBootstrap {
     }
 
     private static String generate(String id, Type mod, Map<String, List<Member>> handlers,
-                                   List<ProxyBinding> proxies, List<SubscriberBinding> subscribers) {
+                                   List<FieldInjection> injections, List<ProxyBinding> proxies,
+                                   List<SubscriberBinding> subscribers) {
         String type = mod.name().replace('/', '.');
         StringBuilder code = new StringBuilder("package gold.generated;\npublic final class ForgeModBootstrap {\n");
         code.append("  public interface SubscriberInvoker { void invoke(Object event) throws Exception; }\n")
             .append("  public interface Host {\n")
             .append("    void beforeConstruction(String modId);\n")
             .append("    void afterConstruction(String modId, Object originalModInstance);\n")
+            .append("    Object metadataFor(String modId);\n")
             .append("    Object eventFor(String modId, String phase);\n")
             .append("    void afterPhase(String modId, String phase);\n")
             .append("    void registerStaticSubscriber(String modId, Class<?> owner, Class<?> eventType, String method, String priority, boolean receiveCanceled, SubscriberInvoker invoker);\n  }\n")
@@ -257,6 +306,15 @@ public final class ForgeJarBootstrap {
         // GOLD_ORIGINAL_MOD_INSTANCE_HANDOFF_V1
         code.append("    host.afterConstruction(").append((char) 34).append(id)
             .append((char) 34).append(", mod);").append((char) 10);
+        for (FieldInjection injection : injections) {
+            String owner = injection.isStatic() ? injection.owner() : "mod";
+            String value = injection.kind().equals("instance")
+                    ? "mod"
+                    : "((" + injection.descriptor().substring(1, injection.descriptor().length() - 1)
+                            .replace('/', '.') + ") host.metadataFor(\"" + id + "\"))";
+            code.append("    ").append(owner).append(".").append(injection.field())
+                    .append(" = ").append(value).append(";\n");
+        }
         for (ProxyBinding proxy : proxies) {
             if (proxy.setter().isEmpty()) {
                 code.append("    ").append(proxy.owner()).append(".").append(proxy.field())
