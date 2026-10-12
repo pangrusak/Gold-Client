@@ -678,6 +678,33 @@ public final class JavaScriptModTranslationExporter {
           }
         }
 
+        class GoldClientJavaTimeUnit {
+          static factors = Object.freeze({
+            NANOSECONDS: 1e-9, MICROSECONDS: 1e-6, MILLISECONDS: 1e-3,
+            SECONDS: 1, MINUTES: 60, HOURS: 3600, DAYS: 86400
+          });
+          constructor(name) {
+            if (!Object.prototype.hasOwnProperty.call(GoldClientJavaTimeUnit.factors, name)) throw new TypeError("IllegalArgumentException: unknown TimeUnit " + name);
+            this.name = name;
+            this.factor = GoldClientJavaTimeUnit.factors[name];
+          }
+          convert(duration, sourceUnit) {
+            const seconds = Number(duration) * sourceUnit.factor;
+            const result = seconds / this.factor;
+            if (this.name === "NANOSECONDS" || this.name === "MICROSECONDS" || this.name === "MILLISECONDS") return Math.trunc(result);
+            return Math.trunc(result);
+          }
+          toNanos(duration) { return Math.trunc(Number(duration) * this.factor / 1e-9); }
+          toMicros(duration) { return Math.trunc(Number(duration) * this.factor / 1e-6); }
+          toMillis(duration) { return Math.trunc(Number(duration) * this.factor / 1e-3); }
+          toSeconds(duration) { return Math.trunc(Number(duration) * this.factor); }
+          toMinutes(duration) { return Math.trunc(Number(duration) * this.factor / 60); }
+          toHours(duration) { return Math.trunc(Number(duration) * this.factor / 3600); }
+          toDays(duration) { return Math.trunc(Number(duration) * this.factor / 86400); }
+          toString() { return this.name; }
+          static named(name) { return new GoldClientJavaTimeUnit(String(name)); }
+        }
+
         class GoldClientJavaRandom {
           constructor(seed = Date.now()) { this.setSeed(seed); }
           setSeed(seed) { this.seed = (Number(seed) ^ 0x6d2b79f5) >>> 0; this.haveGaussian = false; this.nextGaussianValue = 0; }
@@ -1064,6 +1091,14 @@ public final class JavaScriptModTranslationExporter {
             }
           },
           getStaticField(className, fieldName) {
+            if (className === "java.util.concurrent.TimeUnit") return GoldClientJavaTimeUnit.named(fieldName);
+            if (className === "java.util.Locale") {
+              const locales = { ROOT: new GoldClientJavaLocale(), US: new GoldClientJavaLocale("en", "US"),
+                UK: new GoldClientJavaLocale("en", "GB"), CANADA: new GoldClientJavaLocale("en", "CA"),
+                FRANCE: new GoldClientJavaLocale("fr", "FR"), GERMANY: new GoldClientJavaLocale("de", "DE"),
+                JAPAN: new GoldClientJavaLocale("ja", "JP"), CHINA: new GoldClientJavaLocale("zh", "CN") };
+              if (Object.prototype.hasOwnProperty.call(locales, fieldName)) return locales[fieldName];
+            }
             const constructor = this.classes.get(className);
             if (!constructor) return this.unsupported("missing-static-field-class", className);
             this.ensureInitialized(constructor);
@@ -1122,6 +1157,8 @@ public final class JavaScriptModTranslationExporter {
               case "java.util.Random":
               case "java.util.SplittableRandom":
                 return new GoldClientJavaRandom(args.length ? args[0] : Date.now());
+              case "java.util.concurrent.TimeUnit":
+                return GoldClientJavaTimeUnit.named(args[0] ?? "SECONDS");
               case "java.util.Properties":
                 return new GoldClientJavaProperties(args[0] ?? []);
               case "java.util.concurrent.atomic.AtomicInteger":
