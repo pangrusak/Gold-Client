@@ -167,7 +167,7 @@ public final class Main {
   }
 
   private static void printTranslationSummary(ModAnalysis analysis) {
-    System.out.println("=== Gold Client Mod Translation ===\\n");
+    System.out.println("=== Gold Client Mod Translation ===\n");
     System.out.println("Mod: " + analysis.metadata().getName());
     System.out.println("Version: " + analysis.metadata().getVersion());
     System.out.println("Minecraft: " + analysis.metadata().getMinecraftVersion());
