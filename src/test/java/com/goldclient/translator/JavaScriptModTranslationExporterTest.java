@@ -123,6 +123,68 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void exportsStrictForgeHostRuntimeAndContract() throws Exception {
+    Path output = tempDir.resolve("strict-host");
+    new ForgeHostRuntimeExporter().export(output);
+    String runtime = Files.readString(output.resolve("forge-host-runtime.js"));
+    String contract = Files.readString(output.resolve("forge-host-contract.json"));
+    assertTrue(runtime.contains("export function createForgeHost(bindings)"));
+    assertTrue(runtime.contains("export class ForgeEventBus"));
+    assertTrue(runtime.contains("export class ForgeModState"));
+    assertTrue(runtime.contains("ForgeHostBindingError"));
+    assertTrue(runtime.contains("never fabricates a working game object"));
+    assertTrue(contract.contains("strictMissingBindingErrors"));
+    assertTrue(contract.contains("registries"));
+    assertTrue(contract.contains("mixins, coremods"));
+  }
+
+  @Test
+  void generatedForgeHostRuntimeExecutesStrictBindingAndEventBusContracts() throws Exception {
+    Path output = tempDir.resolve("strict-host-node");
+    new ForgeHostRuntimeExporter().export(output);
+    Files.writeString(output.resolve("package.json"), "{\n  \"type\": \"module\"\n}\n");
+    Path runner = output.resolve("host-contract-test.mjs");
+    Files.writeString(runner, """
+        import { ForgeEventBus, createForgeHost, assertForgeHostBindings } from "./forge-host-runtime.js";
+        const bus = new ForgeEventBus();
+        const seen = [];
+        bus.subscribe("tick", () => seen.push("low"), { priority: 1, owner: "a" });
+        bus.subscribe("tick", () => seen.push("high"), { priority: 10, owner: "b" });
+        const result = bus.post("tick", {});
+        if (seen.join(",") !== "high,low" || result.listenerCount !== 2) throw new Error("event order");
+        bus.clearOwner("a");
+        if (bus.size !== 1) throw new Error("owner cleanup");
+        let rejected = false;
+        try { createForgeHost({}); } catch (error) { rejected = error.name === "ForgeHostBindingError"; }
+        if (!rejected) throw new Error("missing bindings were silently accepted");
+        const bindings = {
+          events: { createLifecycleEvent: async () => ({}) },
+          minecraft: {}, forge: { stopMod: async () => {} }, render: {}, input: {},
+          resources: {}, network: {}, config: {},
+          registries: { register: (_kind, _id, value) => value, lookup: () => null },
+          logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+          side: { current: () => "CLIENT" }
+        };
+        const report = assertForgeHostBindings(bindings);
+        if (!report.valid || report.serviceCount !== 11) throw new Error("binding validation");
+        const host = createForgeHost(bindings);
+        if (host.diagnostics().eventListenerCount !== 0) throw new Error("diagnostics");
+        console.log("forge-host-ok");
+        """);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "generated Forge host runtime timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("forge-host-ok", outputText);
+  }
+
+  @Test
   void preservesModResourcesAndSkipsClassBytesAndSignatureFiles() throws Exception {
     Path jar = tempDir.resolve("input.jar");
     try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar))) {

@@ -87,6 +87,7 @@ public final class JavaScriptModTranslationExporter {
     writeModuleIndex(classes, root);
     writeClassManifest(classes, root);
     new ForgeLifecycleExporter().export(classes, root);
+    new ForgeHostRuntimeExporter().export(root);
     Files.writeString(root.resolve("package.json"),
         "{\n  \"type\": \"module\"\n}\n", StandardCharsets.UTF_8);
     ExportReport report = new ExportReport(
