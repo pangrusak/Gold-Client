@@ -544,6 +544,43 @@ public final class JavaScriptModTranslationExporter {
           toObject() { return Object.fromEntries(this.items); }
           [Symbol.iterator]() { return this.items[Symbol.iterator](); }
         }
+        class GoldClientJavaOptional {
+          constructor(value, present = value !== null && value !== undefined) {
+            this.present = Boolean(present);
+            this.value = this.present ? value : null;
+          }
+          isPresent() { return this.present; }
+          isEmpty() { return !this.present; }
+          get() {
+            if (!this.present) throw new Error("NoSuchElementException: No value present");
+            return this.value;
+          }
+          orElse(fallback) { return this.present ? this.value : fallback; }
+          orElseGet(supplier) { return this.present ? this.value : supplier(); }
+          orElseThrow(supplier) {
+            if (this.present) return this.value;
+            throw typeof supplier === "function" ? supplier() : new Error("NoSuchElementException: No value present");
+          }
+          ifPresent(consumer) { if (this.present) consumer(this.value); }
+          ifPresentOrElse(consumer, emptyAction) { if (this.present) consumer(this.value); else emptyAction(); }
+          map(mapper) { return this.present ? new GoldClientJavaOptional(mapper(this.value)) : new GoldClientJavaOptional(null, false); }
+          flatMap(mapper) {
+            if (!this.present) return new GoldClientJavaOptional(null, false);
+            const result = mapper(this.value);
+            if (!(result instanceof GoldClientJavaOptional)) throw new TypeError("Optional.flatMap mapper must return Optional");
+            return result;
+          }
+          filter(predicate) { return !this.present || predicate(this.value) ? this : new GoldClientJavaOptional(null, false); }
+          stream() { return this.present ? [this.value] : []; }
+          toString() { return this.present ? "Optional[" + String(this.value) + "]" : "Optional.empty"; }
+          static empty() { return new GoldClientJavaOptional(null, false); }
+          static of(value) {
+            if (value == null) throw new TypeError("NullPointerException");
+            return new GoldClientJavaOptional(value);
+          }
+          static ofNullable(value) { return new GoldClientJavaOptional(value); }
+        }
+
         class GoldClientJavaStringBuilder {
           constructor(initial = "") { this.value = initial == null ? "" : String(initial); }
           append(value) { this.value += value == null ? "null" : String(value); return this; }
@@ -667,6 +704,8 @@ public final class JavaScriptModTranslationExporter {
               case "java.lang.StringBuilder":
               case "java.lang.StringBuffer":
                 return new GoldClientJavaStringBuilder(args[0] ?? "");
+              case "java.util.Optional":
+                return new GoldClientJavaOptional(args[0]);
               case "java.lang.String":
                 return String(args[0] ?? "");
               default:
@@ -826,6 +865,11 @@ public final class JavaScriptModTranslationExporter {
                 }
                 return;
               }
+            }
+            if (owner === "java.util.Optional") {
+              if (method === "empty") return GoldClientJavaOptional.empty();
+              if (method === "of") return GoldClientJavaOptional.of(args[0]);
+              if (method === "ofNullable") return GoldClientJavaOptional.ofNullable(args[0]);
             }
             if (owner === "java.util.Objects") {
               if (method === "equals") return Object.is(args[0], args[1]);
