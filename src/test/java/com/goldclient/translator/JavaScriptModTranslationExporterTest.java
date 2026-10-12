@@ -323,6 +323,12 @@ class JavaScriptModTranslationExporterTest {
         if (!bits.intersects(otherBits)) throw new Error("BitSet intersects");
         bits.and(otherBits);
         if (bits.toString() !== "{5}") throw new Error("BitSet and");
+        const randomA = r.createJava("java.util.Random", 1234);
+        const randomB = r.createJava("java.util.Random", 1234);
+        if (randomA.nextInt() !== randomB.nextInt() || randomA.nextInt(10) < 0 || randomA.nextInt(10) >= 10) throw new Error("Random bounds/seed");
+        let invalidBoundRejected = false;
+        try { randomA.nextInt(0); } catch (error) { invalidBoundRejected = error.message.includes("bound must be positive"); }
+        if (!invalidBoundRejected) throw new Error("Random invalid bound");
         console.log("java-compatibility-ok");
         """, StandardCharsets.UTF_8);
     Process node;
