@@ -67,6 +67,8 @@ public final class JavaScriptModTranslationExporter {
     }
 
     Files.writeString(root.resolve("gold-client-runtime.js"), runtimeSource(), StandardCharsets.UTF_8);
+    writeModuleIndex(classes, root);
+    writeClassManifest(classes, root);
     Files.writeString(root.resolve("package.json"),
         "{\n  \"type\": \"module\"\n}\n", StandardCharsets.UTF_8);
     ExportReport report = new ExportReport(
@@ -100,6 +102,58 @@ public final class JavaScriptModTranslationExporter {
   private static int count(List<MethodStatus> statuses, String status) {
     return (int) statuses.stream().filter(item -> item.status().equals(status)).count();
   }
+
+  private static void writeModuleIndex(List<ClassModel> classes, Path root) throws IOException {
+    StringBuilder index = new StringBuilder();
+    index.append("// Gold Client whole-mod module registry.\\n");
+    List<ClassModel> ordered = classes.stream()
+        .sorted(Comparator.comparing(ClassModel::name)).toList();
+    for (int i = 0; i < ordered.size(); i++) {
+      Path module = outputPath(root, ordered.get(i).name());
+      String relative = root.relativize(module).toString().replace('\\\\', '/');
+      index.append("import * as C").append(i).append(" from ")
+          .append(quote("./" + relative)).append(";\\n");
+    }
+    index.append("\\nexport const classes = Object.freeze({\\n");
+    for (int i = 0; i < ordered.size(); i++) {
+      ClassModel clazz = ordered.get(i);
+      index.append("  ").append(quote(clazz.name().replace('/', '.')))
+          .append(": C").append(i);
+      if (i + 1 < ordered.size()) index.append(',');
+      index.append("\\n");
+    }
+    index.append("});\\n")
+        .append("export function getClass(name) { return classes[name] ?? null; }\\n")
+        .append("export default classes;\\n");
+    Files.writeString(root.resolve("mod-index.js"), index, StandardCharsets.UTF_8);
+  }
+
+  private static void writeClassManifest(List<ClassModel> classes, Path root) throws IOException {
+    List<ClassManifest> manifest = classes.stream()
+        .sorted(Comparator.comparing(ClassModel::name))
+        .map(clazz -> new ClassManifest(
+            clazz.name().replace('/', '.'),
+            clazz.superName() == null ? null : clazz.superName().replace('/', '.'),
+            clazz.interfaces().stream().map(name -> name.replace('/', '.')).toList(),
+            clazz.fields().stream().map(field -> new FieldManifest(
+                field.name(), field.descriptor(), (field.access() & Opcodes.ACC_STATIC) != 0,
+                (field.access() & Opcodes.ACC_FINAL) != 0)).toList(),
+            clazz.methods().stream().map(method -> new MethodManifest(
+                method.name(), method.descriptor(),
+                (method.access() & Opcodes.ACC_STATIC) != 0,
+                (method.access() & Opcodes.ACC_ABSTRACT) != 0,
+                (method.access() & Opcodes.ACC_NATIVE) != 0)).toList()))
+        .toList();
+    Files.writeString(root.resolve("mod-manifest.json"),
+        new GsonBuilder().setPrettyPrinting().create().toJson(manifest) + System.lineSeparator(),
+        StandardCharsets.UTF_8);
+  }
+
+  public record ClassManifest(String name, String superName, List<String> interfaces,
+      List<FieldManifest> fields, List<MethodManifest> methods) {}
+  public record FieldManifest(String name, String descriptor, boolean isStatic, boolean isFinal) {}
+  public record MethodManifest(String name, String descriptor, boolean isStatic,
+      boolean isAbstract, boolean isNative) {}
 
   private static String summary(ExportReport report) {
     return """

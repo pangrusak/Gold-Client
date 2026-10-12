@@ -67,6 +67,29 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void lowersJavaNumericSuffixesPrimitiveCastsArraysAndCommonApis() {
+    String source = """
+        void sample() {
+          long count = 12L;
+          float scale = 1.5F;
+          int index = (int) local0;
+          int[] values = new int[local1];
+          boolean same = local2.equals(local3);
+          System.arraycopy(values, 0, values, 1, 2);
+        }
+        """;
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax(source);
+    assertTrue(lowered.contains("12;"), lowered);
+    assertTrue(lowered.contains("1.5;"), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.toInt32(local0)"), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.newArray(\\\"int\\\", local1)"), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.javaEquals(local2, local3)"), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.arraycopy(values, 0, values, 1, 2)"), lowered);
+    assertFalse(lowered.contains("12L"), lowered);
+    assertFalse(lowered.contains("1.5F"), lowered);
+  }
+
+  @Test
   void emitsSyntaxAcceptedByNodeWhenAvailable() throws Exception {
     var method = new IrMethodModel("isReady", "()Z", List.of(
         op("CONSTANT", "true"), op("RETURN", "true")));

@@ -205,7 +205,7 @@ public final class JavaScriptTranslator {
   }
 
   private static String rewriteCode(StringBuilder input) {
-    return input.toString()
+    String result = input.toString()
         .replace("System.out.println(", "console.log(")
         .replace("System.err.println(", "console.error(")
         .replace("new java.lang.IllegalStateException", "new Error")
@@ -218,7 +218,48 @@ public final class JavaScriptTranslator {
         .replace("Integer.toString(", "String(")
         .replace("Boolean.toString(", "String(")
         .replace("Math.floorDiv(", "GoldClientRuntime.intDiv(")
-        .replace("Math.floorMod(", "GoldClientRuntime.intMod(");
+        .replace("Math.floorMod(", "GoldClientRuntime.intMod(")
+        .replace("java.util.Objects.requireNonNull(", "GoldClientRuntime.requireNonNull(")
+        .replace("Objects.requireNonNull(", "GoldClientRuntime.requireNonNull(")
+        .replace("java.lang.System.arraycopy(", "GoldClientRuntime.arraycopy(")
+        .replace("System.arraycopy(", "GoldClientRuntime.arraycopy(");
+
+    // JVM numeric literals carry suffixes which are not valid JavaScript.
+    result = result.replaceAll(
+        "\\b(-?(?:0[xX][0-9a-fA-F]+|(?:[0-9]+(?:\\\\.[0-9]*)?|\\\\.[0-9]+)(?:[eE][+-]?[0-9]+)?))[lLfFdD]\\b",
+        "$1");
+
+    // Primitive casts are compile-time hints on the JS target; int conversion
+    // is explicit where Java's 32-bit semantics matter.
+    result = result.replaceAll("\\\\((?:byte|short|float|double|char)\\\\)\\\\s*(?=[A-Za-z_$0-9(])", "");
+    result = result.replaceAll("\\\\(long\\\\)\\\\s*(?=[A-Za-z_$0-9(])", "");
+    result = result.replaceAll(
+        "\\\\(int\\\\)\\\\s*([A-Za-z_$][\\\\w$]*|[-+]?[0-9]+|\\\\([^()]*\\\\))",
+        "GoldClientRuntime.toInt32($1)");
+
+    // Primitive JVM arrays must be allocated with JavaScript-compatible syntax.
+    java.util.regex.Matcher array = java.util.regex.Pattern.compile(
+        "\\\\bnew\\\\s+(boolean|byte|char|short|int|long|float|double|Object)\\\\s*\\\\[([^\\\\[\\\\]]*)\\\\]")
+        .matcher(result);
+    StringBuffer arrays = new StringBuffer();
+    while (array.find()) {
+      array.appendReplacement(arrays, java.util.regex.Matcher.quoteReplacement(
+          "GoldClientRuntime.newArray(" + quote(array.group(1)) + ", " + array.group(2) + ")"));
+    }
+    array.appendTail(arrays);
+    result = arrays.toString();
+
+    // Common Java value APIs with direct equivalents in the compatibility layer.
+    java.util.regex.Matcher equals = java.util.regex.Pattern.compile(
+        "([A-Za-z_$][\\\\w$]*(?:\\\\.[A-Za-z_$][\\\\w$]*)*)\\\\.equals\\\\(([^()]*?)\\\\)")
+        .matcher(result);
+    StringBuffer equalCalls = new StringBuffer();
+    while (equals.find()) {
+      equals.appendReplacement(equalCalls, java.util.regex.Matcher.quoteReplacement(
+          "GoldClientRuntime.javaEquals(" + equals.group(1) + ", " + equals.group(2) + ")"));
+    }
+    equals.appendTail(equalCalls);
+    return equalCalls.toString();
   }
 
   private static String lowerParameters(String parameters) {
