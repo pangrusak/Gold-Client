@@ -105,26 +105,26 @@ public final class JavaScriptModTranslationExporter {
 
   private static void writeModuleIndex(List<ClassModel> classes, Path root) throws IOException {
     StringBuilder index = new StringBuilder();
-    index.append("// Gold Client whole-mod module registry.\\n");
+    index.append("// Gold Client whole-mod module registry.\n");
     List<ClassModel> ordered = classes.stream()
         .sorted(Comparator.comparing(ClassModel::name)).toList();
     for (int i = 0; i < ordered.size(); i++) {
       Path module = outputPath(root, ordered.get(i).name());
-      String relative = root.relativize(module).toString().replace('\\\\', '/');
+      String relative = root.relativize(module).toString().replace('\\', '/');
       index.append("import * as C").append(i).append(" from ")
-          .append(quote("./" + relative)).append(";\\n");
+          .append(quote("./" + relative)).append(";\n");
     }
-    index.append("\\nexport const classes = Object.freeze({\\n");
+    index.append("\nexport const classes = Object.freeze({\n");
     for (int i = 0; i < ordered.size(); i++) {
       ClassModel clazz = ordered.get(i);
       index.append("  ").append(quote(clazz.name().replace('/', '.')))
           .append(": C").append(i);
       if (i + 1 < ordered.size()) index.append(',');
-      index.append("\\n");
+      index.append("\n");
     }
-    index.append("});\\n")
-        .append("export function getClass(name) { return classes[name] ?? null; }\\n")
-        .append("export default classes;\\n");
+    index.append("});\n")
+        .append("export function getClass(name) { return classes[name] ?? null; }\n")
+        .append("export default classes;\n");
     Files.writeString(root.resolve("mod-index.js"), index, StandardCharsets.UTF_8);
   }
 
