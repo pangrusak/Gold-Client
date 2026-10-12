@@ -5,6 +5,7 @@ import com.goldclient.model.IrOperationModel;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JavaTranslatorTest {
@@ -290,5 +291,69 @@ class JavaTranslatorTest {
 
     assertTrue(result.source().contains("var local1 = 1;"));
     assertTrue(result.source().contains("local1 = 2;"));
+  }
+
+  @Test
+  void translatesTableSwitchIntoStructuredCases() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "(I)I",
+        List.of(
+            new IrOperationModel("TABLE_SWITCH",
+                List.of("local0", "1", "2", "Ldefault", "Lone", "Ltwo"), 0),
+            new IrOperationModel("LABEL", List.of("Lone"), 1),
+            new IrOperationModel("RETURN", List.of("11"), 2),
+            new IrOperationModel("LABEL", List.of("Ltwo"), 3),
+            new IrOperationModel("RETURN", List.of("22"), 4),
+            new IrOperationModel("LABEL", List.of("Ldefault"), 5),
+            new IrOperationModel("RETURN", List.of("-1"), 6)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("switch (local0) {"), result.source());
+    assertTrue(result.source().contains("case 1:"), result.source());
+    assertTrue(result.source().contains("case 2:"), result.source());
+    assertTrue(result.source().contains("default:"), result.source());
+    assertTrue(result.source().contains("return 11;"), result.source());
+    assertTrue(result.source().contains("return 22;"), result.source());
+    assertTrue(!result.source().contains("TODO"), result.source());
+  }
+
+  @Test
+  void translatesLookupSwitchAndSharedCaseTargets() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "(I)I",
+        List.of(
+            new IrOperationModel("LOOKUP_SWITCH",
+                List.of("local0", "Ldefault", "-4", "Lnegative", "7", "Lpositive",
+                    "9", "Lpositive"), 0),
+            new IrOperationModel("LABEL", List.of("Lnegative"), 1),
+            new IrOperationModel("RETURN", List.of("-4"), 2),
+            new IrOperationModel("LABEL", List.of("Lpositive"), 3),
+            new IrOperationModel("RETURN", List.of("7"), 4),
+            new IrOperationModel("LABEL", List.of("Ldefault"), 5),
+            new IrOperationModel("RETURN", List.of("0"), 6)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("case -4:"), result.source());
+    assertTrue(result.source().contains("case 7:"), result.source());
+    assertTrue(result.source().contains("case 9:"), result.source());
+    assertTrue(result.source().contains("default:"), result.source());
+    assertEquals(1, occurrences(result.source(), "case 7:"));
+    assertTrue(!result.source().contains("TODO"), result.source());
+  }
+
+  private static int occurrences(String text, String needle) {
+    int count = 0;
+    int offset = 0;
+    while ((offset = text.indexOf(needle, offset)) >= 0) {
+      count++;
+      offset += needle.length();
+    }
+    return count;
   }
 }

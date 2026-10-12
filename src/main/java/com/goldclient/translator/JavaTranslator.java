@@ -56,6 +56,18 @@ public final class JavaTranslator {
         continue;
       }
 
+      if ("TABLE_SWITCH".equals(operation.kind())
+          || "LOOKUP_SWITCH".equals(operation.kind())) {
+        ConditionalRender switched = renderSwitch(
+            operations, i, end, indent, context, labels);
+        if (switched != null) {
+          source.append(switched.source());
+          complete &= switched.complete();
+          i = switched.lastIndex();
+          continue;
+        }
+      }
+
       if ("CONDITIONAL_BRANCH".equals(operation.kind())
           && operation.operands().size() >= 2) {
         ConditionalRender branch = renderConditional(
@@ -115,6 +127,133 @@ public final class JavaTranslator {
     }
 
     return new RenderResult(source.toString(), complete);
+  }
+
+  private static ConditionalRender renderSwitch(
+      List<IrOperationModel> operations,
+      int switchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    IrOperationModel operation = operations.get(switchIndex);
+    List<String> operands = operation.operands();
+    String value;
+    String defaultLabel;
+    List<SwitchArm> arms = new java.util.ArrayList<>();
+
+    try {
+      if ("TABLE_SWITCH".equals(operation.kind())) {
+        if (operands.size() < 4) return null;
+        value = operands.get(0);
+        int min = Integer.parseInt(operands.get(1));
+        int max = Integer.parseInt(operands.get(2));
+        defaultLabel = operands.get(3);
+        if (max < min || (long) max - min + 1 != operands.size() - 4) return null;
+        for (long key = min; key <= (long) max; key++) {
+          arms.add(new SwitchArm((int) key, operands.get(4 + (int) (key - min))));
+        }
+      } else {
+        if (operands.size() < 2 || (operands.size() - 2) % 2 != 0) return null;
+        value = operands.get(0);
+        defaultLabel = operands.get(1);
+        for (int index = 2; index < operands.size(); index += 2) {
+          arms.add(new SwitchArm(
+              Integer.parseInt(operands.get(index)), operands.get(index + 1)));
+        }
+      }
+    } catch (NumberFormatException exception) {
+      return null;
+    }
+
+    Integer defaultIndex = labels.get(defaultLabel);
+    if (defaultIndex == null || defaultIndex <= switchIndex || defaultIndex >= end) return null;
+    Map<String, Integer> targetIndices = new HashMap<>();
+    for (SwitchArm arm : arms) {
+      Integer target = labels.get(arm.label());
+      if (target == null || target <= switchIndex || target >= end) return null;
+      targetIndices.put(arm.label(), target);
+    }
+
+    int lastTarget = defaultIndex;
+    for (int target : targetIndices.values()) lastTarget = Math.max(lastTarget, target);
+
+    int joinIndex = end;
+    String joinLabel = null;
+    for (int index = switchIndex + 1; index < end; index++) {
+      IrOperationModel candidate = operations.get(index);
+      if (!"JUMP".equals(candidate.kind()) || candidate.operands().isEmpty()) continue;
+      String targetLabel = candidate.operands().get(0);
+      Integer targetIndex = labels.get(targetLabel);
+      if (targetIndex != null && targetIndex > lastTarget && targetIndex < joinIndex) {
+        joinIndex = targetIndex;
+        joinLabel = targetLabel;
+      }
+    }
+
+    Map<Integer, List<String>> labelsAtTarget = new java.util.TreeMap<>();
+    for (SwitchArm arm : arms) {
+      int target = targetIndices.get(arm.label());
+      labelsAtTarget.computeIfAbsent(target, ignored -> new java.util.ArrayList<>())
+          .add("case " + arm.key() + ":");
+    }
+    labelsAtTarget.computeIfAbsent(defaultIndex, ignored -> new java.util.ArrayList<>())
+        .add("default:");
+
+    List<Integer> orderedTargets = new java.util.ArrayList<>(labelsAtTarget.keySet());
+    orderedTargets.sort(Integer::compareTo);
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("switch (")
+        .append(normalizeExpression(value)).append(") {\n");
+    boolean complete = true;
+
+    for (int block = 0; block < orderedTargets.size(); block++) {
+      int targetIndex = orderedTargets.get(block);
+      int segmentEnd = block + 1 < orderedTargets.size()
+          ? orderedTargets.get(block + 1) : joinIndex;
+      if (segmentEnd < targetIndex + 1) {
+        complete = false;
+        continue;
+      }
+
+      for (String label : labelsAtTarget.get(targetIndex)) {
+        source.append(indent(indent + 1)).append(label).append("\n");
+      }
+
+      int bodyEnd = segmentEnd;
+      boolean jumpsToJoin = false;
+      if (bodyEnd > targetIndex + 1) {
+        IrOperationModel last = operations.get(bodyEnd - 1);
+        if ("JUMP".equals(last.kind()) && !last.operands().isEmpty()
+            && joinLabel != null && joinLabel.equals(last.operands().get(0))) {
+          bodyEnd--;
+          jumpsToJoin = true;
+        }
+      }
+
+      RenderResult body = renderRange(
+          operations, targetIndex + 1, bodyEnd, indent + 2, context, labels);
+      source.append(body.source());
+      complete &= body.complete();
+
+      boolean endsAbruptly = bodyEnd > targetIndex + 1
+          && (isTerminal(operations.get(bodyEnd - 1)) || jumpsToJoin);
+      boolean fallsThroughToNextCase = block + 1 < orderedTargets.size()
+          && segmentEnd == orderedTargets.get(block + 1)
+          && !endsAbruptly;
+      if (jumpsToJoin || (!fallsThroughToNextCase && !endsAbruptly)) {
+        source.append(indent(indent + 2)).append("break;\n");
+      }
+    }
+
+    source.append(indent(indent)).append("}\n");
+    int lastIndex = joinIndex < end ? joinIndex - 1 : end - 1;
+    return new ConditionalRender(source.toString(), complete, lastIndex);
+  }
+
+  private static boolean isTerminal(IrOperationModel operation) {
+    return "RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())
+        || "TERMINATE".equals(operation.kind());
   }
 
   private static ConditionalRender renderConditional(
@@ -256,7 +395,7 @@ public final class JavaTranslator {
       case "LOCAL_WRITE" -> translateLocalWrite(operands, context);
       case "FIELD_WRITE" -> translateFieldWrite(operands);
       case "METHOD_CALL" -> translateMethodCall(operands);
-      case "CONDITIONAL_BRANCH", "JUMP", "SWITCH" -> null;
+      case "CONDITIONAL_BRANCH", "JUMP", "TABLE_SWITCH", "LOOKUP_SWITCH" -> null;
       case "RETURN" -> operands.isEmpty()
           ? "return;"
           : "return " + normalizeExpression(operands.get(0)) + ";";
@@ -474,6 +613,8 @@ public final class JavaTranslator {
   private static String indent(int level) {
     return "  ".repeat(Math.max(0, level));
   }
+
+  private record SwitchArm(int key, String label) {}
 
   private record ConditionalRender(String source, boolean complete, int lastIndex) {}
 
