@@ -77,6 +77,30 @@ class ForgeJarBootstrapTest {
         assertEquals("", plan.bootstrapSource());
     }
 
+    @Test void dispatchesEveryHandlerForTheSameLifecyclePhaseInClassFileOrder() throws Exception {
+        Path jar = fixture("""
+              @Mod.EventHandler public void initializeSecond(FMLInitializationEvent event) { constructions += 10; }
+              @Mod.EventHandler public void initializeThird(FMLInitializationEvent event) { constructions += 100; }
+            """, null);
+        var plan = ForgeJarBootstrap.inspect(jar);
+        assertTrue(plan.blockers().isEmpty(), plan.blockers().toString());
+        String source = plan.bootstrapSource();
+        int first = source.indexOf("mod.initialize(");
+        int second = source.indexOf("mod.initializeSecond(");
+        int third = source.indexOf("mod.initializeThird(");
+        assertTrue(first >= 0, source);
+        assertTrue(second > first, source);
+        assertTrue(third > second, source);
+
+        Path generated = temp.resolve("multi-handler/gold/generated/ForgeModBootstrap.java");
+        Path classes = temp.resolve("multi-handler/classes");
+        Files.createDirectories(generated.getParent());
+        Files.createDirectories(classes);
+        Files.writeString(generated, source);
+        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null,
+                "--release", "8", "-classpath", jar.toString(), "-d", classes.toString(), generated.toString()));
+    }
+
     @Test void originalHandlerReceivesTheExactHostEvent() throws Exception {
         Path jar = fixture("", null);
         var plan = ForgeJarBootstrap.inspect(jar);
