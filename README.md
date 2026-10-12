@@ -22,11 +22,13 @@ Minecraft/loader APIs a translated mod expects.
 
 ## Usage
 
-Build with Maven:
+Build with Maven (this does not run `mvn clean` or erase the rest of `target/`):
 
 ```bash
-mvn clean package
+mvn package
 ```
+
+Run the unit tests without packaging with `mvn test`. The optional JEI/Forge integration tests run when their external test JAR and prepared runtime inputs are present; otherwise Maven marks those tests as skipped. The profile's `build.ps1` prepares its pinned runtime inputs and then runs the full package-and-injection pipeline.
 
 Analyze a mod:
 
