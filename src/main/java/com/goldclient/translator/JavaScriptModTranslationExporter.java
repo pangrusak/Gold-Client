@@ -544,6 +544,43 @@ public final class JavaScriptModTranslationExporter {
           toObject() { return Object.fromEntries(this.items); }
           [Symbol.iterator]() { return this.items[Symbol.iterator](); }
         }
+        class GoldClientJavaUuid {
+          constructor(value) {
+            this.value = String(value).toLowerCase();
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(this.value)
+                && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(this.value)) {
+              throw new TypeError("IllegalArgumentException: Invalid UUID string");
+            }
+          }
+          toString() { return this.value; }
+          equals(other) { return other instanceof GoldClientJavaUuid && this.value === other.value; }
+          compareTo(other) { return this.value.localeCompare(String(other)); }
+          getMostSignificantBits() { return BigInt("0x" + this.value.replace(/-/g, "").slice(0, 16)); }
+          getLeastSignificantBits() { return BigInt("0x" + this.value.replace(/-/g, "").slice(16)); }
+          static randomUUID() {
+            const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
+            bytes[6] = (bytes[6] & 0x0f) | 0x40;
+            bytes[8] = (bytes[8] & 0x3f) | 0x80;
+            const hex = bytes.map(value => value.toString(16).padStart(2, "0")).join("");
+            return new GoldClientJavaUuid(hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20));
+          }
+          static fromString(value) { return new GoldClientJavaUuid(value); }
+        }
+
+        class GoldClientJavaDate {
+          constructor(value = Date.now()) { this.date = value instanceof Date ? new Date(value.getTime()) : new Date(value); }
+          getTime() { return this.date.getTime(); }
+          setTime(value) { this.date.setTime(Number(value)); return this.getTime(); }
+          before(other) { return this.getTime() < other.getTime(); }
+          after(other) { return this.getTime() > other.getTime(); }
+          compareTo(other) { return Math.sign(this.getTime() - other.getTime()); }
+          equals(other) { return other instanceof GoldClientJavaDate && this.getTime() === other.getTime(); }
+          toInstant() { return new Date(this.getTime()); }
+          toISOString() { return this.date.toISOString(); }
+          toString() { return this.date.toString(); }
+          static now() { return new GoldClientJavaDate(Date.now()); }
+        }
+
         class GoldClientJavaStream {
           constructor(values = []) {
             this.values = Array.from(values?.items ?? values ?? []);
@@ -870,6 +907,10 @@ public final class JavaScriptModTranslationExporter {
                 return new GoldClientJavaStringBuilder(args[0] ?? "");
               case "java.util.Optional":
                 return new GoldClientJavaOptional(args[0]);
+              case "java.util.Date":
+                return new GoldClientJavaDate(args.length ? args[0] : Date.now());
+              case "java.util.UUID":
+                return args.length ? GoldClientJavaUuid.fromString(args[0]) : GoldClientJavaUuid.randomUUID();
               case "java.util.regex.Pattern":
                 return new GoldClientJavaPattern(args[0] ?? "");
               case "java.lang.String":
@@ -1031,6 +1072,34 @@ public final class JavaScriptModTranslationExporter {
                 }
                 return;
               }
+            }
+            if (owner === "java.util.UUID") {
+              if (method === "randomUUID") return GoldClientJavaUuid.randomUUID();
+              if (method === "fromString") return GoldClientJavaUuid.fromString(args[0]);
+            }
+            if (owner === "java.util.Date" && method === "from") return new GoldClientJavaDate(args[0]);
+            if (owner === "java.lang.Character") {
+              const value = String(args[0] ?? "").charAt(0);
+              if (method === "isDigit") return /^\\p{N}$/u.test(value);
+              if (method === "isLetter") return /^\\p{L}$/u.test(value);
+              if (method === "isLetterOrDigit") return /^[\\p{L}\\p{N}]$/u.test(value);
+              if (method === "isWhitespace" || method === "isSpaceChar") return /^\\s$/u.test(value);
+              if (method === "isUpperCase") return value.toUpperCase() === value && value.toLowerCase() !== value;
+              if (method === "isLowerCase") return value.toLowerCase() === value && value.toUpperCase() !== value;
+              if (method === "toUpperCase") return value.toUpperCase().charAt(0);
+              if (method === "toLowerCase") return value.toLowerCase().charAt(0);
+              if (method === "getNumericValue") return Number.isNaN(Number(value)) ? -1 : Number(value);
+              if (method === "charCount") return String.fromCodePoint(Number(args[0])).length;
+              if (method === "toString") return value;
+              if (method === "compare") return String(args[0]).localeCompare(String(args[1]));
+            }
+            if (["java.lang.Byte", "java.lang.Short", "java.lang.Float", "java.lang.Double", "java.lang.Number"].includes(owner)) {
+              if (method === "parseByte" || method === "parseShort" || method === "parseInt" || method === "parseLong") return Number.parseInt(args[0], args[1] ?? 10);
+              if (method === "parseFloat" || method === "parseDouble" || method === "valueOf") return Number(args[0]);
+              if (method === "toString") return String(args[0]);
+              if (method === "isNaN") return Number.isNaN(Number(args[0]));
+              if (method === "isInfinite" || method === "isInfinite") return !Number.isFinite(Number(args[0]));
+              if (method === "compare") return Math.sign(Number(args[0]) - Number(args[1]));
             }
             if (owner === "java.util.stream.Stream") {
               if (method === "empty") return new GoldClientJavaStream();
