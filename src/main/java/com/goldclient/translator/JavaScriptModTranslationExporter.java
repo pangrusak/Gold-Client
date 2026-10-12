@@ -1079,7 +1079,7 @@ public final class JavaScriptModTranslationExporter {
               case "java.util.concurrent.atomic.AtomicLong":
               case "java.util.concurrent.atomic.AtomicBoolean":
               case "java.util.concurrent.atomic.AtomicReference":
-                return new GoldClientJavaAtomic(args[0] ?? 0);
+                return new GoldClientJavaAtomic(args.length ? args[0] : 0);
               case "java.util.regex.Pattern":
                 return new GoldClientJavaPattern(args[0] ?? "");
               case "java.lang.String":
@@ -1274,7 +1274,8 @@ public final class JavaScriptModTranslationExporter {
               if (method === "parseFloat" || method === "parseDouble" || method === "valueOf") return Number(args[0]);
               if (method === "toString") return String(args[0]);
               if (method === "isNaN") return Number.isNaN(Number(args[0]));
-              if (method === "isInfinite" || method === "isInfinite") return !Number.isFinite(Number(args[0]));
+              if (method === "isInfinite") return !Number.isFinite(Number(args[0]));
+              if (method === "isFinite") return Number.isFinite(Number(args[0]));
               if (method === "compare") return Math.sign(Number(args[0]) - Number(args[1]));
             }
             if (owner === "java.util.stream.Stream") {
