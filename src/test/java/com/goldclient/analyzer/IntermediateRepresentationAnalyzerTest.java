@@ -155,6 +155,32 @@ class IntermediateRepresentationAnalyzerTest {
         o.kind().equals("LOCAL_WRITE") && o.operands().get(1).equals("(local3 >>> local2)")));
   }
 
+  @Test
+  void annotatesExceptionTableRegionsInSemanticIr() {
+    List<InstructionModel> instructions = List.of(
+        instruction(-1, "LABEL", "Ltry"),
+        instruction(184, "INVOKESTATIC", "example/Calls", "mightFail", "()V", "false"),
+        instruction(-1, "LABEL", "Lend"),
+        instruction(167, "GOTO", "Ljoin"),
+        instruction(-1, "LABEL", "Lhandler"),
+        instruction(58, "ASTORE", "0"),
+        instruction(177, "RETURN"),
+        instruction(-1, "LABEL", "Ljoin"),
+        instruction(177, "RETURN"));
+    MethodModel raw = new MethodModel(
+        "guarded", "()V", null, 0, List.of(), List.of(), List.of(),
+        instructions, List.of(new com.goldclient.model.TryCatchModel(
+            "Ltry", "Lend", "Lhandler", "java/lang/IllegalArgumentException")), 2, 1);
+    MethodModel analyzed = new MethodModel(
+        raw.name(), raw.descriptor(), raw.signature(), raw.access(), raw.exceptions(),
+        raw.annotations(), raw.referencedClasses(), raw.instructions(), raw.tryCatchBlocks(),
+        raw.maxStack(), raw.maxLocals(), new ControlFlowAnalyzer().analyze(raw));
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(analyzed);
+    assertTrue(ir.operations().stream().anyMatch(o -> o.kind().equals("TRY_BEGIN")));
+    assertTrue(ir.operations().stream().anyMatch(o -> o.kind().equals("TRY_END")));
+    assertTrue(ir.operations().stream().anyMatch(o -> o.kind().equals("CATCH_BEGIN")));
+  }
+
   private static MethodModel method(
       String name,
       String descriptor,

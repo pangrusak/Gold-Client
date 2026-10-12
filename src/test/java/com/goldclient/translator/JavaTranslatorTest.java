@@ -357,6 +357,34 @@ class JavaTranslatorTest {
     assertTrue(result.source().contains("array[index] = value;"), result.source());
   }
 
+  @Test
+  void rendersTryCatchRegionsFromSemanticMarkers() {
+    IrMethodModel method = new IrMethodModel("guarded", "()V", List.of(
+        new IrOperationModel("TRY_BEGIN",
+            List.of("Ltry", "LafterTry", "Lhandler", "java.lang.IllegalArgumentException"), 0),
+        new IrOperationModel("LABEL", List.of("Ltry"), 0),
+        new IrOperationModel("METHOD_CALL", List.of("mightFail()"), 1),
+        new IrOperationModel("TRY_END",
+            List.of("Ltry", "LafterTry", "Lhandler", "java.lang.IllegalArgumentException"), 2),
+        new IrOperationModel("LABEL", List.of("LafterTry"), 2),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 3),
+        new IrOperationModel("CATCH_BEGIN",
+            List.of("Ltry", "LafterTry", "Lhandler", "java.lang.IllegalArgumentException"), 4),
+        new IrOperationModel("LABEL", List.of("Lhandler"), 4),
+        new IrOperationModel("LOCAL_WRITE", List.of("local0", "<exception>"), 5),
+        new IrOperationModel("METHOD_CALL", List.of("recover(local0)"), 6),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 7),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 8),
+        new IrOperationModel("RETURN", List.of(), 9)));
+    TranslationResult result = new JavaTranslator().translate(method);
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains(
+        "catch (java.lang.IllegalArgumentException local0)"), result.source());
+    assertTrue(result.source().contains("mightFail();"), result.source());
+    assertTrue(result.source().contains("recover(local0);"), result.source());
+    assertTrue(!result.source().contains("TODO"), result.source());
+  }
+
   private static int occurrences(String text, String needle) {
     int count = 0;
     int offset = 0;

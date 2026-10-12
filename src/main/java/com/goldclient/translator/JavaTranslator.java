@@ -39,6 +39,23 @@ public final class JavaTranslator {
     for (int i = start; i < end; i++) {
       IrOperationModel operation = operations.get(i);
 
+      if ("TRY_BEGIN".equals(operation.kind())) {
+        ConditionalRender guarded = renderTryCatch(
+            operations, i, end, indent, context, labels);
+        if (guarded != null) {
+          source.append(guarded.source());
+          complete &= guarded.complete();
+          i = guarded.lastIndex();
+          continue;
+        }
+        source.append(indent(indent)).append("// TODO: unsupported try/catch region\\n");
+        complete = false;
+        continue;
+      }
+
+      if ("TRY_END".equals(operation.kind()) || "CATCH_BEGIN".equals(operation.kind()))
+        continue;
+
       if ("LABEL".equals(operation.kind())) {
         if (!operation.operands().isEmpty()) {
           int loopBranch = findBackwardConditional(
@@ -127,6 +144,86 @@ public final class JavaTranslator {
     }
 
     return new RenderResult(source.toString(), complete);
+  }
+
+  /**
+   * Structures a conventional JVM exception table entry as a source try/catch.
+   * Complex/malformed regions are left explicitly incomplete rather than
+   * silently claiming that exception behavior was preserved.
+   */
+  private static ConditionalRender renderTryCatch(
+      List<IrOperationModel> operations, int begin, int end, int indent,
+      TranslationContext context, Map<String, Integer> labels) {
+    List<String> metadata = operations.get(begin).operands();
+    if (metadata.size() < 4) return null;
+    String startLabel = metadata.get(0);
+    String endLabel = metadata.get(1);
+    String handlerLabel = metadata.get(2);
+    String exceptionType = metadata.get(3);
+    int tryEnd = -1;
+    int catchBegin = -1;
+    for (int i = begin + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (operation.operands().size() >= 3
+          && startLabel.equals(operation.operands().get(0))
+          && endLabel.equals(operation.operands().get(1))
+          && handlerLabel.equals(operation.operands().get(2))) {
+        if ("TRY_END".equals(operation.kind())) tryEnd = i;
+        if ("CATCH_BEGIN".equals(operation.kind())) catchBegin = i;
+      }
+    }
+    if (tryEnd <= begin || catchBegin <= tryEnd) return null;
+
+    int handlerEnd = end;
+    String joinLabel = null;
+    for (int i = catchBegin + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        String target = operation.operands().get(0);
+        Integer targetIndex = labels.get(target);
+        Integer protectedEnd = labels.get(endLabel);
+        if (targetIndex != null && protectedEnd != null && targetIndex > protectedEnd) {
+          handlerEnd = i;
+          joinLabel = target;
+          break;
+        }
+      }
+      if ("RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())
+          || "TERMINATE".equals(operation.kind())) {
+        handlerEnd = i + 1;
+        break;
+      }
+    }
+    if (handlerEnd <= catchBegin + 1) return null;
+
+    int bodyStart = begin + 1;
+    while (bodyStart < tryEnd && "LABEL".equals(operations.get(bodyStart).kind())) bodyStart++;
+    RenderResult tryBody = renderRange(
+        operations, bodyStart, tryEnd, indent + 1, context, labels);
+
+    int catchBodyStart = catchBegin + 1;
+    String exceptionVariable = "caughtException";
+    if (catchBodyStart < handlerEnd) {
+      IrOperationModel first = operations.get(catchBodyStart);
+      if ("LOCAL_WRITE".equals(first.kind()) && first.operands().size() >= 2
+          && "<exception>".equals(first.operands().get(1))) {
+        exceptionVariable = first.operands().get(0);
+        catchBodyStart++;
+      }
+    }
+    RenderResult catchBody = renderRange(
+        operations, catchBodyStart, handlerEnd, indent + 1, context, labels);
+
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("try {\\n").append(tryBody.source());
+    source.append(indent(indent)).append("} catch (")
+        .append(exceptionType).append(" ").append(exceptionVariable).append(") {\\n")
+        .append(catchBody.source());
+    source.append(indent(indent)).append("}\\n");
+    boolean complete = tryBody.complete() && catchBody.complete();
+    if (joinLabel == null && handlerEnd < end) complete = false;
+    int last = joinLabel == null ? handlerEnd - 1 : handlerEnd;
+    return new ConditionalRender(source.toString(), complete, last);
   }
 
   private static ConditionalRender renderSwitch(

@@ -69,6 +69,7 @@ public final class IntermediateRepresentationAnalyzer {
       }
     }
 
+    operations = annotateExceptionRegions(operations, method.tryCatchBlocks());
     return new IrMethodModel(method.name(), method.descriptor(), operations);
   }
 
@@ -84,6 +85,54 @@ public final class IntermediateRepresentationAnalyzer {
       translate(instructions.get(i), i, stack, new ArrayList<>());
 
     return List.copyOf(stack);
+  }
+
+  /**
+   * Adds exception-region markers to the semantic stream without changing
+   * instruction offsets. Markers are metadata consumed by the structured
+   * source renderer; ordinary methods with no handlers remain unchanged.
+   */
+  private static List<IrOperationModel> annotateExceptionRegions(
+      List<IrOperationModel> input,
+      List<com.goldclient.model.TryCatchModel> handlers) {
+    if (handlers.isEmpty() || input.isEmpty()) return input;
+    List<IrOperationModel> result = new ArrayList<>(input);
+    for (com.goldclient.model.TryCatchModel handler : handlers) {
+      int start = findLabelOperation(result, handler.startLabel());
+      int end = findLabelOperation(result, handler.endLabel());
+      int catchIndex = findLabelOperation(result, handler.handlerLabel());
+      if (start < 0 || end < 0 || catchIndex < 0 || start >= end || catchIndex <= start)
+        continue;
+      int source = result.get(start).sourceInstruction();
+      result.add(start, new IrOperationModel("TRY_BEGIN", List.of(
+          handler.startLabel(), handler.endLabel(), handler.handlerLabel(),
+          normalizeExceptionType(handler.exceptionType())), source));
+      end++;
+      catchIndex++;
+      result.add(end, new IrOperationModel("TRY_END", List.of(
+          handler.startLabel(), handler.endLabel(), handler.handlerLabel(),
+          normalizeExceptionType(handler.exceptionType())),
+          result.get(Math.min(end, result.size() - 1)).sourceInstruction()));
+      result.add(catchIndex, new IrOperationModel("CATCH_BEGIN", List.of(
+          handler.startLabel(), handler.endLabel(), handler.handlerLabel(),
+          normalizeExceptionType(handler.exceptionType())),
+          result.get(Math.min(catchIndex, result.size() - 1)).sourceInstruction()));
+    }
+    return List.copyOf(result);
+  }
+
+  private static int findLabelOperation(List<IrOperationModel> operations, String label) {
+    for (int i = 0; i < operations.size(); i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("LABEL".equals(operation.kind()) && !operation.operands().isEmpty()
+          && label.equals(operation.operands().get(0))) return i;
+    }
+    return -1;
+  }
+
+  private static String normalizeExceptionType(String type) {
+    if (type == null || type.isBlank()) return "java.lang.Throwable";
+    return type.replace('/', '.');
   }
 
   private static List<String> mergeStacks(List<String> left, List<String> right) {
