@@ -86,6 +86,7 @@ public final class JavaScriptModTranslationExporter {
     Files.writeString(root.resolve("gold-client-runtime.js"), runtimeSource(), StandardCharsets.UTF_8);
     writeModuleIndex(classes, root);
     writeClassManifest(classes, root);
+    new ForgeLifecycleExporter().export(classes, root);
     Files.writeString(root.resolve("package.json"),
         "{\n  \"type\": \"module\"\n}\n", StandardCharsets.UTF_8);
     ExportReport report = new ExportReport(

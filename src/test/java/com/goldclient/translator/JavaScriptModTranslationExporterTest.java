@@ -86,6 +86,43 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void emitsGenericForgeLifecycleDispatcherFromAnnotations() throws Exception {
+    var modAnnotation = new com.goldclient.model.AnnotationData(
+        "net.minecraftforge.fml.common.Mod", true, java.util.Map.of("modid", "samplemod"));
+    ClassModel mod = new ClassModel("sample/ExampleMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of("net.minecraftforge.fml.common.Mod"),
+        List.of(new FieldModel("instance", "Lsample/ExampleMod;", null, Opcodes.ACC_PUBLIC,
+            List.of("net.minecraftforge.fml.common.Mod$Instance"))),
+        List.of(
+            annotatedMethod("preInit",
+                "(Lnet/minecraftforge/fml/common/event/FMLPreInitializationEvent;)V",
+                "net.minecraftforge.fml.common.Mod$EventHandler"),
+            method("ordinary", "()V", Opcodes.ACC_PUBLIC, List.of(op("RETURN")))),
+        List.of(), List.of(modAnnotation));
+
+    Path output = tempDir.resolve("forge-lifecycle");
+    var report = new ForgeLifecycleExporter().export(List.of(mod), output);
+    String javascript = Files.readString(output.resolve("forge-lifecycle.js"));
+    String plan = Files.readString(output.resolve("forge-lifecycle-plan.json"));
+    assertEquals("READY_FOR_REAL_FORGE_HOST", report.status());
+    assertEquals(1, report.discoveredModClasses());
+    assertEquals(1, report.lifecycleHandlers());
+    assertEquals(1, report.injectedFields());
+    assertTrue(javascript.contains("export async function startForgeMods"));
+    assertTrue(javascript.contains("host.createEvent(mod, phase)"));
+    assertTrue(javascript.contains("GoldClientRuntime.resolveClass(mod.className)"));
+    assertTrue(plan.contains("samplemod"));
+    assertTrue(plan.contains("FMLPreInitializationEvent"));
+  }
+
+  private static MethodModel annotatedMethod(String name, String descriptor, String annotation) {
+    return new MethodModel(name, descriptor, null, Opcodes.ACC_PUBLIC, List.of(),
+        List.of(annotation), List.of(), List.of(), List.of(), 1, 2,
+        new com.goldclient.model.ControlFlowModel(0, List.of()),
+        new IrMethodModel(name, descriptor, List.of(op("RETURN"))));
+  }
+
+  @Test
   void preservesModResourcesAndSkipsClassBytesAndSignatureFiles() throws Exception {
     Path jar = tempDir.resolve("input.jar");
     try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar))) {
