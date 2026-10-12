@@ -595,14 +595,23 @@ public final class JavaScriptModTranslationExporter {
         export const GoldClientRuntime = Object.freeze({
           intDiv(a, b) {
             if (b === 0) throw new Error("ArithmeticException: / by zero");
-            // Java Math.floorDiv rounds toward negative infinity, unlike truncating division.
-            // Preserve Java's 32-bit overflow edge case for Integer.MIN_VALUE / -1.
+            // JVM IDIV truncates toward zero. Integer.MIN_VALUE / -1 wraps in 32-bit arithmetic.
             if (a === -2147483648 && b === -1) return -2147483648;
-            return Math.floor(a / b);
+            return Math.trunc(a / b);
           },
           intMod(a, b) {
             if (b === 0) throw new Error("ArithmeticException: / by zero");
-            // Java floorMod follows the divisor's sign, unlike JavaScript's % operator.
+            // JVM IREM has the dividend's sign; it is not Math.floorMod.
+            if (a === -2147483648 && b === -1) return 0;
+            return a - Math.trunc(a / b) * b;
+          },
+          floorDiv(a, b) {
+            if (b === 0) throw new Error("ArithmeticException: / by zero");
+            if (a === -2147483648 && b === -1) return -2147483648;
+            return Math.floor(a / b);
+          },
+          floorMod(a, b) {
+            if (b === 0) throw new Error("ArithmeticException: / by zero");
             if (a === -2147483648 && b === -1) return 0;
             return a - Math.floor(a / b) * b;
           },
@@ -714,8 +723,8 @@ public final class JavaScriptModTranslationExporter {
           },
           invokeJavaStatic(owner, method, ...args) {
             if (owner === "java.lang.Math") {
-              if (method === "floorDiv") return this.intDiv(args[0], args[1]);
-              if (method === "floorMod") return this.intMod(args[0], args[1]);
+              if (method === "floorDiv") return this.floorDiv(args[0], args[1]);
+              if (method === "floorMod") return this.floorMod(args[0], args[1]);
               if (method === "addExact") {
                 const value = Number(args[0]) + Number(args[1]);
                 if (!Number.isSafeInteger(value) || value < -2147483648 || value > 2147483647) throw new RangeError("ArithmeticException: integer overflow");
