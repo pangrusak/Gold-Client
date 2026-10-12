@@ -255,6 +255,17 @@ class JavaScriptModTranslationExporterTest {
         const target = [0, 0, 0];
         r.arraycopy([4, 5], 0, target, 1, 2);
         if (target.join(",") !== "0,4,5") throw new Error("arraycopy");
+        if (r.invokeInstance("Gold Client", "length") !== 11) throw new Error("String.length");
+        if (r.invokeInstance("Gold Client", "substring", 5) !== "Client") throw new Error("String.substring");
+        if (r.invokeInstance("Forge", "startsWith", "Fo") !== true) throw new Error("String.startsWith");
+        if (r.invokeInstance("Forge", "equalsIgnoreCase", "forge") !== true) throw new Error("String.equalsIgnoreCase");
+        if (r.invokeInstance("abc123", "matches", "[a-z]+\\\\d+") !== true) throw new Error("String.matches");
+        if (r.invokeInstance("  hi  ", "trim") !== "hi") throw new Error("String.trim");
+        const present = r.invokeJavaStatic("java.util.Optional", "of", "value");
+        if (!present.isPresent() || present.orElse("fallback") !== "value") throw new Error("Optional.of");
+        const empty = r.invokeJavaStatic("java.util.Optional", "empty");
+        if (empty.isPresent() || empty.orElse("fallback") !== "fallback") throw new Error("Optional.empty");
+        if (present.map(value => value.toUpperCase()).get() !== "VALUE") throw new Error("Optional.map");
         console.log("java-compatibility-ok");
         """, StandardCharsets.UTF_8);
     Process node;
