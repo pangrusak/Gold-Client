@@ -223,6 +223,54 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
+    Path output = tempDir.resolve("java-compatibility-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("java-compatibility-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const list = r.createJava("java.util.ArrayList");
+        list.add("alpha");
+        list.addAll(["beta", "gamma"]);
+        if (list.size() !== 3 || list.get(1) !== "beta" || !list.containsAll(["alpha", "gamma"])) throw new Error("list basics");
+        if (list.remove("beta") !== true || list.toString() !== "[alpha, gamma]") throw new Error("list removal");
+        if (list.subList(0, 1).get(0) !== "alpha") throw new Error("list subList");
+        const map = r.createJava("java.util.HashMap");
+        map.put("n", 2);
+        if (map.compute("n", (_key, value) => value + 3) !== 5) throw new Error("map compute");
+        if (map.merge("n", 4, (left, right) => left + right) !== 9) throw new Error("map merge");
+        if (map.getOrDefault("missing", 17) !== 17) throw new Error("map default");
+        if (r.invokeJavaStatic("java.util.Arrays", "binarySearch", [[1, 3, 5, 7], 5]) !== 2) throw new Error("binarySearch");
+        if (r.invokeJavaStatic("java.util.Arrays", "binarySearch", [[1, 3, 5, 7], 4]) !== -3) throw new Error("binarySearch insertion point");
+        if (r.invokeJavaStatic("java.util.Arrays", "equals", [[1, 2], [1, 2]]) !== true) throw new Error("array equals");
+        if (r.invokeJavaStatic("java.lang.Math", "floorDiv", [-7, 3]) !== -3) throw new Error("floorDiv");
+        if (r.invokeJavaStatic("java.lang.Math", "floorMod", [-7, 3]) !== 2) throw new Error("floorMod");
+        if (r.invokeJavaStatic("java.util.Objects", "nonNull", [0]) !== true) throw new Error("nonNull");
+        if (r.invokeJavaStatic("java.util.Objects", "isNull", [null]) !== true) throw new Error("isNull");
+        if (r.invokeJavaStatic("java.util.Collections", "frequency", [["a", "b", "a"], "a"]) !== 2) throw new Error("frequency");
+        if (r.invokeJavaStatic("java.util.Collections", "disjoint", [["a"], ["b"]]) !== true) throw new Error("disjoint");
+        const array = [0, 0, 0];
+        r.invokeJavaStatic("java.util.Arrays", "fill", [array, 6]);
+        if (array.join(",") !== "6,6,6") throw new Error("array fill");
+        const target = [0, 0, 0];
+        r.arraycopy([4, 5], 0, target, 1, 2);
+        if (target.join(",") !== "0,4,5") throw new Error("arraycopy");
+        console.log("java-compatibility-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Java compatibility runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-compatibility-ok", outputText);
+  }
+
+  @Test
   void preservesModResourcesAndSkipsClassBytesAndSignatureFiles() throws Exception {
     Path jar = tempDir.resolve("input.jar");
     try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar))) {
