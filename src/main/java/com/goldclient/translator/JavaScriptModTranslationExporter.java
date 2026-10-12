@@ -902,6 +902,49 @@ public final class JavaScriptModTranslationExporter {
             if (methodName === "hashCode") return this.javaHashCode(receiver);
             if (methodName === "toString") return this.javaString(receiver);
             if (methodName === "compareTo") return String(receiver).localeCompare(String(args[0]));
+            if (typeof receiver === "string" || receiver instanceof String) {
+              const value = String(receiver);
+              switch (methodName) {
+                case "length": return value.length;
+                case "isEmpty": return value.length === 0;
+                case "charAt":
+                  if (args[0] < 0 || args[0] >= value.length) throw new RangeError("StringIndexOutOfBoundsException");
+                  return value.charAt(args[0]);
+                case "substring":
+                  if (args.length === 1) return value.substring(args[0]);
+                  if (args[0] > args[1]) throw new RangeError("StringIndexOutOfBoundsException");
+                  return value.substring(args[0], args[1]);
+                case "subSequence": return value.substring(args[0], args[1]);
+                case "contains": return value.includes(String(args[0]));
+                case "startsWith": return value.startsWith(String(args[0]), args[1] ?? 0);
+                case "endsWith": return value.endsWith(String(args[0]));
+                case "indexOf": return value.indexOf(String(args[0]), args[1] ?? 0);
+                case "lastIndexOf": return value.lastIndexOf(String(args[0]), args[1] ?? value.length);
+                case "toLowerCase": return value.toLowerCase();
+                case "toUpperCase": return value.toUpperCase();
+                case "trim": return value.trim();
+                case "strip": return value.trim();
+                case "stripLeading": return value.trimStart();
+                case "stripTrailing": return value.trimEnd();
+                case "equalsIgnoreCase": return value.toLowerCase() === String(args[0]).toLowerCase();
+                case "compareToIgnoreCase": return value.toLowerCase().localeCompare(String(args[0]).toLowerCase());
+                case "matches": return new RegExp("^(?:" + args[0] + ")$").test(value);
+                case "replace": return value.split(String(args[0])).join(String(args[1]));
+                case "replaceAll": return value.replace(new RegExp(args[0], "g"), String(args[1]));
+                case "replaceFirst": return value.replace(new RegExp(args[0]), String(args[1]));
+                case "split": return value.split(new RegExp(args[0]), args[1] === 0 ? undefined : args[1]);
+                case "toCharArray": return Array.from(value);
+                case "getBytes": return Array.from(new TextEncoder().encode(value));
+                case "repeat": return value.repeat(Math.max(0, args[0] | 0));
+                case "isBlank": return value.trim().length === 0;
+                case "codePointAt": return value.codePointAt(args[0]);
+              }
+            }
+            if (typeof receiver === "number" || typeof receiver === "boolean") {
+              if (methodName === "intValue" || methodName === "longValue" || methodName === "shortValue" || methodName === "byteValue") return Number(receiver) | 0;
+              if (methodName === "doubleValue" || methodName === "floatValue") return Number(receiver);
+              if (methodName === "booleanValue") return Boolean(receiver);
+            }
             const method = receiver[methodName];
             if (typeof method !== "function") {
               return this.unsupported("missing-instance-method", methodName + " on " + String(receiver));
