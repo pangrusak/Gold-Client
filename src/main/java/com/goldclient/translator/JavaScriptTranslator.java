@@ -311,6 +311,48 @@ public final class JavaScriptTranslator {
     staticCall.appendTail(staticCalls);
     result = staticCalls.toString();
 
+    // Static field writes must target the generated class constructor rather than
+    // an unresolved Java package global. Rewrite writes before reads.
+    java.util.regex.Matcher staticWrite = java.util.regex.Pattern.compile(
+        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\\\w$]*\\\\.)*[A-Z][A-Za-z0-9_$]*)\\\\.([A-Za-z_$][A-Za-z0-9_$]*)\\\\s*=\\\\s*([^;\\\\n]+);")
+        .matcher(result);
+    StringBuffer staticWrites = new StringBuffer();
+    while (staticWrite.find()) {
+      String owner = staticWrite.group(1);
+      if (owner.startsWith("java.") || owner.startsWith("javax.") || owner.startsWith("GoldClientRuntime")
+          || java.util.Set.of("String", "Integer", "Boolean", "Math", "System", "Objects",
+              "Collections", "Arrays", "Character", "Long", "Double", "Float", "Byte", "Short")
+              .contains(owner)) {
+        staticWrite.appendReplacement(staticWrites, java.util.regex.Matcher.quoteReplacement(staticWrite.group()));
+      } else {
+        String replacement = "GoldClientRuntime.setStaticField(" + quote(owner.replace('/', '.'))
+            + ", " + quote(staticWrite.group(2)) + ", " + staticWrite.group(3) + ");";
+        staticWrite.appendReplacement(staticWrites, java.util.regex.Matcher.quoteReplacement(replacement));
+      }
+    }
+    staticWrite.appendTail(staticWrites);
+    result = staticWrites.toString();
+
+    java.util.regex.Matcher staticField = java.util.regex.Pattern.compile(
+        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\\\w$]*\\\\.)*[A-Z][A-Za-z0-9_$]*)\\\\.([A-Za-z_$][A-Za-z0-9_$]*)(?![A-Za-z0-9_$])")
+        .matcher(result);
+    StringBuffer staticFields = new StringBuffer();
+    while (staticField.find()) {
+      String owner = staticField.group(1);
+      if (owner.startsWith("java.") || owner.startsWith("javax.") || owner.startsWith("GoldClientRuntime")
+          || java.util.Set.of("String", "Integer", "Boolean", "Math", "System", "Objects",
+              "Collections", "Arrays", "Character", "Long", "Double", "Float", "Byte", "Short)
+              .contains(owner)) {
+        staticField.appendReplacement(staticFields, java.util.regex.Matcher.quoteReplacement(staticField.group()));
+      } else {
+        String replacement = "GoldClientRuntime.getStaticField(" + quote(owner.replace('/', '.'))
+            + ", " + quote(staticField.group(2)) + ")";
+        staticField.appendReplacement(staticFields, java.util.regex.Matcher.quoteReplacement(replacement));
+      }
+    }
+    staticField.appendTail(staticFields);
+    result = staticFields.toString();
+
     // Constructor expressions for mod classes resolve through the generated registry.
     java.util.regex.Matcher allocation = java.util.regex.Pattern.compile(
         "\\bnew\\s+((?:[a-z_$][\\w$]*\\.)+[A-Z][A-Za-z0-9_$]*)\\s*\\(")
