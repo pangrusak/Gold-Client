@@ -27,3 +27,5 @@ jobs:
           node-version: '22'
       - name: Run Maven tests and package
         run: mvn --batch-mode --no-transfer-progress clean package
+      - name: Test generic Eaglercraft injector
+        run: node --test client-profiles/eaglercraft-1.12-js/inject-gold-client.test.cjs
