@@ -129,6 +129,18 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void routesTranslatedStaticFieldReadsAndWritesThroughRuntime() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object value = mezz.jei.Internal.runtime;
+          mezz.jei.Internal.runtime = value;
+        }
+        """);
+    assertTrue(lowered.contains("GoldClientRuntime.getStaticField("), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.setStaticField("), lowered);
+  }
+
+  @Test
   void emitsSyntaxAcceptedByNodeWhenAvailable() throws Exception {
     var method = new IrMethodModel("isReady", "()Z", List.of(
         op("CONSTANT", "true"), op("RETURN", "true")));
