@@ -1414,10 +1414,12 @@ public final class JavaScriptModTranslationExporter {
               if (method === "parseInt" || method === "parseLong" || method === "valueOf") return Number.parseInt(args[0], args[1] ?? 10);
               if (method === "decode") {
                 const value = String(args[0]);
-                if (/^-?0x/i.test(value)) return Number.parseInt(value.replace(/^(-?)0x/i, "$1"), 16) * (value.startsWith("-") ? -1 : 1);
-                if (/^-?#/i.test(value)) return Number.parseInt(value.replace(/^(-?)#/i, "$1"), 16) * (value.startsWith("-") ? -1 : 1);
-                if (/^-?0[0-7]+$/.test(value)) return Number.parseInt(value.replace(/^-?0/, ""), 8) * (value.startsWith("-") ? -1 : 1);
-                return Number.parseInt(value, 10);
+                const sign = value.startsWith("-") ? -1 : 1;
+                const unsigned = value.replace(/^[+-]/, "");
+                if (/^0x/i.test(unsigned)) return sign * Number.parseInt(unsigned.slice(2), 16);
+                if (unsigned.startsWith("#")) return sign * Number.parseInt(unsigned.slice(1), 16);
+                if (/^0[0-7]+$/.test(unsigned)) return sign * Number.parseInt(unsigned.slice(1), 8);
+                return sign * Number.parseInt(unsigned, 10);
               }
               if (method === "toString") return String(args[0]);
               if (method === "toHexString") return (Number(args[0]) >>> 0).toString(16);
