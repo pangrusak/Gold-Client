@@ -30,6 +30,21 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void mapsInstanceLocalZeroToThisAndKeepsParameterSlotsAligned() {
+    var instanceMethod = new IrMethodModel("getSelf", "()Ljava/lang/Object;", List.of(
+        op("RETURN", "local0")));
+    TranslationResult instance = new JavaScriptTranslator().translate(instanceMethod, false);
+    assertTrue(instance.source().contains("return this;"), instance.source());
+
+    var withParameter = new IrMethodModel("identity", "(I)I", List.of(
+        op("RETURN", "local1")));
+    TranslationResult translated = new JavaScriptTranslator().translate(withParameter, false);
+    assertTrue(translated.source().contains("identity__"), translated.source());
+    assertTrue(translated.source().contains("(local1)"), translated.source());
+    assertTrue(translated.source().contains("return local1;"), translated.source());
+  }
+
+  @Test
   void lowersCatchSyntaxAndJavaExceptionConstructors() {
     var method = new IrMethodModel("guard", "()V", List.of(
         op("TRY_BEGIN", "Ltry", "Lend", "Lhandler", "java.lang.IllegalArgumentException"),
