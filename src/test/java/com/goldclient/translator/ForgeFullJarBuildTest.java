@@ -39,6 +39,7 @@ class ForgeFullJarBuildTest {
         Files.writeString(source,"package fixture;public class HostImpl implements gold.generated.ForgeModBootstrap.Host {"+
             "public void beforeConstruction(String id){if(!id.equals(\"example\"))throw new RuntimeException();}"+
             "public void afterConstruction(String id,Object instance){if(!id.equals(\"example\")||!instance.getClass().getName().equals(\"fixture.Example\"))throw new IllegalStateException();}"+
+            "public Object metadataFor(String id){throw new UnsupportedOperationException();}"+
             "public Object eventFor(String id,String phase){throw new UnsupportedOperationException();}"+
             "public void afterPhase(String id,String phase){}"+
             "public void registerStaticSubscriber(String id,Class<?> owner,Class<?> event,String name,String priority,boolean canceled,gold.generated.ForgeModBootstrap.SubscriberInvoker invoke){throw new UnsupportedOperationException();}}");
