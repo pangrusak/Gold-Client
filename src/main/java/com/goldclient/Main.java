@@ -34,6 +34,7 @@ public final class Main {
     String methodFilter = null;
     boolean translate = false;
     String toJsDir = null;
+    String translateJsDir = null;
     String outputDir = null;
     String mainClass = null;
 
@@ -47,6 +48,13 @@ public final class Main {
           classFilter = args[i].replace('.', '/');
         }
         case "--translate" -> translate = true;
+        case "--translate-js" -> {
+          if (++i >= args.length) {
+            printUsage();
+            System.exit(2);
+          }
+          translateJsDir = args[i];
+        }
         case "--to-js" -> {
           if (++i >= args.length) {
             printUsage();
@@ -120,6 +128,22 @@ public final class Main {
         }
       }
       
+      if (translateJsDir != null) {
+        com.goldclient.translator.JavaScriptModTranslationExporter.ExportReport report =
+            new com.goldclient.translator.JavaScriptModTranslationExporter()
+                .export(a.classes(), Path.of(translateJsDir));
+        System.out.println("\\n=== JavaScript Translation Export ===");
+        System.out.println("Output: " + Path.of(translateJsDir).toAbsolutePath().normalize());
+        System.out.println("Classes visited: " + report.classCount());
+        System.out.println("Methods inspected: " + report.methodCount());
+        System.out.println("JS-complete for represented IR: " + report.completeCount());
+        System.out.println("Incomplete: " + report.incompleteCount());
+        System.out.println("Skipped: " + report.skippedCount());
+        System.out.println("Class modules: " + report.fileCount());
+        System.out.println("Report: " + Path.of(translateJsDir).resolve("javascript-report.txt"));
+        System.out.println("Note: Minecraft/Forge APIs and loader behavior still require adapters.");
+      }
+
       if (toJsDir != null) {
         String modEntrypoint = findModEntrypoint(a);
         System.out.println("\n=== TeaVM Entry Selection ===");
@@ -163,7 +187,7 @@ public final class Main {
   }
 
   private static void printUsage() {
-    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate [--class <class> --method <method> | --output-dir <dir>]] [--to-js <output_dir> --main-class <class>]");
+    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate [--class <class> --method <method> | --output-dir <dir>]] [--translate-js <output_dir>] [--to-js <output_dir> --main-class <class>]");
   }
 
   private static void printTranslationSummary(ModAnalysis analysis) {
