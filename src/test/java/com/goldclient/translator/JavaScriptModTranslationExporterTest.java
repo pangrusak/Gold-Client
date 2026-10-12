@@ -316,6 +316,10 @@ class JavaScriptModTranslationExporterTest {
         if (!properties.stringPropertyNames().contains("mod.enabled")) throw new Error("Properties names");
         const systemProperties = r.invokeJavaStatic("java.lang.System", "getProperties");
         if (systemProperties.getProperty("file.separator") !== "/") throw new Error("System properties");
+        const seconds = r.getStaticField("java.util.concurrent.TimeUnit", "SECONDS");
+        const millis = r.getStaticField("java.util.concurrent.TimeUnit", "MILLISECONDS");
+        if (seconds.toMillis(3) !== 3000 || millis.convert(3000, seconds) !== 3000000) throw new Error("TimeUnit conversions");
+        if (r.getStaticField("java.util.Locale", "US").toLanguageTag() !== "en-US") throw new Error("Locale constants");
         const bits = r.createJava("java.util.BitSet");
         bits.set(2); bits.set(5, 8);
         if (bits.cardinality() !== 4 || bits.nextSetBit(3) !== 5 || bits.nextClearBit(5) !== 8) throw new Error("BitSet basics");
