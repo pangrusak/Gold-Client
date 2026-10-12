@@ -406,9 +406,11 @@ public final class IntermediateRepresentationAnalyzer {
       call = owner.replace('/', '.') + "." + name + "(" + String.join(", ", args) + ")";
     }
 
-    if (!returnsVoid(descriptor)) {
+    boolean constructorValue = "<init>".equals(name) && receiver != null
+        && receiver.trim().startsWith("new ");
+    if (!returnsVoid(descriptor) || constructorValue) {
       stack.push(call);
-      operations.add(op("METHOD_CALL", List.of(call), sourceInstruction));
+      operations.add(op("CALL_VALUE", List.of(call), sourceInstruction));
     } else {
       operations.add(op("METHOD_CALL", List.of(call), sourceInstruction));
     }
