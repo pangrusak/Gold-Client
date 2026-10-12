@@ -182,6 +182,7 @@ public final class JavaScriptModTranslationExporter {
         JS-complete for represented IR: %d
         Incomplete: %d
         Skipped: %d
+        Stubbed (symbol preserved): %d
         JavaScript class modules: %d
 
         IMPORTANT: syntactically valid JavaScript is not the same as a working mod.
@@ -189,7 +190,7 @@ public final class JavaScriptModTranslationExporter {
         require target-side adapters and are not automatically implemented here.
         """.formatted(report.formatVersion(), report.classCount(), report.methodCount(),
             report.completeCount(), report.incompleteCount(), report.skippedCount(),
-            report.fileCount());
+            report.stubbedCount(), report.fileCount());
   }
 
   private static String runtimeSource() {
