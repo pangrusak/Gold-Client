@@ -441,7 +441,8 @@ public final class IntermediateRepresentationAnalyzer {
         .matcher(operands.size() > 4 ? operands.get(4) : "");
     if (!lambdaMetafactory || operands.size() < 6 || !handle.matches()) {
       String detail = name + " " + callSiteDescriptor + " " + bootstrap;
-      String unsupported = "GoldClientRuntime.unsupported(\\"invokedynamic\\", "
+      String unsupported = "GoldClientRuntime.unsupported(\\\"invokedynamic\\\", \\\"";
+      unsupported += detail.replace("\\\\", "/").replace("\\\"", "'") + "\\")";
           + "\\"" + detail.replace("\\", "\\\\").replace("\\"", "\\\\"") + "\\")";
       if (!returnsVoid(callSiteDescriptor)) {
         stack.push(unsupported);
@@ -467,7 +468,8 @@ public final class IntermediateRepresentationAnalyzer {
     if (tag == Opcodes.H_INVOKESTATIC) {
       callArguments.addAll(captured);
       callArguments.addAll(lambdaArguments);
-      call = "GoldClientRuntime.invokeStaticClass(\\"" + owner + "\\", \\""
+      String helperName = owner.startsWith("java.") ? "invokeJavaStatic" : "invokeStaticClass";
+      call = "GoldClientRuntime." + helperName + "(\\"" + owner + "\\", \\""
           + implementationName + "\\", " + String.join(", ", callArguments) + ")";
     } else if (tag == Opcodes.H_NEWINVOKESPECIAL) {
       callArguments.addAll(captured);
