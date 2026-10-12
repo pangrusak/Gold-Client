@@ -333,6 +333,10 @@ class JavaScriptModTranslationExporterTest {
         let invalidBoundRejected = false;
         try { randomA.nextInt(0); } catch (error) { invalidBoundRejected = error.message.includes("bound must be positive"); }
         if (!invalidBoundRejected) throw new Error("Random invalid bound");
+        if (r.invokeJavaStatic("java.lang.Integer", "bitCount", 0b101101) !== 4) throw new Error("Integer.bitCount");
+        if (r.invokeJavaStatic("java.lang.Integer", "toHexString", 255) !== "ff") throw new Error("Integer.toHexString");
+        if (r.invokeJavaStatic("java.lang.Integer", "decode", "-0x10") !== -16) throw new Error("Integer.decode");
+        if (r.invokeJavaStatic("java.lang.Integer", "numberOfTrailingZeros", 40) !== 3) throw new Error("Integer.numberOfTrailingZeros");
         console.log("java-compatibility-ok");
         """, StandardCharsets.UTF_8);
     Process node;
