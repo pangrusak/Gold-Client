@@ -390,8 +390,8 @@ public final class JavaScriptTranslator {
     }
     simpleJavaCall.appendTail(simpleJavaCalls);
     result = simpleJavaCalls.toString();
-    result = result.replace("String.format(", "GoldClientRuntime.invokeJavaStatic(\\"java.lang.String\\", \\"format\\", ");
-    result = result.replace("Boolean.parseBoolean(", "GoldClientRuntime.invokeJavaStatic(\\"java.lang.Boolean\\", \\"parseBoolean\\", ");
+    result = result.replace("String.format(", "GoldClientRuntime.invokeJavaStatic(\"java.lang.String\", \"format\", ");
+    result = result.replace("Boolean.parseBoolean(", "GoldClientRuntime.invokeJavaStatic(\"java.lang.Boolean\", \"parseBoolean\", ");
 
     // JVM numeric literals carry suffixes which are not valid JavaScript.
     result = result.replaceAll(
