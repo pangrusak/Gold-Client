@@ -535,7 +535,8 @@ public final class JavaScriptModTranslationExporter {
         }
         class GoldClientJavaMap {
           constructor(initial = []) {
-            this.items = new Map(initial?.items instanceof Map ? initial.items : (initial instanceof Map ? initial : []));
+            const entries = initial?.items instanceof Map ? initial.items : (initial instanceof Map ? initial : (initial?.items ?? initial ?? []));
+            this.items = new Map(entries);
           }
           put(key, value) { const old = this.items.has(key) ? this.items.get(key) : null; this.items.set(key, value); return old; }
           get(key) { return this.items.has(key) ? this.items.get(key) : null; }
