@@ -7,6 +7,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Collections;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -25,6 +29,10 @@ public final class JavaScriptModTranslationExporter {
   }
 
   public ExportReport export(List<ClassModel> classes, Path outputDirectory) throws IOException {
+    return export(null, classes, outputDirectory);
+  }
+
+  public ExportReport export(Path inputJar, List<ClassModel> classes, Path outputDirectory) throws IOException {
     if (classes == null) throw new IllegalArgumentException("Classes must not be null.");
     if (outputDirectory == null) throw new IllegalArgumentException("Output directory must not be null.");
     Path root = outputDirectory.toAbsolutePath().normalize();
@@ -71,6 +79,7 @@ public final class JavaScriptModTranslationExporter {
       filesWritten++;
     }
 
+    int resourceCount = copyResources(inputJar, root);
     Files.writeString(root.resolve("gold-client-runtime.js"), runtimeSource(), StandardCharsets.UTF_8);
     writeModuleIndex(classes, root);
     writeClassManifest(classes, root);
@@ -79,13 +88,53 @@ public final class JavaScriptModTranslationExporter {
     ExportReport report = new ExportReport(
         "gold-client-javascript-export-v1", classes.size(), statuses.size(),
         count(statuses, "complete"), count(statuses, "incomplete"),
-        count(statuses, "skipped"), count(statuses, "stubbed"), filesWritten, statuses);
+        count(statuses, "skipped"), count(statuses, "stubbed"), filesWritten, resourceCount, statuses);
     Files.writeString(root.resolve("javascript-report.json"),
         new GsonBuilder().setPrettyPrinting().create().toJson(report) + System.lineSeparator(),
         StandardCharsets.UTF_8);
     Files.writeString(root.resolve("javascript-report.txt"), summary(report), StandardCharsets.UTF_8);
     return report;
   }
+
+  private static int copyResources(Path inputJar, Path root) throws IOException {
+    if (inputJar == null) return 0;
+    Path resourceRoot = root.resolve("resources").normalize();
+    Files.createDirectories(resourceRoot);
+    List<ZipEntry> entries;
+    try (ZipFile zip = new ZipFile(inputJar.toFile())) {
+      entries = Collections.list(zip.entries()).stream()
+          .filter(entry -> !entry.isDirectory())
+          .sorted(Comparator.comparing(ZipEntry::getName))
+          .toList();
+      List<ResourceRecord> copied = new ArrayList<>();
+      for (ZipEntry entry : entries) {
+        String name = entry.getName().replace('\\\\', '/');
+        if (name.endsWith(".class") || isSignatureFile(name)) continue;
+        Path destination = resourceRoot.resolve(name).normalize();
+        if (!destination.startsWith(resourceRoot)) {
+          throw new IOException("Rejected unsafe JAR resource path: " + name);
+        }
+        Files.createDirectories(destination.getParent());
+        try (var stream = zip.getInputStream(entry)) {
+          Files.copy(stream, destination, StandardCopyOption.REPLACE_EXISTING);
+        }
+        copied.add(new ResourceRecord(name, Files.size(destination)));
+      }
+      Files.writeString(root.resolve("resource-index.json"),
+          new GsonBuilder().setPrettyPrinting().create().toJson(copied) + System.lineSeparator(),
+          StandardCharsets.UTF_8);
+      return copied.size();
+    }
+  }
+
+  private static boolean isSignatureFile(String name) {
+    String upper = name.toUpperCase(java.util.Locale.ROOT);
+    if (!upper.startsWith("META-INF/")) return false;
+    return upper.endsWith(".SF") || upper.endsWith(".RSA") || upper.endsWith(".DSA")
+        || upper.endsWith(".EC") || upper.equals("META-INF/INDEX.LIST");
+  }
+
+  public record ResourceRecord(String path, long sizeBytes) {}
 
   private static Path outputPath(Path root, String className) throws IOException {
     String relative = className.replace('\\', '/').replace('.', '/');
@@ -185,13 +234,14 @@ public final class JavaScriptModTranslationExporter {
         Skipped: %d
         Stubbed (symbol preserved): %d
         JavaScript class modules: %d
+        Preserved JAR resources: %d
 
         IMPORTANT: syntactically valid JavaScript is not the same as a working mod.
         Minecraft/Forge APIs, event systems, mixins, resources, and loader behavior
         require target-side adapters and are not automatically implemented here.
         """.formatted(report.formatVersion(), report.classCount(), report.methodCount(),
             report.completeCount(), report.incompleteCount(), report.skippedCount(),
-            report.stubbedCount(), report.fileCount());
+            report.stubbedCount(), report.fileCount(), report.resourceCount());
   }
 
   private static String runtimeSource() {
@@ -259,7 +309,7 @@ public final class JavaScriptModTranslationExporter {
   }
 
   public record ExportReport(String formatVersion, int classCount, int methodCount,
-      int completeCount, int incompleteCount, int skippedCount, int stubbedCount, int fileCount,
+      int completeCount, int incompleteCount, int skippedCount, int stubbedCount, int fileCount, int resourceCount,
       List<MethodStatus> methods) {
     public ExportReport { methods = List.copyOf(methods); }
   }
