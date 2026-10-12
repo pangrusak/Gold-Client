@@ -200,6 +200,28 @@ public final class JavaScriptModTranslationExporter {
             if (value === null || value === undefined) throw new TypeError("null array");
             return value.length;
           },
+          newArray(kind, length) {
+            const size = Number(length);
+            if (!Number.isInteger(size) || size < 0) throw new RangeError("invalid array length");
+            const defaults = { boolean: false, byte: 0, char: "\0", short: 0,
+              int: 0, long: 0, float: 0, double: 0, Object: null };
+            return Array(size).fill(Object.prototype.hasOwnProperty.call(defaults, kind)
+              ? defaults[kind] : null);
+          },
+          javaString(value) {
+            if (value === null || value === undefined) return "null";
+            if (typeof value === "boolean") return value ? "true" : "false";
+            return String(value);
+          },
+          javaHashCode(value) {
+            if (value === null || value === undefined) return 0;
+            if (typeof value === "number") return Number(value) | 0;
+            if (typeof value === "boolean") return value ? 1231 : 1237;
+            const text = String(value);
+            let hash = 0;
+            for (let i = 0; i < text.length; i++) hash = (Math.imul(31, hash) + text.charCodeAt(i)) | 0;
+            return hash;
+          },
           arraycopy(source, sourceIndex, target, targetIndex, length) {
             if (source == null || target == null) throw new TypeError("null array");
             if (length < 0) throw new RangeError("negative length");
