@@ -1101,16 +1101,54 @@ public final class JavaScriptModTranslationExporter {
               if (Object.prototype.hasOwnProperty.call(locales, fieldName)) return locales[fieldName];
             }
             const constructor = this.classes.get(className);
-            if (!constructor) return this.unsupported("missing-static-field-class", className);
+            if (!constructor) {
+              const service = this.platformService(className);
+              if (service) {
+                const bindings = globalThis.window?.goldClientForgeBindings ?? globalThis.goldClientForgeBindings;
+                const target = bindings?.[service];
+                if (!target || typeof target.get !== "function") {
+                  return this.unsupported("missing-platform-field-binding", className + "." + fieldName);
+                }
+                return target.get(className, fieldName);
+              }
+              return this.unsupported("missing-static-field-class", className);
+            }
             this.ensureInitialized(constructor);
             return constructor[fieldName];
           },
           setStaticField(className, fieldName, value) {
             const constructor = this.classes.get(className);
-            if (!constructor) return this.unsupported("missing-static-field-class", className);
+            if (!constructor) {
+              const service = this.platformService(className);
+              if (service) {
+                const bindings = globalThis.window?.goldClientForgeBindings ?? globalThis.goldClientForgeBindings;
+                const target = bindings?.[service];
+                if (!target || typeof target.set !== "function") {
+                  return this.unsupported("missing-platform-field-binding", className + "." + fieldName);
+                }
+                target.set(className, fieldName, value);
+                return value;
+              }
+              return this.unsupported("missing-static-field-class", className);
+            }
             this.ensureInitialized(constructor);
             constructor[fieldName] = value;
             return value;
+          },
+          platformService(owner) {
+            if (owner.startsWith("net.minecraft.")) return "minecraft";
+            if (owner.startsWith("net.minecraftforge.")) return "forge";
+            return null;
+          },
+          invokePlatformStatic(owner, method, ...args) {
+            const service = this.platformService(owner);
+            if (!service) return this.unsupported("unknown-platform-class", owner + "." + method);
+            const bindings = globalThis.window?.goldClientForgeBindings ?? globalThis.goldClientForgeBindings;
+            const target = bindings?.[service];
+            if (!target || typeof target.call !== "function") {
+              return this.unsupported("missing-platform-method-binding", owner + "." + method);
+            }
+            return target.call(owner, method, args);
           },
           resolveClass(name) {
             return this.classes.get(name) ?? null;
