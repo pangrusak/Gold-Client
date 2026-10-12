@@ -104,7 +104,7 @@ public final class Main {
           }
           ModTranslationExporter.TranslationReport report =
               new ModTranslationExporter().export(a.classes(), Path.of(outputDir));
-          System.out.println("\\n=== Whole-Mod Translation Export ===");
+          System.out.println("\n=== Whole-Mod Translation Export ===");
           System.out.println("Output: " + Path.of(outputDir).toAbsolutePath().normalize());
           System.out.println("Classes visited: " + report.classCount());
           System.out.println("Methods inspected: " + report.methodCount());
