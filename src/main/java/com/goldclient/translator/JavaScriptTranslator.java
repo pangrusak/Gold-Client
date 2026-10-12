@@ -67,6 +67,8 @@ public final class JavaScriptTranslator {
     boolean hasUnsupportedMarkers = body.contains("TODO:")
         || body.contains("CONTROL-FLOW ERROR")
         || body.contains("<exception>")
+        || body.contains("<unknown>")
+        || body.contains("<unknown-stack>")
         || body.contains("Unsupported JVM IR");
     body = lowerJavaSyntax(body);
     body = makeUnsupportedOperationsExplicit(body);
@@ -262,6 +264,10 @@ public final class JavaScriptTranslator {
 
   private static String rewriteCode(StringBuilder input) {
     String result = input.toString()
+        // Analyzer lattice markers are not JavaScript expressions. Keep the
+        // output parseable while the method remains marked incomplete.
+        .replace("<unknown-stack>", "undefined")
+        .replace("<unknown>", "undefined")
         .replace("System.out.println(", "console.log(")
         .replace("System.err.println(", "console.error(")
         .replace("java.lang.System.out.println(", "console.log(")
@@ -405,6 +411,14 @@ public final class JavaScriptTranslator {
     result = result.replaceAll(
         "\\(int\\)\\s*([A-Za-z_$][\\w$]*|[-+]?[0-9]+|\\([^()]*\\))",
         "GoldClientRuntime.toInt32($1)");
+
+    // Reference casts are verifier/type hints in the source-like intermediate
+    // output, not runtime operations in JavaScript. Remove only cast-shaped
+    // class names (qualified names or capitalized simple names), not arbitrary
+    // parenthesized expressions such as (local0).
+    result = result.replaceAll(
+        "\\((?:[a-z_$][\\w$]*\\.)*[A-Z_$][\\w$]*(?:\\$[A-Za-z_$][\\w$]*)*(?:\\[\\])*\\)\\s*(?=[A-Za-z_$0-9(])",
+        "");
 
     // Primitive JVM arrays must be allocated with JavaScript-compatible syntax.
     java.util.regex.Matcher array = java.util.regex.Pattern.compile(
