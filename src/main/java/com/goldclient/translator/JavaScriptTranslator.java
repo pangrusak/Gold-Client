@@ -280,6 +280,38 @@ public final class JavaScriptTranslator {
         .replace("java.lang.System.arraycopy(", "GoldClientRuntime.arraycopy(")
         .replace("System.arraycopy(", "GoldClientRuntime.arraycopy(");
 
+    // Route fully-qualified calls on translated classes through the class registry.
+    // Java standard-library calls are handled by dedicated compatibility helpers.
+    java.util.regex.Matcher staticCall = java.util.regex.Pattern.compile(
+        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\\\w$]*\\\\.)*[A-Z][A-Za-z0-9_$]*)\\\\.([A-Za-z_$][A-Za-z0-9_$]*)\\\\(")
+        .matcher(result);
+    StringBuffer staticCalls = new StringBuffer();
+    while (staticCall.find()) {
+      String owner = staticCall.group(1);
+      if (owner.startsWith("java.") || owner.startsWith("javax.")
+          || owner.startsWith("org.") || owner.startsWith("com.google.")) {
+        staticCall.appendReplacement(staticCalls, java.util.regex.Matcher.quoteReplacement(staticCall.group()));
+      } else {
+        String replacement = "GoldClientRuntime.invokeStaticClass(" + quote(owner.replace('/', '.'))
+            + ", " + quote(staticCall.group(2)) + ", ";
+        staticCall.appendReplacement(staticCalls, java.util.regex.Matcher.quoteReplacement(replacement));
+      }
+    }
+    staticCall.appendTail(staticCalls);
+    result = staticCalls.toString();
+
+    // Constructor expressions for mod classes resolve through the generated registry.
+    java.util.regex.Matcher allocation = java.util.regex.Pattern.compile(
+        "\\\\bnew\\\\s+((?:[a-z_$][\\\\w$]*\\\\.)+[A-Z][A-Za-z0-9_$]*)\\\\s*\\\\(")
+        .matcher(result);
+    StringBuffer allocations = new StringBuffer();
+    while (allocation.find()) {
+      String replacement = "GoldClientRuntime.create(" + quote(allocation.group(1).replace('/', '.')) + ", ";
+      allocation.appendReplacement(allocations, java.util.regex.Matcher.quoteReplacement(replacement));
+    }
+    allocation.appendTail(allocations);
+    result = allocations.toString();
+
     // JVM numeric literals carry suffixes which are not valid JavaScript.
     result = result.replaceAll(
         "\\b(-?(?:0[xX][0-9a-fA-F]+|(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?))[lLfFdD]\\b",
