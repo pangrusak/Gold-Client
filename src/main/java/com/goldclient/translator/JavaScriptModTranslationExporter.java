@@ -417,55 +417,131 @@ public final class JavaScriptModTranslationExporter {
             this.items = Array.isArray(initial) ? initial.slice() : [];
           }
           add(value) { this.items.push(value); return true; }
-          addAll(values) { const list = values?.items ?? values; this.items.push(...Array.from(list ?? [])); return true; }
-          get(index) { return this.items[index]; }
-          set(index, value) { const old = this.items[index]; this.items[index] = value; return old; }
+          addAt(index, value) { this.#checkPosition(index); this.items.splice(index, 0, value); return; }
+          addAll(values) {
+            const list = values?.items ?? values;
+            const copy = Array.from(list ?? []);
+            this.items.push(...copy);
+            return copy.length > 0;
+          }
+          addAllAt(index, values) {
+            this.#checkPosition(index);
+            const copy = Array.from(values?.items ?? values ?? []);
+            this.items.splice(index, 0, ...copy);
+            return copy.length > 0;
+          }
+          get(index) { this.#checkIndex(index); return this.items[index]; }
+          set(index, value) { this.#checkIndex(index); const old = this.items[index]; this.items[index] = value; return old; }
           size() { return this.items.length; }
           isEmpty() { return this.items.length === 0; }
-          contains(value) { return this.items.some(item => Object.is(item, value) || item === value); }
-          indexOf(value) { return this.items.indexOf(value); }
+          contains(value) { return this.items.some(item => Object.is(item, value)); }
+          containsAll(values) { return Array.from(values?.items ?? values ?? []).every(value => this.contains(value)); }
+          indexOf(value) { return this.items.findIndex(item => Object.is(item, value)); }
+          lastIndexOf(value) { return this.items.findLastIndex ? this.items.findLastIndex(item => Object.is(item, value)) : this.items.map(item => Object.is(item, value)).lastIndexOf(true); }
           clear() { this.items.length = 0; }
           remove(value) {
-            const index = typeof value === "number" ? value : this.items.indexOf(value);
+            const index = typeof value === "number" ? value : this.indexOf(value);
             if (index < 0 || index >= this.items.length) return false;
             this.items.splice(index, 1); return true;
           }
+          removeAt(index) { this.#checkIndex(index); return this.items.splice(index, 1)[0]; }
+          removeAll(values) {
+            const candidates = Array.from(values?.items ?? values ?? []);
+            const before = this.items.length;
+            this.items = this.items.filter(item => !candidates.some(value => Object.is(value, item)));
+            return before !== this.items.length;
+          }
+          retainAll(values) {
+            const candidates = Array.from(values?.items ?? values ?? []);
+            const before = this.items.length;
+            this.items = this.items.filter(item => candidates.some(value => Object.is(value, item)));
+            return before !== this.items.length;
+          }
+          replaceAll(callback) { this.items = this.items.map((value, index) => callback(value, index)); }
+          removeIf(predicate) {
+            const before = this.items.length;
+            this.items = this.items.filter((value, index) => !predicate(value, index));
+            return before !== this.items.length;
+          }
+          subList(from, to) {
+            if (from < 0 || to > this.items.length || from > to) throw new RangeError("IndexOutOfBoundsException");
+            return new GoldClientJavaList(this.items.slice(from, to));
+          }
           toArray() { return this.items.slice(); }
-          sort(comparator) { this.items.sort(comparator); }
+          sort(comparator) { this.items.sort(comparator ?? ((a, b) => String(a).localeCompare(String(b)))); }
+          replace(index, value) { return this.set(index, value); }
           iterator() { return this.items[Symbol.iterator](); }
+          listIterator(index = 0) {
+            let cursor = index;
+            const owner = this;
+            return {
+              hasNext: () => cursor < owner.items.length,
+              next: () => { if (cursor >= owner.items.length) throw new Error("NoSuchElementException"); return owner.items[cursor++]; },
+              hasPrevious: () => cursor > 0,
+              previous: () => { if (cursor <= 0) throw new Error("NoSuchElementException"); return owner.items[--cursor]; },
+              nextIndex: () => cursor,
+              previousIndex: () => cursor - 1,
+              remove: () => { if (cursor <= 0) throw new Error("IllegalStateException"); owner.items.splice(--cursor, 1); },
+              set: value => { if (cursor <= 0) throw new Error("IllegalStateException"); owner.items[cursor - 1] = value; },
+              add: value => owner.items.splice(cursor++, 0, value)
+            };
+          }
           forEach(callback) { this.items.forEach(callback); }
+          stream() { return this.items.slice(); }
+          toString() { return "[" + this.items.map(value => value == null ? "null" : String(value)).join(", ") + "]"; }
+          #checkIndex(index) {
+            if (!Number.isInteger(index) || index < 0 || index >= this.items.length) throw new RangeError("IndexOutOfBoundsException: " + index);
+          }
+          #checkPosition(index) {
+            if (!Number.isInteger(index) || index < 0 || index > this.items.length) throw new RangeError("IndexOutOfBoundsException: " + index);
+          }
           [Symbol.iterator]() { return this.items[Symbol.iterator](); }
         }
         class GoldClientJavaSet {
           constructor(initial = []) { this.items = new Set(initial?.items ?? initial ?? []); }
           add(value) { const before = this.items.size; this.items.add(value); return this.items.size !== before; }
+          addAll(values) { let changed = false; for (const value of values?.items ?? values ?? []) changed = this.add(value) || changed; return changed; }
           contains(value) { return this.items.has(value); }
+          containsAll(values) { return Array.from(values?.items ?? values ?? []).every(value => this.contains(value)); }
           size() { return this.items.size; }
           isEmpty() { return this.items.size === 0; }
           remove(value) { return this.items.delete(value); }
+          removeAll(values) { let changed = false; for (const value of values?.items ?? values ?? []) changed = this.remove(value) || changed; return changed; }
+          retainAll(values) { const keep = new Set(values?.items ?? values ?? []); let changed = false; for (const value of this.items) if (!keep.has(value)) { this.items.delete(value); changed = true; } return changed; }
           clear() { this.items.clear(); }
           toArray() { return Array.from(this.items); }
+          forEach(callback) { this.items.forEach(callback); }
           iterator() { return this.items[Symbol.iterator](); }
+          stream() { return Array.from(this.items); }
           [Symbol.iterator]() { return this.items[Symbol.iterator](); }
         }
         class GoldClientJavaMap {
           constructor(initial = []) {
             this.items = new Map(initial?.items instanceof Map ? initial.items : (initial instanceof Map ? initial : []));
           }
-          put(key, value) { const old = this.items.get(key); this.items.set(key, value); return old ?? null; }
+          put(key, value) { const old = this.items.has(key) ? this.items.get(key) : null; this.items.set(key, value); return old; }
           get(key) { return this.items.has(key) ? this.items.get(key) : null; }
           getOrDefault(key, fallback) { return this.items.has(key) ? this.items.get(key) : fallback; }
           containsKey(key) { return this.items.has(key); }
           containsValue(value) { return Array.from(this.items.values()).some(item => Object.is(item, value)); }
           size() { return this.items.size; }
           isEmpty() { return this.items.size === 0; }
-          remove(key) { const old = this.get(key); this.items.delete(key); return old; }
+          remove(key) { if (!this.items.has(key)) return null; const old = this.items.get(key); this.items.delete(key); return old; }
+          removePair(key, value) { if (!this.items.has(key) || !Object.is(this.items.get(key), value)) return false; this.items.delete(key); return true; }
+          replace(key, value) { if (!this.items.has(key)) return null; const old = this.items.get(key); this.items.set(key, value); return old; }
+          replacePair(key, oldValue, newValue) { if (!this.items.has(key) || !Object.is(this.items.get(key), oldValue)) return false; this.items.set(key, newValue); return true; }
+          putIfAbsent(key, value) { if (!this.items.has(key) || this.items.get(key) == null) this.items.set(key, value); return this.items.get(key); }
+          computeIfAbsent(key, fn) { let value = this.items.get(key); if (value == null) { value = fn(key); if (value != null) this.items.set(key, value); } return value ?? null; }
+          computeIfPresent(key, fn) { if (!this.items.has(key) || this.items.get(key) == null) return null; const value = fn(key, this.items.get(key)); if (value == null) this.items.delete(key); else this.items.set(key, value); return value ?? null; }
+          compute(key, fn) { const value = fn(key, this.items.has(key) ? this.items.get(key) : null); if (value == null) this.items.delete(key); else this.items.set(key, value); return value ?? null; }
+          merge(key, value, fn) { const old = this.items.get(key); const next = old == null ? value : fn(old, value); if (next == null) this.items.delete(key); else this.items.set(key, next); return next ?? null; }
           clear() { this.items.clear(); }
           putAll(other) { for (const [key, value] of (other?.items ?? other)) this.items.set(key, value); }
           keySet() { return new GoldClientJavaSet(this.items.keys()); }
           values() { return new GoldClientJavaList(Array.from(this.items.values())); }
-          entrySet() { return new GoldClientJavaSet(Array.from(this.items.entries()).map(([key, value]) => ({ getKey: () => key, getValue: () => value }))); }
+          entrySet() { return new GoldClientJavaSet(Array.from(this.items.entries()).map(([key, value]) => ({ key, value, getKey() { return this.key; }, getValue() { return this.value; }, setValue(next) { const old = this.value; this.value = next; return old; } }))); }
           forEach(callback) { this.items.forEach((value, key) => callback(key, value)); }
+          toObject() { return Object.fromEntries(this.items); }
           [Symbol.iterator]() { return this.items[Symbol.iterator](); }
         }
         class GoldClientJavaStringBuilder {
