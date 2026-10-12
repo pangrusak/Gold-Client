@@ -59,7 +59,8 @@ public final class JavaScriptModTranslationExporter {
           status = "stubbed";
           reason = why;
         } else {
-          result = translator.translate(method.intermediateRepresentation());
+          result = translator.translate(method.intermediateRepresentation(),
+              (method.access() & Opcodes.ACC_STATIC) != 0);
           status = result.complete() ? "complete" : "incomplete";
           reason = result.complete() ? null : incompleteReason(result.source());
         }
