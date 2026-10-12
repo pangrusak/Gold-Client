@@ -200,8 +200,8 @@ public final class ForgeJarBootstrap {
                             + type.name() + "." + field.name());
                     continue;
                 }
-                if ((field.access() & 1) == 0 || (field.access() & 0x10) != 0) {
-                    blockers.add("Forge injected fields must be public and non-final: "
+                if ((field.access() & 0x10) != 0) {
+                    blockers.add("Forge injected fields must be non-final: 
                             + type.name() + "." + field.name());
                     continue;
                 }
@@ -286,6 +286,11 @@ public final class ForgeJarBootstrap {
                                    List<SubscriberBinding> subscribers) {
         String type = mod.name().replace('/', '.');
         StringBuilder code = new StringBuilder("package gold.generated;\npublic final class ForgeModBootstrap {\n");
+        code.append("  private static void injectField(Class<?> owner, Object target, String name, Object value) throws Exception {\\n")
+            .append("    java.lang.reflect.Field field = owner.getDeclaredField(name);\\n")
+            .append("    field.setAccessible(true);\\n")
+            .append("    field.set(target, value);\\n")
+            .append("  }\\n")
         code.append("  public interface SubscriberInvoker { void invoke(Object event) throws Exception; }\n")
             .append("  public interface Host {\n")
             .append("    void beforeConstruction(String modId);\n")
@@ -307,13 +312,14 @@ public final class ForgeJarBootstrap {
         code.append("    host.afterConstruction(").append((char) 34).append(id)
             .append((char) 34).append(", mod);").append((char) 10);
         for (FieldInjection injection : injections) {
-            String owner = injection.isStatic() ? injection.owner() : "mod";
+            String target = injection.isStatic() ? "null" : "mod";
             String value = injection.kind().equals("instance")
                     ? "mod"
                     : "((" + injection.descriptor().substring(1, injection.descriptor().length() - 1)
-                            .replace('/', '.') + ") host.metadataFor(\"" + id + "\"))";
-            code.append("    ").append(owner).append(".").append(injection.field())
-                    .append(" = ").append(value).append(";\n");
+                            .replace('/', '.') + ") host.metadataFor(\\"" + id + "\\"))";
+            code.append("    injectField(").append(injection.owner()).append(".class, ")
+                    .append(target).append(", \\"").append(injection.field()).append("\\", ")
+                    .append(value).append(");\\n");
         }
         for (ProxyBinding proxy : proxies) {
             if (proxy.setter().isEmpty()) {
