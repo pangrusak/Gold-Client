@@ -314,7 +314,7 @@ public final class JavaScriptTranslator {
     // Static field writes must target the generated class constructor rather than
     // an unresolved Java package global. Rewrite writes before reads.
     java.util.regex.Matcher staticWrite = java.util.regex.Pattern.compile(
-        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\\\w$]*\\\\.)*[A-Z][A-Za-z0-9_$]*)\\\\.([A-Za-z_$][A-Za-z0-9_$]*)\\\\s*=\\\\s*([^;\\\\n]+);")
+        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\w$]*\\.)*[A-Z][A-Za-z0-9_$]*)\\.([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*([^;\\n]+);")
         .matcher(result);
     StringBuffer staticWrites = new StringBuffer();
     while (staticWrite.find()) {
@@ -334,14 +334,14 @@ public final class JavaScriptTranslator {
     result = staticWrites.toString();
 
     java.util.regex.Matcher staticField = java.util.regex.Pattern.compile(
-        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\\\w$]*\\\\.)*[A-Z][A-Za-z0-9_$]*)\\\\.([A-Za-z_$][A-Za-z0-9_$]*)(?![A-Za-z0-9_$])")
+        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\w$]*\\.)*[A-Z][A-Za-z0-9_$]*)\\.([A-Za-z_$][A-Za-z0-9_$]*)(?![A-Za-z0-9_$])")
         .matcher(result);
     StringBuffer staticFields = new StringBuffer();
     while (staticField.find()) {
       String owner = staticField.group(1);
       if (owner.startsWith("java.") || owner.startsWith("javax.") || owner.startsWith("GoldClientRuntime")
           || java.util.Set.of("String", "Integer", "Boolean", "Math", "System", "Objects",
-              "Collections", "Arrays", "Character", "Long", "Double", "Float", "Byte", "Short)
+              "Collections", "Arrays", "Character", "Long", "Double", "Float", "Byte", "Short")
               .contains(owner)) {
         staticField.appendReplacement(staticFields, java.util.regex.Matcher.quoteReplacement(staticField.group()));
       } else {
