@@ -4,6 +4,7 @@ import com.goldclient.model.ClassModel;
 import com.goldclient.model.ControlFlowModel;
 import com.goldclient.model.IrMethodModel;
 import com.goldclient.model.IrOperationModel;
+import com.goldclient.model.FieldModel;
 import com.goldclient.model.MethodModel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,7 +26,10 @@ class JavaScriptModTranslationExporterTest {
   @Test
   void exportsJavaScriptModulesRuntimeAndIndependentReport() throws Exception {
     ClassModel clazz = new ClassModel("example/Feature", "java/lang/Object", List.of(),
-        Opcodes.ACC_PUBLIC, null, List.of(), List.of(), List.of(
+        Opcodes.ACC_PUBLIC, null, List.of(),
+        List.of(new FieldModel("VERSION", "I", null,
+            Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, List.of(), 7)),
+        List.of(
             method("isReady", "()Z", Opcodes.ACC_PUBLIC, List.of(
                 op("CONSTANT", "true"), op("RETURN", "true"))),
             method("unknown", "()V", Opcodes.ACC_PUBLIC, List.of(op("UNKNOWN", "opcode"))),
@@ -47,6 +51,8 @@ class JavaScriptModTranslationExporterTest {
     String moduleSource = Files.readString(module);
     assertTrue(moduleSource.contains("export class Translated_example_Feature"), moduleSource);
     assertTrue(moduleSource.contains("GoldClientRuntime.invoke(this, __goldMethods"), moduleSource);
+    assertTrue(moduleSource.contains("Translated_example_Feature.VERSION = 7;"), moduleSource);
+    assertTrue(Files.readString(output.resolve("mod-manifest.json")).contains("constantValue"));
     assertTrue(Files.readString(output.resolve("gold-client-runtime.js")).contains("registerClass(name, constructor, staticInitializer"));
     assertEquals(1, report.classCount());
     assertEquals(3, report.methodCount());
