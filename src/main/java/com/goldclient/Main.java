@@ -93,7 +93,8 @@ public final class Main {
     try {
       ModAnalysis a = new ModAnalyzer().analyze(Path.of(jar));
       boolean methodDebug = classFilter != null || methodFilter != null;
-      boolean wholeModExport = translate && classFilter == null && methodFilter == null;
+      boolean wholeModExport = (translate || translateJsDir != null)
+          && classFilter == null && methodFilter == null;
       if (wholeModExport) printTranslationSummary(a);
       else printAnalysis(a, methodDebug);
 
