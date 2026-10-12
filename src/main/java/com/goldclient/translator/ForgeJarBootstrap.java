@@ -201,7 +201,7 @@ public final class ForgeJarBootstrap {
                     continue;
                 }
                 if ((field.access() & 0x10) != 0) {
-                    blockers.add("Forge injected fields must be non-final: 
+                    blockers.add("Forge injected fields must be non-final: "
                             + type.name() + "." + field.name());
                     continue;
                 }
