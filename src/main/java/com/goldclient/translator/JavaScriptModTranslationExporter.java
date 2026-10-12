@@ -63,7 +63,8 @@ public final class JavaScriptModTranslationExporter {
           String why = (method.access() & Opcodes.ACC_NATIVE) != 0 ? "native method"
               : (method.access() & Opcodes.ACC_ABSTRACT) != 0 ? "abstract method"
               : "semantic IR was not recovered";
-          result = translator.translateStub(method.name(), method.descriptor(), why);
+          result = translator.translateStub(method.name(), method.descriptor(), why,
+              (method.access() & Opcodes.ACC_STATIC) != 0);
           status = "stubbed";
           reason = why;
         } else {
