@@ -86,8 +86,8 @@ class ForgeJarBootstrapTest {
             """, null);
         var plan = ForgeJarBootstrap.inspect(jar);
         assertTrue(plan.blockers().isEmpty(), plan.blockers().toString());
-        assertTrue(plan.bootstrapSource().contains("injectField(Example.class, null, \"instance\", mod);"));
-        assertTrue(plan.bootstrapSource().contains("injectField(Example.class, null, \"metadata\", ((net.minecraftforge.fml.common.ModMetadata) host.metadataFor(\"example\")));"));
+        assertTrue(plan.bootstrapSource().contains("injectField(fixture.Example.class, null, \"instance\", mod);"));
+        assertTrue(plan.bootstrapSource().contains("injectField(fixture.Example.class, null, \"metadata\", ((net.minecraftforge.fml.common.ModMetadata) host.metadataFor(\"example\")));"));
 
         Path source = temp.resolve("injection/gold/generated/ForgeModBootstrap.java");
         Path compiled = temp.resolve("injection/classes");
