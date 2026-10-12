@@ -10,6 +10,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JavaTranslatorTest {
   @Test
+  void emitsReturnedCallsOnlyOnceAndPreservesDiscardedCallSideEffects() {
+    IrMethodModel returnedCall = new IrMethodModel("value", "()I", List.of(
+        new IrOperationModel("CALL_VALUE", List.of("this.compute()"), 0),
+        new IrOperationModel("RETURN", List.of("this.compute()"), 1)));
+    String returned = new JavaTranslator().translate(returnedCall).source();
+    assertEquals(1, returned.split("this\\\\.compute\\\\(\\\\)", -1).length - 1, returned);
+
+    IrMethodModel discardedCall = new IrMethodModel("discard", "()V", List.of(
+        new IrOperationModel("CALL_VALUE", List.of("this.compute()"), 0),
+        new IrOperationModel("DROP", List.of("this.compute()"), 1),
+        new IrOperationModel("RETURN", List.of(), 2)));
+    String discarded = new JavaTranslator().translate(discardedCall).source();
+    assertEquals(1, discarded.split("this\\\\.compute\\\\(\\\\);", -1).length - 1, discarded);
+  }
+
+  @Test
   void translatesLithiumStyleNullCheck() {
     IrMethodModel method = new IrMethodModel(
         "onInitialize",
