@@ -312,6 +312,13 @@ class JavaScriptModTranslationExporterTest {
         if (!properties.stringPropertyNames().contains("mod.enabled")) throw new Error("Properties names");
         const systemProperties = r.invokeJavaStatic("java.lang.System", "getProperties");
         if (systemProperties.getProperty("file.separator") !== "/") throw new Error("System properties");
+        const bits = r.createJava("java.util.BitSet");
+        bits.set(2); bits.set(5, 8);
+        if (bits.cardinality() !== 4 || bits.nextSetBit(3) !== 5 || bits.nextClearBit(5) !== 8) throw new Error("BitSet basics");
+        const otherBits = r.createJava("java.util.BitSet"); otherBits.set(5); otherBits.set(9);
+        if (!bits.intersects(otherBits)) throw new Error("BitSet intersects");
+        bits.and(otherBits);
+        if (bits.toString() !== "{5}") throw new Error("BitSet and");
         console.log("java-compatibility-ok");
         """, StandardCharsets.UTF_8);
     Process node;
