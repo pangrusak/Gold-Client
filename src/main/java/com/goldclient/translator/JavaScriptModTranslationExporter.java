@@ -358,6 +358,73 @@ public final class JavaScriptModTranslationExporter {
     return """
         // Small compatibility helpers used by generated JavaScript.
         // This is not a replacement for Minecraft/Forge or a full JVM runtime.
+        class GoldClientJavaList {
+          constructor(initial = []) {
+            this.items = Array.isArray(initial) ? initial.slice() : [];
+          }
+          add(value) { this.items.push(value); return true; }
+          addAll(values) { const list = values?.items ?? values; this.items.push(...Array.from(list ?? [])); return true; }
+          get(index) { return this.items[index]; }
+          set(index, value) { const old = this.items[index]; this.items[index] = value; return old; }
+          size() { return this.items.length; }
+          isEmpty() { return this.items.length === 0; }
+          contains(value) { return this.items.some(item => Object.is(item, value) || item === value); }
+          indexOf(value) { return this.items.indexOf(value); }
+          clear() { this.items.length = 0; }
+          remove(value) {
+            const index = typeof value === "number" ? value : this.items.indexOf(value);
+            if (index < 0 || index >= this.items.length) return false;
+            this.items.splice(index, 1); return true;
+          }
+          toArray() { return this.items.slice(); }
+          sort(comparator) { this.items.sort(comparator); }
+          iterator() { return this.items[Symbol.iterator](); }
+          forEach(callback) { this.items.forEach(callback); }
+          [Symbol.iterator]() { return this.items[Symbol.iterator](); }
+        }
+        class GoldClientJavaSet {
+          constructor(initial = []) { this.items = new Set(initial?.items ?? initial ?? []); }
+          add(value) { const before = this.items.size; this.items.add(value); return this.items.size !== before; }
+          contains(value) { return this.items.has(value); }
+          size() { return this.items.size; }
+          isEmpty() { return this.items.size === 0; }
+          remove(value) { return this.items.delete(value); }
+          clear() { this.items.clear(); }
+          toArray() { return Array.from(this.items); }
+          iterator() { return this.items[Symbol.iterator](); }
+          [Symbol.iterator]() { return this.items[Symbol.iterator](); }
+        }
+        class GoldClientJavaMap {
+          constructor(initial = []) {
+            this.items = new Map(initial?.items instanceof Map ? initial.items : (initial instanceof Map ? initial : []));
+          }
+          put(key, value) { const old = this.items.get(key); this.items.set(key, value); return old ?? null; }
+          get(key) { return this.items.has(key) ? this.items.get(key) : null; }
+          getOrDefault(key, fallback) { return this.items.has(key) ? this.items.get(key) : fallback; }
+          containsKey(key) { return this.items.has(key); }
+          containsValue(value) { return Array.from(this.items.values()).some(item => Object.is(item, value)); }
+          size() { return this.items.size; }
+          isEmpty() { return this.items.size === 0; }
+          remove(key) { const old = this.get(key); this.items.delete(key); return old; }
+          clear() { this.items.clear(); }
+          putAll(other) { for (const [key, value] of (other?.items ?? other)) this.items.set(key, value); }
+          keySet() { return new GoldClientJavaSet(this.items.keys()); }
+          values() { return new GoldClientJavaList(Array.from(this.items.values())); }
+          entrySet() { return new GoldClientJavaSet(Array.from(this.items.entries()).map(([key, value]) => ({ getKey: () => key, getValue: () => value }))); }
+          forEach(callback) { this.items.forEach((value, key) => callback(key, value)); }
+          [Symbol.iterator]() { return this.items[Symbol.iterator](); }
+        }
+        class GoldClientJavaStringBuilder {
+          constructor(initial = "") { this.value = initial == null ? "" : String(initial); }
+          append(value) { this.value += value == null ? "null" : String(value); return this; }
+          toString() { return this.value; }
+          length() { return this.value.length; }
+          charAt(index) { return this.value.charAt(index); }
+          setLength(length) { this.value = this.value.slice(0, length).padEnd(length, "\\0"); return this; }
+          delete(start, end) { this.value = this.value.slice(0, start) + this.value.slice(end); return this; }
+          insert(index, value) { this.value = this.value.slice(0, index) + String(value) + this.value.slice(index); return this; }
+        }
+
         export const GoldClientRuntime = Object.freeze({
           intDiv(a, b) {
             if (b === 0) throw new Error("ArithmeticException: / by zero");
@@ -423,6 +490,86 @@ public final class JavaScriptModTranslationExporter {
             const constructor = this.classes.get(name);
             if (!constructor) return this.unsupported("missing-class-adapter", name);
             return Reflect.construct(constructor, args);
+          },
+          createJava(name, ...args) {
+            switch (name) {
+              case "java.util.ArrayList":
+              case "java.util.LinkedList":
+              case "java.util.Vector":
+              case "java.util.Stack":
+                return new GoldClientJavaList(Array.isArray(args[0]) ? args[0] : []);
+              case "java.util.HashSet":
+              case "java.util.LinkedHashSet":
+              case "java.util.TreeSet":
+                return new GoldClientJavaSet(args[0] ?? []);
+              case "java.util.HashMap":
+              case "java.util.LinkedHashMap":
+              case "java.util.TreeMap":
+              case "java.util.IdentityHashMap":
+                return new GoldClientJavaMap(args[0] ?? []);
+              case "java.lang.StringBuilder":
+              case "java.lang.StringBuffer":
+                return new GoldClientJavaStringBuilder(args[0] ?? "");
+              case "java.lang.String":
+                return String(args[0] ?? "");
+              default:
+                return this.unsupported("missing-java-class-adapter", name);
+            }
+          },
+          invokeJavaStatic(owner, method, ...args) {
+            if (owner === "java.lang.Math") {
+              if (method === "floorDiv") return this.intDiv(args[0], args[1]);
+              if (method === "floorMod") return this.intMod(args[0], args[1]);
+              if (typeof Math[method] === "function") return Math[method](...args);
+            }
+            if (owner === "java.util.Arrays") {
+              if (method === "asList") return new GoldClientJavaList(args[0] ?? args);
+              if (method === "copyOf") return Array.from(args[0] ?? []).slice(0, args[1]);
+              if (method === "equals") return JSON.stringify(args[0]) === JSON.stringify(args[1]);
+              if (method === "toString") return "[" + Array.from(args[0] ?? []).join(", ") + "]";
+            }
+            if (owner === "java.util.Collections") {
+              if (method === "emptyList") return new GoldClientJavaList();
+              if (method === "emptySet") return new GoldClientJavaSet();
+              if (method === "emptyMap") return new GoldClientJavaMap();
+              if (method === "singletonList") return new GoldClientJavaList([args[0]]);
+              if (method === "singleton") return new GoldClientJavaSet([args[0]]);
+              if (method === "singletonMap") return new GoldClientJavaMap([[args[0], args[1]]]);
+              if (["unmodifiableList", "unmodifiableSet", "unmodifiableMap",
+                   "synchronizedList", "synchronizedSet", "synchronizedMap"].includes(method)) return args[0];
+              if (method === "addAll") {
+                const collection = args[0];
+                const values = args.slice(1);
+                if (collection?.add) { let changed = false; for (const value of values) changed = collection.add(value) || changed; return changed; }
+                if (Array.isArray(collection)) { collection.push(...values); return values.length > 0; }
+              }
+              if (method === "reverse") { if (args[0]?.items) args[0].items.reverse(); else args[0]?.reverse?.(); return; }
+              if (method === "sort") { if (args[0]?.items) args[0].items.sort(args[1]); else args[0]?.sort?.(args[1]); return; }
+              if (method === "frequency") { const values = args[0]?.items ?? args[0] ?? []; return Array.from(values).filter(value => Object.is(value, args[1])).length; }
+            }
+            if (owner === "java.util.Objects") {
+              if (method === "equals") return Object.is(args[0], args[1]);
+              if (method === "hash") return args.reduce((hash, value) => (Math.imul(hash, 31) + this.javaHashCode(value)) | 0, 1);
+              if (method === "toString") return args[0] == null ? (args[1] ?? "null") : String(args[0]);
+              if (method === "requireNonNull") return this.requireNonNull(args[0], args[1]);
+            }
+            if (owner === "java.lang.Integer" || owner === "java.lang.Long") {
+              if (method === "parseInt" || method === "parseLong" || method === "valueOf") return Number.parseInt(args[0], args[1] ?? 10);
+              if (method === "toString") return String(args[0]);
+              if (method === "compare") return Math.sign(args[0] - args[1]);
+            }
+            if (owner === "java.lang.Boolean") {
+              if (method === "parseBoolean" || method === "valueOf") return String(args[0]).toLowerCase() === "true";
+              if (method === "toString") return String(Boolean(args[0]));
+            }
+            if (owner === "java.lang.String") {
+              if (method === "valueOf") return this.javaString(args[0]);
+              if (method === "format") return String(args[0]).replace(/%s/g, () => String(args.shift()));
+            }
+            if (owner === "java.lang.System" && method === "currentTimeMillis") return Date.now();
+            const translated = this.classes.get(owner);
+            if (translated && typeof translated[method] === "function") return translated[method](...args);
+            return this.unsupported("missing-java-static-adapter", owner + "." + method);
           },
           invokeStaticClass(className, methodName, ...args) {
             const constructor = this.classes.get(className);
