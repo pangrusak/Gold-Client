@@ -286,11 +286,11 @@ public final class ForgeJarBootstrap {
                                    List<SubscriberBinding> subscribers) {
         String type = mod.name().replace('/', '.');
         StringBuilder code = new StringBuilder("package gold.generated;\npublic final class ForgeModBootstrap {\n");
-        code.append("  private static void injectField(Class<?> owner, Object target, String name, Object value) throws Exception {\\n")
-            .append("    java.lang.reflect.Field field = owner.getDeclaredField(name);\\n")
-            .append("    field.setAccessible(true);\\n")
-            .append("    field.set(target, value);\\n")
-            .append("  }\\n")
+        code.append("  private static void injectField(Class<?> owner, Object target, String name, Object value) throws Exception {\n")
+            .append("    java.lang.reflect.Field field = owner.getDeclaredField(name);\n")
+            .append("    field.setAccessible(true);\n")
+            .append("    field.set(target, value);\n")
+            .append("  }\n");
         code.append("  public interface SubscriberInvoker { void invoke(Object event) throws Exception; }\n")
             .append("  public interface Host {\n")
             .append("    void beforeConstruction(String modId);\n")
@@ -316,10 +316,10 @@ public final class ForgeJarBootstrap {
             String value = injection.kind().equals("instance")
                     ? "mod"
                     : "((" + injection.descriptor().substring(1, injection.descriptor().length() - 1)
-                            .replace('/', '.') + ") host.metadataFor(\\"" + id + "\\"))";
+                            .replace('/', '.') + ") host.metadataFor(\"" + id + "\"))";
             code.append("    injectField(").append(injection.owner()).append(".class, ")
-                    .append(target).append(", \\"").append(injection.field()).append("\\", ")
-                    .append(value).append(");\\n");
+                    .append(target).append(", \"").append(injection.field()).append("\", ")
+                    .append(value).append(");\n");
         }
         for (ProxyBinding proxy : proxies) {
             if (proxy.setter().isEmpty()) {
