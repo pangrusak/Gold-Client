@@ -149,6 +149,19 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void zeroArgumentStaticCallsDoNotPassAnAccidentalUndefinedArgument() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object a = java.util.Collections.emptyList();
+          Object b = mezz.jei.Internal.getRuntime();
+        }
+        """);
+    assertTrue(lowered.contains("GoldClientRuntime.invokeJavaStatic("), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.invokeStaticClass("), lowered);
+    assertFalse(lowered.contains(", )"), lowered);
+  }
+
+  @Test
   void routesTranslatedStaticFieldReadsAndWritesThroughRuntime() {
     String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
         void sample() {

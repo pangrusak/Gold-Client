@@ -323,6 +323,14 @@ public final class JavaScriptTranslator {
     staticCall.appendTail(staticCalls);
     result = staticCalls.toString();
 
+    // A Java call with zero arguments currently lowers to an empty argument slot
+    // because the call rewriter inserts the runtime's varargs separator before
+    // seeing the original argument list. Remove that slot so the emitted call is
+    // valid JavaScript and the adapter receives exactly zero arguments.
+    result = result.replaceAll(
+        "(GoldClientRuntime\\.(?:invokeJavaStatic|invokeStaticClass)\\([^\\n]*),\\s*\\)",
+        "$1)");
+
     // Static field writes must target the generated class constructor rather than
     // an unresolved Java package global. Rewrite writes before reads.
     java.util.regex.Matcher staticWrite = java.util.regex.Pattern.compile(
