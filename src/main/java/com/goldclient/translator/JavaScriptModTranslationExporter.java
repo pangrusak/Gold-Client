@@ -417,6 +417,24 @@ public final class JavaScriptModTranslationExporter {
             this.items = Array.isArray(initial) ? initial.slice() : [];
           }
           add(...args) { if (args.length > 1) { this.addAt(args[0], args[1]); return; } this.items.push(args[0]); return true; }
+          offer(value) { this.items.push(value); return true; }
+          push(value) { this.items.push(value); return; }
+          pop() { if (!this.items.length) throw new Error("NoSuchElementException"); return this.items.pop(); }
+          poll() { return this.items.length ? this.items.shift() : null; }
+          peek() { return this.items.length ? this.items[0] : null; }
+          element() { if (!this.items.length) throw new Error("NoSuchElementException"); return this.items[0]; }
+          addFirst(value) { this.items.unshift(value); }
+          addLast(value) { this.items.push(value); }
+          offerFirst(value) { this.items.unshift(value); return true; }
+          offerLast(value) { this.items.push(value); return true; }
+          pollFirst() { return this.poll(); }
+          pollLast() { return this.items.length ? this.items.pop() : null; }
+          peekFirst() { return this.peek(); }
+          peekLast() { return this.items.length ? this.items[this.items.length - 1] : null; }
+          getFirst() { return this.element(); }
+          getLast() { if (!this.items.length) throw new Error("NoSuchElementException"); return this.items[this.items.length - 1]; }
+          removeFirst() { return this.removeAt(0); }
+          removeLast() { return this.removeAt(this.items.length - 1); }
           addAt(index, value) { this.#checkPosition(index); this.items.splice(index, 0, value); return; }
           addAll(values) {
             const list = values?.items ?? values;
@@ -565,6 +583,47 @@ public final class JavaScriptModTranslationExporter {
             return new GoldClientJavaUuid(hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20));
           }
           static fromString(value) { return new GoldClientJavaUuid(value); }
+        }
+
+        class GoldClientJavaAtomic {
+          constructor(value = 0) { this.value = value; }
+          get() { return this.value; }
+          set(value) { this.value = value; }
+          lazySet(value) { this.value = value; }
+          getAndSet(value) { const old = this.value; this.value = value; return old; }
+          compareAndSet(expected, update) { if (!Object.is(this.value, expected)) return false; this.value = update; return true; }
+          weakCompareAndSet(expected, update) { return this.compareAndSet(expected, update); }
+          getAndIncrement() { const old = this.value; this.value++; return old; }
+          incrementAndGet() { return ++this.value; }
+          getAndDecrement() { const old = this.value; this.value--; return old; }
+          decrementAndGet() { return --this.value; }
+          getAndAdd(delta) { const old = this.value; this.value += delta; return old; }
+          addAndGet(delta) { this.value += delta; return this.value; }
+          getAndUpdate(update) { const old = this.value; this.value = update(old); return old; }
+          updateAndGet(update) { this.value = update(this.value); return this.value; }
+          getAndAccumulate(value, fn) { const old = this.value; this.value = fn(old, value); return old; }
+          accumulateAndGet(value, fn) { this.value = fn(this.value, value); return this.value; }
+          intValue() { return Number(this.value) | 0; }
+          longValue() { return this.value; }
+          booleanValue() { return Boolean(this.value); }
+          toString() { return String(this.value); }
+        }
+
+        class GoldClientJavaPriorityQueue extends GoldClientJavaList {
+          constructor(initial = [], comparator = null) {
+            super(initial?.items ?? initial ?? []);
+            this.comparator = comparator ?? ((a, b) => a < b ? -1 : a > b ? 1 : 0);
+            this.#sort();
+          }
+          #sort() { this.items.sort(this.comparator); }
+          add(value) { this.items.push(value); this.#sort(); return true; }
+          offer(value) { return this.add(value); }
+          addAll(values) { const added = super.addAll(values); this.#sort(); return added; }
+          poll() { return this.items.length ? this.items.shift() : null; }
+          peek() { return this.items.length ? this.items[0] : null; }
+          remove(value) { const removed = super.remove(value); this.#sort(); return removed; }
+          clear() { super.clear(); }
+          iterator() { return this.items.slice()[Symbol.iterator](); }
         }
 
         class GoldClientJavaDate {
@@ -892,6 +951,9 @@ public final class JavaScriptModTranslationExporter {
               case "java.util.LinkedList":
               case "java.util.Vector":
               case "java.util.Stack":
+              case "java.util.ArrayDeque":
+              case "java.util.concurrent.ConcurrentLinkedQueue":
+              case "java.util.concurrent.CopyOnWriteArrayList":
                 return new GoldClientJavaList(Array.from(args[0]?.items ?? args[0] ?? []));
               case "java.util.HashSet":
               case "java.util.LinkedHashSet":
@@ -901,6 +963,7 @@ public final class JavaScriptModTranslationExporter {
               case "java.util.LinkedHashMap":
               case "java.util.TreeMap":
               case "java.util.IdentityHashMap":
+              case "java.util.concurrent.ConcurrentHashMap":
                 return new GoldClientJavaMap(args[0] ?? []);
               case "java.lang.StringBuilder":
               case "java.lang.StringBuffer":
@@ -911,6 +974,13 @@ public final class JavaScriptModTranslationExporter {
                 return new GoldClientJavaDate(args.length ? args[0] : Date.now());
               case "java.util.UUID":
                 return args.length ? GoldClientJavaUuid.fromString(args[0]) : GoldClientJavaUuid.randomUUID();
+              case "java.util.PriorityQueue":
+                return new GoldClientJavaPriorityQueue(args[0] ?? [], args[1] ?? null);
+              case "java.util.concurrent.atomic.AtomicInteger":
+              case "java.util.concurrent.atomic.AtomicLong":
+              case "java.util.concurrent.atomic.AtomicBoolean":
+              case "java.util.concurrent.atomic.AtomicReference":
+                return new GoldClientJavaAtomic(args[0] ?? 0);
               case "java.util.regex.Pattern":
                 return new GoldClientJavaPattern(args[0] ?? "");
               case "java.lang.String":
