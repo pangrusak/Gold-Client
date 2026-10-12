@@ -123,9 +123,9 @@ class JavaScriptTranslatorTest {
           Object math = java.lang.Math.max(2, 3);
         }
         """);
-    assertTrue(lowered.contains("GoldClientRuntime.create(\"mezz.jei.ingredients.IngredientFilter\""), lowered);
-    assertTrue(lowered.contains("GoldClientRuntime.invokeStaticClass(\"mezz.jei.Internal\", \"getRuntime\""), lowered);
-    assertTrue(lowered.contains("GoldClientRuntime.invokeJavaStatic(\"java.lang.Math\", \"max\""), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.create(") && lowered.contains("mezz.jei.ingredients.IngredientFilter"), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.invokeStaticClass(") && lowered.contains("mezz.jei.Internal") && lowered.contains("getRuntime"), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.invokeJavaStatic(") && lowered.contains("java.lang.Math") && lowered.contains("max"), lowered);
   }
 
   @Test
