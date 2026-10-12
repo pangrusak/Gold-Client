@@ -185,6 +185,44 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void javaFloorDivisionAndModuloMatchJavaForNegativeOperands() throws Exception {
+    Path output = tempDir.resolve("java-math-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("math-runtime-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as runtime } from "./gold-client-runtime.js";
+        const cases = [
+          [runtime.intDiv(-7, 3), -3],
+          [runtime.intMod(-7, 3), 2],
+          [runtime.intDiv(7, -3), -3],
+          [runtime.intMod(7, -3), -2],
+          [runtime.intDiv(-2147483648, -1), -2147483648],
+          [runtime.intMod(-2147483648, -1), 0]
+        ];
+        for (const [actual, expected] of cases) {
+          if (actual !== expected) throw new Error(`expected ${expected}, got ${actual}`);
+        }
+        let dividedByZero = false;
+        try { runtime.intDiv(1, 0); } catch (error) {
+          dividedByZero = error.message.includes("ArithmeticException");
+        }
+        if (!dividedByZero) throw new Error("division by zero was not rejected");
+        console.log("java-math-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Java math runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-math-ok", outputText);
+  }
+
+  @Test
   void preservesModResourcesAndSkipsClassBytesAndSignatureFiles() throws Exception {
     Path jar = tempDir.resolve("input.jar");
     try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar))) {
