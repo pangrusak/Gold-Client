@@ -48,7 +48,7 @@ public final class JavaTranslator {
           i = guarded.lastIndex();
           continue;
         }
-        source.append(indent(indent)).append("// TODO: unsupported try/catch region\\n");
+        source.append(indent(indent)).append("// TODO: unsupported try/catch region\n");
         complete = false;
         continue;
       }
@@ -215,11 +215,11 @@ public final class JavaTranslator {
         operations, catchBodyStart, handlerEnd, indent + 1, context, labels);
 
     StringBuilder source = new StringBuilder();
-    source.append(indent(indent)).append("try {\\n").append(tryBody.source());
+    source.append(indent(indent)).append("try {\n").append(tryBody.source());
     source.append(indent(indent)).append("} catch (")
-        .append(exceptionType).append(" ").append(exceptionVariable).append(") {\\n")
+        .append(exceptionType).append(" ").append(exceptionVariable).append(") {\n")
         .append(catchBody.source());
-    source.append(indent(indent)).append("}\\n");
+    source.append(indent(indent)).append("}\n");
     boolean complete = tryBody.complete() && catchBody.complete();
     if (joinLabel == null && handlerEnd < end) complete = false;
     int last = joinLabel == null ? handlerEnd - 1 : handlerEnd;
