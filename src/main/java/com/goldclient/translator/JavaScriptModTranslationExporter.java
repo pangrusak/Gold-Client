@@ -678,6 +678,31 @@ public final class JavaScriptModTranslationExporter {
           }
         }
 
+        class GoldClientJavaRandom {
+          constructor(seed = Date.now()) { this.setSeed(seed); }
+          setSeed(seed) { this.seed = (Number(seed) ^ 0x6d2b79f5) >>> 0; this.haveGaussian = false; this.nextGaussianValue = 0; }
+          next(bits = 32) { this.seed = (Math.imul(this.seed, 1664525) + 1013904223) >>> 0; return this.seed >>> (32 - Math.max(1, Math.min(32, bits))); }
+          nextInt(bound) {
+            if (bound === undefined) return this.next(32) | 0;
+            if (!Number.isInteger(bound) || bound <= 0) throw new RangeError("IllegalArgumentException: bound must be positive");
+            return Math.floor((this.next(32) >>> 0) / 4294967296 * bound);
+          }
+          nextLong() { return (BigInt(this.next(32) >>> 0) << 32n) | BigInt(this.next(32) >>> 0); }
+          nextBoolean() { return this.next(1) !== 0; }
+          nextFloat() { return this.next(24) / 16777216; }
+          nextDouble() { return ((this.next(26) * 67108864) + this.next(27)) / 9007199254740992; }
+          nextBytes(bytes) { for (let i = 0; i < bytes.length; i++) bytes[i] = this.next(8) & 0xff; return bytes; }
+          nextGaussian() {
+            if (this.haveGaussian) { this.haveGaussian = false; return this.nextGaussianValue; }
+            let u, v, s;
+            do { u = 2 * this.nextDouble() - 1; v = 2 * this.nextDouble() - 1; s = u * u + v * v; } while (s >= 1 || s === 0);
+            const multiplier = Math.sqrt(-2 * Math.log(s) / s);
+            this.nextGaussianValue = v * multiplier;
+            this.haveGaussian = true;
+            return u * multiplier;
+          }
+        }
+
         class GoldClientJavaAtomic {
           constructor(value = 0) { this.value = value; }
           get() { return this.value; }
@@ -1094,6 +1119,9 @@ public final class JavaScriptModTranslationExporter {
                 return new GoldClientJavaLocale(args[0] ?? "", args[1] ?? "", args[2] ?? "");
               case "java.util.BitSet":
                 return new GoldClientJavaBitSet();
+              case "java.util.Random":
+              case "java.util.SplittableRandom":
+                return new GoldClientJavaRandom(args.length ? args[0] : Date.now());
               case "java.util.Properties":
                 return new GoldClientJavaProperties(args[0] ?? []);
               case "java.util.concurrent.atomic.AtomicInteger":
