@@ -304,6 +304,14 @@ class JavaScriptModTranslationExporterTest {
         const deque = r.createJava("java.util.ArrayDeque");
         deque.addFirst("first"); deque.addLast("last");
         if (deque.pollFirst() !== "first" || deque.pollLast() !== "last") throw new Error("ArrayDeque endpoints");
+        const locale = r.invokeJavaStatic("java.util.Locale", "forLanguageTag", "en-US");
+        if (locale.getLanguage() !== "en" || locale.getCountry() !== "US" || locale.toLanguageTag() !== "en-US") throw new Error("Locale adapters");
+        const properties = r.createJava("java.util.Properties");
+        properties.setProperty("mod.enabled", "true");
+        if (properties.getProperty("mod.enabled") !== "true" || properties.getProperty("missing", "fallback") !== "fallback") throw new Error("Properties adapters");
+        if (!properties.stringPropertyNames().contains("mod.enabled")) throw new Error("Properties names");
+        const systemProperties = r.invokeJavaStatic("java.lang.System", "getProperties");
+        if (systemProperties.getProperty("file.separator") !== "/") throw new Error("System properties");
         console.log("java-compatibility-ok");
         """, StandardCharsets.UTF_8);
     Process node;
