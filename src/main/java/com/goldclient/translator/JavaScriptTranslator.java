@@ -304,6 +304,10 @@ public final class JavaScriptTranslator {
         String replacement = "GoldClientRuntime.invokeJavaStatic(" + quote(owner.replace('/', '.'))
             + ", " + quote(staticCall.group(2)) + ", ";
         staticCall.appendReplacement(staticCalls, java.util.regex.Matcher.quoteReplacement(replacement));
+      } else if (owner.startsWith("net.minecraft.") || owner.startsWith("net.minecraftforge.")) {
+        String replacement = "GoldClientRuntime.invokePlatformStatic(" + quote(owner.replace('/', '.'))
+            + ", " + quote(staticCall.group(2)) + ", ";
+        staticCall.appendReplacement(staticCalls, java.util.regex.Matcher.quoteReplacement(replacement));
       } else if (owner.startsWith("org.") || owner.startsWith("com.google.")) {
         String replacement = "GoldClientRuntime.invokeStaticClass(" + quote(owner.replace('/', '.'))
             + ", " + quote(staticCall.group(2)) + ", ";
