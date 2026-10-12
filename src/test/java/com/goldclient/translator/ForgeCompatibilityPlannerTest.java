@@ -12,7 +12,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.Opcodes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ForgeCompatibilityPlannerTest {
@@ -70,7 +69,7 @@ class ForgeCompatibilityPlannerTest {
     assertTrue(json.contains("gold-forge-compatibility-plan-v1"));
     assertTrue(json.contains("Eaglercraft 1.12.2"));
     assertTrue(report.contains("not proof that the mod runs"));
-    assertFalse(report.contains("UNBOUND families: "));
+    assertTrue(report.contains("Unbound families: none detected"));
   }
 
   @Test
