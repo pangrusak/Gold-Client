@@ -1,0 +1,209 @@
+"use strict";
+function installNativeLink(modApi, nativeRuntime, manifest) {
+    function fail(message) { throw new Error("[GoldNativeLink] " + message); }
+    if (!modApi || !modApi.hooks || !modApi.reflect ||
+        typeof modApi.reflect.getClassById !== "function") fail("ModAPI reflection is unavailable");
+    if (!nativeRuntime || typeof nativeRuntime.getMinecraft !== "function") fail("Original Minecraft getter is unavailable");
+    if (!manifest || manifest.schemaVersion !== 1 || !Array.isArray(manifest.bindings)) fail("Expected binding manifest schemaVersion 1");
+    const bindings = new Map();
+    const supported = new Set(["B", "C", "D", "F", "I", "S", "Z", "V"]);
+    function typeAt(text, offset, allowVoid) {
+        const tag = text[offset];
+        if (supported.has(tag)) {
+            if (tag === "V" && !allowVoid) fail("Void is not a parameter/field type");
+            return [tag, offset + 1];
+        }
+        if (tag === "J" || tag === "[") fail("Long and array ABI conversion is not implemented: " + text);
+        if (tag === "L") {
+            const end = text.indexOf(";", offset);
+            if (end < 0) fail("Unterminated reference descriptor: " + text);
+            const name = text.slice(offset + 1, end);
+            if (!name || /[.;\[\s]/.test(name) || name.split("/").some(x => !x)) fail("Invalid reference descriptor: " + text);
+            return [text.slice(offset, end + 1), end + 1];
+        }
+        fail("Unsupported or invalid descriptor: " + text);
+    }
+    function parse(text, method) {
+        if (typeof text !== "string") fail("Descriptor must be a string");
+        if (!method) {
+            const [type, end] = typeAt(text, 0, false);
+            if (end !== text.length) fail("Trailing field descriptor data");
+            return { parameters: [], result: type };
+        }
+        if (text[0] !== "(") fail("Invalid method descriptor: " + text);
+        let offset = 1;
+        const parameters = [];
+        while (offset < text.length && text[offset] !== ")") {
+            const [type, end] = typeAt(text, offset, false);
+            parameters.push(type); offset = end;
+        }
+        if (text[offset++] !== ")") fail("Missing closing descriptor parenthesis");
+        const [result, end] = typeAt(text, offset, true);
+        if (end !== text.length) fail("Trailing method descriptor data");
+        return { parameters, result };
+    }
+    function classFor(owner) {
+        if (typeof owner !== "string" || !owner || owner.includes("/")) fail("Owner must be a dotted Java class name");
+        const entry = modApi.reflect.getClassById(owner);
+        if (!entry || typeof entry.class !== "function") fail("Native class is unavailable: " + owner);
+        if (entry.id !== owner || entry.class.$meta?.name !== owner) fail("Native class identity is not verified: " + owner);
+        return entry;
+    }
+    function checkThread() {
+        const rt = modApi.hooks._teavm;
+        if (!rt || typeof rt.$rt_suspending !== "function" || typeof rt.$rt_resuming !== "function") fail("Native thread-state helpers are unavailable");
+        if (modApi.hooks.freezeCallstack) fail("Refusing calls with freezeCallstack enabled");
+        if (rt.$rt_suspending() || rt.$rt_resuming()) fail("Native runtime is suspending/resuming");
+    }
+    function reference(value, owner) {
+        if (value === null) return null;
+        if (!value || (typeof value !== "object" && typeof value !== "function") || value.isModProxy === true) fail("Expected raw native reference for " + owner);
+        const cls = classFor(owner);
+        const test = modApi.hooks._teavm.$rt_isInstance;
+        if (typeof test !== "function" || !test(value, cls.class)) fail("Reference is not an instance of " + owner);
+        return value;
+    }
+    function scalar(value, type) {
+        if (type === "Z") {
+            if (typeof value !== "boolean" && value !== 0 && value !== 1) fail("Expected boolean/0/1");
+            return value === true || value === 1 ? 1 : 0;
+        }
+        if (type === "D" || type === "F") {
+            if (typeof value !== "number") fail("Expected floating-point number");
+            return type === "F" ? Math.fround(value) : value;
+        }
+        const ranges = { B: [-128,127], S: [-32768,32767], C: [0,65535], I: [-2147483648,2147483647] };
+        const range = ranges[type];
+        if (!range || !Number.isInteger(value) || value < range[0] || value > range[1]) fail("Value is outside " + type + " ABI range");
+        return value;
+    }
+    function encode(value, type) {
+        if (type === "Ljava/lang/String;") {
+            if (value === null) return null;
+            if (typeof value !== "string" || typeof modApi.util?.str !== "function") fail("String input/converter is unavailable");
+            return modApi.util.str(value);
+        }
+        if (type[0] === "L") return reference(value, type.slice(1,-1).replaceAll("/", "."));
+        return scalar(value, type);
+    }
+    function decode(value, type) {
+        if (type === "V") return undefined;
+        if (type === "Ljava/lang/String;") {
+            if (value === null) return null;
+            if (typeof modApi.util?.ustr !== "function") fail("String output converter is unavailable");
+            const result = modApi.util.ustr(value);
+            if (typeof result !== "string") fail("Native string conversion returned a non-string");
+            return result;
+        }
+        if (type[0] === "L") return reference(value, type.slice(1,-1).replaceAll("/", "."));
+        const result = scalar(value, type);
+        return type === "Z" ? result === 1 : result;
+    }
+    function initClass(entry) {
+        const slots = modApi.hooks._rippedStaticProperties?.[entry.compiledName];
+        const initializer = slots?.$callClinit;
+        if (typeof initializer === "function") initializer();
+        checkThread();
+    }
+    for (const input of manifest.bindings) {
+        if (!input || typeof input.id !== "string" || !input.id || bindings.has(input.id)) fail("Missing/duplicate binding ID");
+        if (!new Set(["static", "instance", "constructor", "staticField", "instanceField"]).has(input.kind)) fail("Invalid binding kind: " + input.kind);
+        if (input.synchronous !== true) fail("Binding must explicitly declare synchronous: true; async ABI is not implemented");
+        const entry = classFor(input.owner);
+        const field = input.kind.endsWith("Field");
+        const signature = parse(input.descriptor, !field);
+        if (field) {
+            if (typeof input.property !== "string" || !input.property || ["__proto__","prototype","constructor"].includes(input.property)) fail("Invalid explicit field property");
+            if (input.kind === "instanceField" && !input.property.startsWith("$")) fail("Instance field must name its exact compiled $property");
+            if (input.kind === "staticField" && !Object.hasOwn(modApi.hooks._rippedStaticProperties?.[entry.compiledName] || {}, input.property)) fail("Static property is not present: " + input.property);
+        } else {
+            if (typeof input.symbol !== "string") fail("Explicit native symbol is required");
+            const prefix = entry.compiledName + (input.kind === "constructor" ? "__init_" : "_");
+            if (!input.symbol.startsWith(prefix)) fail("Symbol does not belong to the declared owner");
+            if (input.kind === "constructor") {
+                if (signature.result !== "V" || typeof modApi.hooks._rippedConstructors?.[input.symbol] !== "function") fail("Constructor symbol/descriptor is invalid");
+            } else {
+                if (typeof modApi.hooks.methods[input.symbol] !== "function" || modApi.hooks._rippedMethodTypeMap?.[input.symbol] !== input.kind) fail("Native method/kind is unavailable: " + input.symbol);
+            }
+        }
+        const binding = Object.freeze({ ...input, entry, signature });
+        bindings.set(input.id, binding);
+    }
+    function get(id) {
+        const binding = bindings.get(id);
+        if (!binding) fail("Unresolved binding: " + id);
+        return binding;
+    }
+    function receiver(binding, value) {
+        if (value === null || value === undefined) fail("Null instance receiver");
+        return reference(value, binding.owner);
+    }
+    function invoke(id, value, args) {
+        checkThread();
+        const b = get(id);
+        if (b.kind.endsWith("Field")) fail("Use read/write for a field binding");
+        if (!Array.isArray(args) || args.length !== b.signature.parameters.length) fail("Argument count mismatch for " + id);
+        if (b.kind !== "instance" && value !== null && value !== undefined) fail("Static/constructor binding must not have a receiver");
+        const encoded = args.map((arg,i) => encode(arg,b.signature.parameters[i]));
+        const self = b.kind === "instance" ? receiver(b,value) : null;
+        checkThread();
+        const fn = b.kind === "constructor" ? modApi.hooks._rippedConstructors[b.symbol] : modApi.hooks.methods[b.symbol];
+        if (typeof fn !== "function") fail("Native function was removed: " + b.symbol);
+        const result = Reflect.apply(fn,self,b.kind === "instance" ? [self,...encoded] : encoded);
+        checkThread();
+        if (b.kind === "constructor" && result === null) fail("Native constructor returned null");
+        return b.kind === "constructor" ? reference(result,b.owner) : decode(result,b.signature.result);
+    }
+    function fieldTarget(b,value) {
+        if (b.kind === "staticField") {
+            if (value !== null && value !== undefined) fail("Static field must not have a receiver");
+            initClass(b.entry);
+            return modApi.hooks._rippedStaticProperties[b.entry.compiledName];
+        }
+        if (b.kind !== "instanceField") fail("Not a field binding");
+        const self = receiver(b,value);
+        if (!Object.hasOwn(self,b.property)) fail("Instance property is not present: " + b.property);
+        return self;
+    }
+    function typed(id,value,args,category) {
+        const b = get(id);
+        const result = b.kind === "constructor" ? "L" + b.owner.replaceAll(".","/") + ";" : b.signature.result;
+        const valid = category === "reference" ? result[0] === "L" && result !== "Ljava/lang/String;" :
+            category === "int" ? ["B","C","S","I"].includes(result) :
+            category === "number" ? ["F","D"].includes(result) :
+            category === "string" ? result === "Ljava/lang/String;" :
+            category === "boolean" ? result === "Z" : category === "void" && result === "V";
+        if (!valid) fail("Return category mismatch for " + id);
+        return invoke(id,value,args);
+    }
+    return Object.freeze({
+        apiVersion: 1,
+        capabilities: Object.freeze({ explicitNativeBindings:true, rawReferenceIdentity:true,
+            automaticJavaTypeImports:false, nativeArrays:false, nativeLongs:false,
+            asyncNativeCalls:false, forgeLifecycle:false, forgeEventDelivery:false }),
+        inspect() { return Object.freeze({ bindingCount:bindings.size, bindingIds:Object.freeze([...bindings.keys()]) }); },
+        getMinecraft() {
+            checkThread();
+            const live = nativeRuntime.getMinecraft();
+            if (!live || modApi.mcinstance !== live) fail("Minecraft identity differs from ModAPI.mcinstance");
+            return reference(live,"net.minecraft.client.Minecraft");
+        },
+        invoke, invokeTyped:typed,
+        read(id,value) { checkThread(); const b=get(id); return decode(fieldTarget(b,value)[b.property],b.signature.result); },
+        write(id,value,next) {
+            checkThread(); const b=get(id);
+            if (b.writable !== true) fail("Field is not explicitly writable");
+            const target=fieldTarget(b,value);
+            const encoded=encode(next,b.signature.result);
+            checkThread(); target[b.property]=encoded;
+        },
+        subscribe(name,callback) {
+            if (typeof name!=="string" || !modApi.events?.types?.includes(name) || typeof callback!=="function") fail("Unknown native event or invalid listener");
+            if (typeof modApi.addEventListener!=="function" || typeof modApi.removeEventListener!=="function") fail("Native listener helpers are unavailable");
+            modApi.addEventListener(name,callback);
+            let active=true;
+            return function unsubscribe() { if(active) { modApi.removeEventListener(name,callback); active=false; } };
+        }
+    });
+}
+module.exports = installNativeLink;
