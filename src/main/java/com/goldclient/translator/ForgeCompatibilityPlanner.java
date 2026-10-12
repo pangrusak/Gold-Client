@@ -191,11 +191,11 @@ public final class ForgeCompatibilityPlanner {
   private static void addReference(String owner, String methodKey, String operation,
       Map<String, MutableReference> refs) {
     if (owner == null || owner.isBlank() || owner.startsWith("[")) return;
-    owner = owner.replace('.', '/');
-    if (!owner.contains("/")) return;
-    String[] classification = classify(owner);
-    MutableReference ref = refs.computeIfAbsent(owner,
-        ignored -> new MutableReference(owner, classification[0], classification[1]));
+    String normalizedOwner = owner.replace('.', '/');
+    if (!normalizedOwner.contains("/")) return;
+    String[] classification = classify(normalizedOwner);
+    MutableReference ref = refs.computeIfAbsent(normalizedOwner,
+        ignored -> new MutableReference(normalizedOwner, classification[0], classification[1]));
     ref.count++;
     ref.operations.add(operation);
     ref.usedBy.add(methodKey);
