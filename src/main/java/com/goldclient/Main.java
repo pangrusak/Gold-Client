@@ -121,9 +121,6 @@ public final class Main {
           System.out.println("Complete: " + report.completeCount());
           System.out.println("Incomplete: " + report.incompleteCount());
           System.out.println("Skipped: " + report.skippedCount());
-        System.out.println("Stubbed (symbol preserved): " + report.stubbedCount());
-        System.out.println("Entry module: " + Path.of(translateJsDir).resolve("mod-index.js"));
-        System.out.println("Class metadata: " + Path.of(translateJsDir).resolve("mod-manifest.json"));
           System.out.println("Files written: " + (report.fileCount() + 2));
           System.out.println("Report: " + Path.of(outputDir).resolve("translation-report.txt"));
           System.out.println("Note: output is Java-like intermediate source, not executable JavaScript.");
@@ -144,7 +141,10 @@ public final class Main {
         System.out.println("JS-complete for represented IR: " + report.completeCount());
         System.out.println("Incomplete: " + report.incompleteCount());
         System.out.println("Skipped: " + report.skippedCount());
+        System.out.println("Stubbed (symbol preserved): " + report.stubbedCount());
         System.out.println("Class modules: " + report.fileCount());
+        System.out.println("Entry module: " + Path.of(translateJsDir).resolve("mod-index.js"));
+        System.out.println("Class metadata: " + Path.of(translateJsDir).resolve("mod-manifest.json"));
         System.out.println("Report: " + Path.of(translateJsDir).resolve("javascript-report.txt"));
         System.out.println("Note: Minecraft/Forge APIs and loader behavior still require adapters.");
       }
