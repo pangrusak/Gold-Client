@@ -133,7 +133,8 @@ public final class Main {
         com.goldclient.translator.JavaScriptModTranslationExporter.ExportReport report =
             new com.goldclient.translator.JavaScriptModTranslationExporter()
                 .export(a.classes(), Path.of(translateJsDir));
-        System.out.println("\\n=== JavaScript Translation Export ===");
+        System.out.println();
+        System.out.println("=== JavaScript Translation Export ===");
         System.out.println("Output: " + Path.of(translateJsDir).toAbsolutePath().normalize());
         System.out.println("Classes visited: " + report.classCount());
         System.out.println("Methods inspected: " + report.methodCount());
