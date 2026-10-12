@@ -107,6 +107,7 @@ public final class ForgeLifecycleExporter {
             "configuration/resource/network/input/Minecraft API bindings",
             "Forge static event-bus subscriber registration where used"));
     Path root = outputDirectory.toAbsolutePath().normalize();
+    Files.createDirectories(root);
     Files.writeString(root.resolve("forge-lifecycle-plan.json"),
         new GsonBuilder().setPrettyPrinting().create().toJson(report) + System.lineSeparator(),
         StandardCharsets.UTF_8);
