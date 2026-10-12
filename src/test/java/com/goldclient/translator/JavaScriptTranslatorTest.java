@@ -68,12 +68,15 @@ class JavaScriptTranslatorTest {
 
   @Test
   void emitsSyntaxAcceptedByNodeWhenAvailable() throws Exception {
-    var method = new IrMethodModel("printIt", "()V", List.of(
-        op("METHOD_CALL", "System.out.println(\"hello\")"),
-        op("RETURN")));
+    var method = new IrMethodModel("isReady", "()Z", List.of(
+        op("CONSTANT", "true"), op("RETURN", "true")));
     TranslationResult result = new JavaScriptTranslator().translate(method);
+    String exportName = java.util.regex.Pattern
+        .compile("export function (isReady__\\w+)\\(")
+        .matcher(result.source()).results().findFirst().orElseThrow().group(1);
     Path module = tempDir.resolve("generated.mjs");
-    Files.writeString(module, result.source(), StandardCharsets.UTF_8);
+    Files.writeString(module, result.source() + "\nconsole.log(" + exportName + "());\n",
+        StandardCharsets.UTF_8);
 
     Process process;
     try {
@@ -85,7 +88,15 @@ class JavaScriptTranslatorTest {
     }
     assertTrue(process.waitFor(10, TimeUnit.SECONDS), "node --check timed out");
     String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-    assertTrue(process.exitValue() == 0, output + "\\n" + result.source());
+    assertTrue(process.exitValue() == 0, output + "\n" + result.source());
+
+    Process execution = new ProcessBuilder("node", module.toString())
+        .redirectErrorStream(true).start();
+    assertTrue(execution.waitFor(10, TimeUnit.SECONDS), "generated JS execution timed out");
+    String executionOutput = new String(
+        execution.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertTrue(execution.exitValue() == 0, executionOutput);
+    assertTrue(executionOutput.equals("true"), executionOutput);
   }
 
   private static IrOperationModel op(String kind, String... operands) {

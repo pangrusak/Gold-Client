@@ -67,6 +67,8 @@ public final class JavaScriptModTranslationExporter {
     }
 
     Files.writeString(root.resolve("gold-client-runtime.js"), runtimeSource(), StandardCharsets.UTF_8);
+    Files.writeString(root.resolve("package.json"),
+        "{\n  \"type\": \"module\"\n}\n", StandardCharsets.UTF_8);
     ExportReport report = new ExportReport(
         "gold-client-javascript-export-v1", classes.size(), statuses.size(),
         count(statuses, "complete"), count(statuses, "incomplete"),
