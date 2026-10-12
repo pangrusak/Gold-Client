@@ -79,3 +79,18 @@ Java source / JavaScript output (not a runnable mod by itself)
 ```
 
 The analyzer is intentionally deterministic. AI-assisted translation will be added later for cases that cannot be handled by explicit mappings and transformations.
+
+
+## Experimental Eaglercraft JavaScript entrypoint
+
+The JavaScript export now includes `eaglercraft-forge-entry.js` and a generic HTML injector for the supplied Eaglercraft 1.12.2 client profile. The injector validates the client title and required generated files, then adds a browser ES-module entrypoint without rewriting the client's existing JavaScript.
+
+After generating a JavaScript bundle, inject it with:
+
+```powershell
+node .\client-profiles\eaglercraft-1.12-js\inject-gold-client.cjs .\client.html .\translated-js .\target\client-with-gold.html
+```
+
+Serve the output HTML and the translated bundle from paths matching the generated relative URL. The entrypoint exposes `window.goldClientStartForgeMods()` and reports its status through `window.goldClientForgeEntrypoint.getStatus()`.
+
+**Important:** injecting the module is not the same as making a Forge mod work. Startup intentionally fails until `window.goldClientForgeBindings` is installed with real implementations for the Eaglercraft client, Forge services, registries, events, rendering, resources, networking, configuration, logging, and logical side. The repository currently generates the strict host contract and startup bridge; it does not automatically implement all of those game APIs. Mods that rely on mixins/coremods, unsupported bytecode, server behavior, or missing APIs will still need compatibility work.
