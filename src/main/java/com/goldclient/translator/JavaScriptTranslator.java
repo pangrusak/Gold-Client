@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
  */
 public final class JavaScriptTranslator {
   private static final Pattern SIGNATURE = Pattern.compile(
-      "(?m)^\\s*[\\w.$<>\\[\\]]+\\s+([\\w$]+)\\(([^)]*)\\) \\{");
+      "(?m)^\\s*[\\w.$<>\\[\\]]+\\s+([\\w$<>]+)\\(([^)]*)\\) \\{");
   private static final Pattern CATCH = Pattern.compile(
       "catch\\s*\\(\\s*[\\w.$]+\\s+([\\w$]+)\\s*\\)");
   private static final Pattern LOCAL_TYPE = Pattern.compile(
