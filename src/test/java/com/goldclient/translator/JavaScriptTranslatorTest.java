@@ -141,6 +141,23 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void routesCommonJavaUtilityCallsThroughCompatibilityHelpers() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object values = Arrays.asList(local0, local1);
+          Object empty = Collections.emptyList();
+          String label = String.format("%s", local0);
+          boolean enabled = Boolean.parseBoolean(local1);
+        }
+        """);
+    assertTrue(lowered.contains("GoldClientRuntime.invokeJavaStatic("), lowered);
+    assertTrue(lowered.contains("java.util.Arrays"), lowered);
+    assertTrue(lowered.contains("java.util.Collections"), lowered);
+    assertTrue(lowered.contains("java.lang.String"), lowered);
+    assertTrue(lowered.contains("java.lang.Boolean"), lowered);
+  }
+
+  @Test
   void emitsSyntaxAcceptedByNodeWhenAvailable() throws Exception {
     var method = new IrMethodModel("isReady", "()Z", List.of(
         op("CONSTANT", "true"), op("RETURN", "true")));
