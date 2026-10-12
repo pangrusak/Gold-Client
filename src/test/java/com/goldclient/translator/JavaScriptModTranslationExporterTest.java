@@ -192,10 +192,14 @@ class JavaScriptModTranslationExporterTest {
     Files.writeString(runner, """
         import { GoldClientRuntime as runtime } from "./gold-client-runtime.js";
         const cases = [
-          [runtime.intDiv(-7, 3), -3],
-          [runtime.intMod(-7, 3), 2],
-          [runtime.intDiv(7, -3), -3],
-          [runtime.intMod(7, -3), -2],
+          [runtime.intDiv(-7, 3), -2],
+          [runtime.intMod(-7, 3), -1],
+          [runtime.intDiv(7, -3), -2],
+          [runtime.intMod(7, -3), 1],
+          [runtime.floorDiv(-7, 3), -3],
+          [runtime.floorMod(-7, 3), 2],
+          [runtime.floorDiv(7, -3), -3],
+          [runtime.floorMod(7, -3), -2],
           [runtime.intDiv(-2147483648, -1), -2147483648],
           [runtime.intMod(-2147483648, -1), 0]
         ];
