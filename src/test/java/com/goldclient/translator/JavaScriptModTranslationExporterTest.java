@@ -296,6 +296,14 @@ class JavaScriptModTranslationExporterTest {
         if (uuid.toString() !== "123e4567-e89b-12d3-a456-426614174000") throw new Error("UUID.fromString");
         const randomUuid = r.invokeJavaStatic("java.util.UUID", "randomUUID");
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(randomUuid.toString())) throw new Error("UUID.randomUUID");
+        const atomic = r.createJava("java.util.concurrent.atomic.AtomicInteger", 4);
+        if (atomic.incrementAndGet() !== 5 || atomic.getAndAdd(3) !== 5 || atomic.get() !== 8) throw new Error("AtomicInteger");
+        if (!atomic.compareAndSet(8, 10) || atomic.get() !== 10) throw new Error("AtomicInteger compareAndSet");
+        const queue = r.createJava("java.util.PriorityQueue", [8, 2, 5]);
+        if (queue.poll() !== 2 || queue.peek() !== 5) throw new Error("PriorityQueue ordering");
+        const deque = r.createJava("java.util.ArrayDeque");
+        deque.addFirst("first"); deque.addLast("last");
+        if (deque.pollFirst() !== "first" || deque.pollLast() !== "last") throw new Error("ArrayDeque endpoints");
         console.log("java-compatibility-ok");
         """, StandardCharsets.UTF_8);
     Process node;
