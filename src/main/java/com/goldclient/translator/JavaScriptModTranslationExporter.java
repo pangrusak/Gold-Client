@@ -75,6 +75,7 @@ public final class JavaScriptModTranslationExporter {
         statuses.add(new MethodStatus(clazz.name(), method.name(), method.descriptor(), status, reason));
         module.append(result.source()).append("\n");
       }
+      appendExecutableClassWrapper(module, clazz);
       Files.writeString(destination, module, StandardCharsets.UTF_8);
       filesWritten++;
     }
@@ -94,6 +95,107 @@ public final class JavaScriptModTranslationExporter {
         StandardCharsets.UTF_8);
     Files.writeString(root.resolve("javascript-report.txt"), summary(report), StandardCharsets.UTF_8);
     return report;
+  }
+
+  /**
+   * Adds a real JavaScript class facade around the translated function exports.
+   * Method bodies stay independently exportable, while callers get Java-like
+   * instance/static dispatch and constructors that execute the recovered body.
+   */
+  private static void appendExecutableClassWrapper(StringBuilder module, ClassModel clazz) {
+    String className = "Translated_" + safeIdentifier(clazz.name().replace('/', '_').replace('.', '_'));
+    List<MethodModel> methods = clazz.methods().stream()
+        .filter(method -> !"<clinit>".equals(method.name()))
+        .sorted(Comparator.comparing(MethodModel::name).thenComparing(MethodModel::descriptor))
+        .toList();
+
+    module.append("\nconst __goldMethods = new Map([\n");
+    java.util.Map<String, List<MethodModel>> byName = new java.util.TreeMap<>();
+    for (MethodModel method : methods) {
+      byName.computeIfAbsent(method.name(), ignored -> new ArrayList<>()).add(method);
+    }
+    int methodIndex = 0;
+    for (var entry : byName.entrySet()) {
+      module.append("  [").append(quote(entry.getKey())).append(", [");
+      for (int i = 0; i < entry.getValue().size(); i++) {
+        MethodModel method = entry.getValue().get(i);
+        if (i > 0) module.append(", ");
+        module.append("{ arity: ").append(descriptorArity(method.descriptor()))
+            .append(", isStatic: ").append((method.access() & Opcodes.ACC_STATIC) != 0)
+            .append(", fn: ").append(exportedName(method.name(), method.descriptor())).append(" }");
+      }
+      module.append("]]");
+      if (++methodIndex < byName.size()) module.append(',');
+      module.append("\n");
+    }
+    module.append("]);\n");
+    module.append("export class ").append(className).append(" {\n")
+        .append("  constructor(...args) {\n")
+        .append("    GoldClientRuntime.invoke(this, __goldMethods, \"<init>\", args, true);\n")
+        .append("  }\n");
+
+    for (var entry : byName.entrySet()) {
+      String name = entry.getKey();
+      if ("<init>".equals(name) || "<clinit>".equals(name) || "constructor".equals(name)
+          || !isJavaScriptIdentifier(name)) continue;
+      boolean hasInstance = entry.getValue().stream()
+          .anyMatch(method -> (method.access() & Opcodes.ACC_STATIC) == 0);
+      boolean hasStatic = entry.getValue().stream()
+          .anyMatch(method -> (method.access() & Opcodes.ACC_STATIC) != 0);
+      if (hasInstance) {
+        module.append("  ").append(name).append("(...args) { return GoldClientRuntime.invoke(this, __goldMethods, ")
+            .append(quote(name)).append(", args); }\n");
+      }
+      if (hasStatic) {
+        module.append("  static ").append(name).append("(...args) { return GoldClientRuntime.invokeStatic(this, __goldMethods, ")
+            .append(quote(name)).append(", args); }\n");
+      }
+    }
+    module.append("}\n")
+        .append("GoldClientRuntime.registerClass(")
+        .append(quote(clazz.name().replace('/', '.'))).append(", ")
+        .append(className).append(");\n");
+  }
+
+  private static int descriptorArity(String descriptor) {
+    if (descriptor == null) return 0;
+    int close = descriptor.indexOf(')');
+    if (descriptor.isEmpty() || descriptor.charAt(0) != '(' || close < 0) return 0;
+    int count = 0;
+    for (int i = 1; i < close; count++) {
+      while (i < close && descriptor.charAt(i) == '[') i++;
+      if (i >= close) break;
+      if (descriptor.charAt(i) == 'L') {
+        int end = descriptor.indexOf(';', i);
+        if (end < 0 || end > close) break;
+        i = end + 1;
+      } else {
+        i++;
+      }
+    }
+    return count;
+  }
+
+  private static String exportedName(String name, String descriptor) {
+    String suffix = Integer.toUnsignedString((descriptor == null ? "" : descriptor).hashCode(), 36);
+    return safeIdentifier(name) + "__" + suffix;
+  }
+
+  private static String safeIdentifier(String value) {
+    String safe = value == null ? "TranslatedClass" : value.replaceAll("[^A-Za-z0-9_$]", "_");
+    if (safe.isBlank()) safe = "TranslatedClass";
+    if (!Character.isJavaIdentifierStart(safe.charAt(0))) safe = "_" + safe;
+    return safe;
+  }
+
+  private static boolean isJavaScriptIdentifier(String value) {
+    return value != null && value.matches("[A-Za-z_$][A-Za-z0-9_$]*")
+        && !java.util.Set.of("await", "break", "case", "catch", "class", "const", "continue",
+            "debugger", "default", "delete", "do", "else", "export", "extends", "finally",
+            "for", "function", "if", "import", "in", "instanceof", "new", "return", "super",
+            "switch", "this", "throw", "try", "typeof", "var", "void", "while", "with",
+            "yield", "enum", "implements", "interface", "let", "package", "private",
+            "protected", "public", "static").contains(value);
   }
 
   private static int copyResources(Path inputJar, Path root) throws IOException {
@@ -203,14 +305,18 @@ public final class JavaScriptModTranslationExporter {
             clazz.name().replace('/', '.'),
             clazz.superName() == null ? null : clazz.superName().replace('/', '.'),
             clazz.interfaces().stream().map(name -> name.replace('/', '.')).toList(),
+            clazz.annotations(),
+            clazz.referencedClasses().stream().map(name -> name.replace('/', '.')).toList(),
             clazz.fields().stream().map(field -> new FieldManifest(
                 field.name(), field.descriptor(), (field.access() & Opcodes.ACC_STATIC) != 0,
-                (field.access() & Opcodes.ACC_FINAL) != 0)).toList(),
+                (field.access() & Opcodes.ACC_FINAL) != 0, field.annotations())).toList(),
             clazz.methods().stream().map(method -> new MethodManifest(
                 method.name(), method.descriptor(),
                 (method.access() & Opcodes.ACC_STATIC) != 0,
                 (method.access() & Opcodes.ACC_ABSTRACT) != 0,
-                (method.access() & Opcodes.ACC_NATIVE) != 0)).toList()))
+                (method.access() & Opcodes.ACC_NATIVE) != 0,
+                method.annotations(), method.referencedClasses().stream()
+                    .map(name -> name.replace('/', '.')).toList())).toList()))
         .toList();
     Files.writeString(root.resolve("mod-manifest.json"),
         new GsonBuilder().setPrettyPrinting().create().toJson(manifest) + System.lineSeparator(),
@@ -218,10 +324,13 @@ public final class JavaScriptModTranslationExporter {
   }
 
   public record ClassManifest(String name, String superName, List<String> interfaces,
+      List<String> annotations, List<String> referencedClasses,
       List<FieldManifest> fields, List<MethodManifest> methods) {}
-  public record FieldManifest(String name, String descriptor, boolean isStatic, boolean isFinal) {}
+  public record FieldManifest(String name, String descriptor, boolean isStatic, boolean isFinal,
+      List<String> annotations) {}
   public record MethodManifest(String name, String descriptor, boolean isStatic,
-      boolean isAbstract, boolean isNative) {}
+      boolean isAbstract, boolean isNative, List<String> annotations,
+      List<String> referencedClasses) {}
 
   private static String summary(ExportReport report) {
     return """
@@ -300,6 +409,34 @@ public final class JavaScriptModTranslationExporter {
           },
           toInt32(value) {
             return Number(value) | 0;
+          },
+          classes: new Map(),
+          registerClass(name, constructor) {
+            this.classes.set(name, constructor);
+            return constructor;
+          },
+          resolveClass(name) {
+            return this.classes.get(name) ?? null;
+          },
+          create(name, args = []) {
+            const constructor = this.classes.get(name);
+            if (!constructor) return this.unsupported("missing-class-adapter", name);
+            return Reflect.construct(constructor, args);
+          },
+          invoke(receiver, methods, name, args, optional = false) {
+            const candidates = methods.get(name) ?? [];
+            const target = candidates.find(method => !method.isStatic && method.arity === args.length);
+            if (!target) {
+              if (optional) return undefined;
+              return this.unsupported("missing-instance-method", name + "/" + args.length);
+            }
+            return target.fn.apply(receiver, args);
+          },
+          invokeStatic(receiver, methods, name, args) {
+            const candidates = methods.get(name) ?? [];
+            const target = candidates.find(method => method.isStatic && method.arity === args.length);
+            if (!target) return this.unsupported("missing-static-method", name + "/" + args.length);
+            return target.fn.apply(receiver, args);
           },
           unsupported(operation, detail = "") {
             throw new Error("Unsupported translated JVM operation: " + operation + " " + detail);
