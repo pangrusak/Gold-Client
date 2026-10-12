@@ -419,10 +419,19 @@ public final class JavaScriptModTranslationExporter {
           resolveClass(name) {
             return this.classes.get(name) ?? null;
           },
-          create(name, args = []) {
+          create(name, ...args) {
             const constructor = this.classes.get(name);
             if (!constructor) return this.unsupported("missing-class-adapter", name);
             return Reflect.construct(constructor, args);
+          },
+          invokeStaticClass(className, methodName, ...args) {
+            const constructor = this.classes.get(className);
+            if (!constructor) return this.unsupported("missing-static-class", className);
+            const method = constructor[methodName];
+            if (typeof method !== "function") {
+              return this.unsupported("missing-static-method", className + "." + methodName);
+            }
+            return method.apply(constructor, args);
           },
           invoke(receiver, methods, name, args, optional = false) {
             const candidates = methods.get(name) ?? [];
