@@ -238,8 +238,7 @@ class JavaScriptTranslatorTest {
     assertTrue(lowered.contains("GoldClientRuntime.invokePlatformStatic("), lowered);
     assertTrue(lowered.contains("net.minecraft.client.Minecraft") && lowered.contains("getMinecraft"), lowered);
     assertTrue(lowered.contains("net.minecraftforge.fml.common.registry.GameRegistry"), lowered);
-    assertFalse(lowered.contains("\\, )"), lowered);
-    assertFalse(lowered.contains("\\, )"), lowered);
+    assertFalse(lowered.contains(", )"), lowered);
     assertFalse(lowered.contains("invokeStaticClass(\"net.minecraft.client.Minecraft\""), lowered);
   }
 
