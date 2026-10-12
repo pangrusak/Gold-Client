@@ -36,18 +36,54 @@ if (scriptOffset < 0) {
 }
 
 const tickAdapter = `    var goldClientBridgePlayerSnapshot = null;
+    function goldClientReadNumber(object, names) {
+        if (!object) return null;
+        for (var i = 0; i < names.length; i++) {
+            var value = object[names[i]];
+            if (typeof value === "number" && Number.isFinite(value)) return value;
+        }
+        return null;
+    }
+    function goldClientReadNestedNumber(object, objectNames, valueNames) {
+        if (!object) return null;
+        for (var i = 0; i < objectNames.length; i++) {
+            var nested = object[objectNames[i]];
+            var value = goldClientReadNumber(nested, valueNames);
+            if (value !== null) return value;
+        }
+        return null;
+    }
     window.goldClientReadPlayerPosition = function() {
         return goldClientBridgePlayerSnapshot;
+    };
+    window.goldClientReadPlayerSnapshot = function() {
+        if (!goldClientBridgePlayerSnapshot) return null;
+        return Object.assign({}, goldClientBridgePlayerSnapshot);
     };
     var goldClientBridgeOriginalRunTick = nmc_Minecraft_runTick;
     nmc_Minecraft_runTick = function($minecraft) {
         var $player = $minecraft.$player;
         var $world = $minecraft.$world;
+        var $food = $player && ($player.$foodStats || $player.foodStats);
         goldClientBridgePlayerSnapshot = {
             connected: $world !== null && $player !== null,
             x: $player === null ? 0 : $player.$posX,
             y: $player === null ? 0 : $player.$posY,
-            z: $player === null ? 0 : $player.$posZ
+            z: $player === null ? 0 : $player.$posZ,
+            health: goldClientReadNumber($player, ["$health", "health"]),
+            maxHealth: goldClientReadNumber($player, ["$maxHealth", "maxHealth"]),
+            hunger: goldClientReadNestedNumber($player, ["$foodStats", "foodStats"], ["$foodLevel", "foodLevel"]),
+            saturation: goldClientReadNestedNumber($player, ["$foodStats", "foodStats"], ["$foodSaturationLevel", "foodSaturationLevel"]),
+            exhaustion: goldClientReadNestedNumber($player, ["$foodStats", "foodStats"], ["$foodExhaustionLevel", "foodExhaustionLevel"]),
+            worldAvailable: $world !== null,
+            capabilities: {
+                position: $player !== null,
+                health: goldClientReadNumber($player, ["$health", "health"]) !== null,
+                hunger: goldClientReadNestedNumber($player, ["$foodStats", "foodStats"], ["$foodLevel", "foodLevel"]) !== null,
+                saturation: goldClientReadNestedNumber($player, ["$foodStats", "foodStats"], ["$foodSaturationLevel", "foodSaturationLevel"]) !== null,
+                exhaustion: goldClientReadNestedNumber($player, ["$foodStats", "foodStats"], ["$foodExhaustionLevel", "foodExhaustionLevel"]) !== null,
+                blockSampling: false
+            }
         };
         if (typeof window.onClientTick !== "function") {
             throw new Error("Gold Client TeaVM bridge export did not load");
