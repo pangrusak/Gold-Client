@@ -86,7 +86,8 @@ public final class Main {
       ModAnalysis a = new ModAnalyzer().analyze(Path.of(jar));
       boolean methodDebug = classFilter != null || methodFilter != null;
       boolean wholeModExport = translate && classFilter == null && methodFilter == null;
-      printAnalysis(a, methodDebug || wholeModExport);
+      if (wholeModExport) printTranslationSummary(a);
+      else printAnalysis(a, methodDebug);
 
       if (methodDebug)
         printBytecode(a.classes(), classFilter, methodFilter);
@@ -163,6 +164,17 @@ public final class Main {
 
   private static void printUsage() {
     System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate [--class <class> --method <method> | --output-dir <dir>]] [--to-js <output_dir> --main-class <class>]");
+  }
+
+  private static void printTranslationSummary(ModAnalysis analysis) {
+    System.out.println("=== Gold Client Mod Translation ===\\n");
+    System.out.println("Mod: " + analysis.metadata().getName());
+    System.out.println("Version: " + analysis.metadata().getVersion());
+    System.out.println("Minecraft: " + analysis.metadata().getMinecraftVersion());
+    System.out.println("Loader: " + analysis.metadata().getLoader());
+    System.out.println("Classes: " + analysis.totalClasses());
+    System.out.println("Methods: " + analysis.totalMethods());
+    System.out.println("Fields: " + analysis.totalFields());
   }
 
   private static void printAnalysis(ModAnalysis a, boolean debug) {
