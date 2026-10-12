@@ -274,6 +274,11 @@ class JavaScriptModTranslationExporterTest {
         const empty = r.invokeJavaStatic("java.util.Optional", "empty");
         if (empty.isPresent() || empty.orElse("fallback") !== "fallback") throw new Error("Optional.empty");
         if (present.map(value => value.toUpperCase()).get() !== "VALUE") throw new Error("Optional.map");
+        const pattern = r.invokeJavaStatic("java.util.regex.Pattern", "compile", "([a-z]+)-([0-9]+)");
+        const matcher = pattern.matcher("mod-1122 and forge-12");
+        if (!matcher.find() || matcher.group(1) !== "mod" || matcher.group(2) !== "1122") throw new Error("Pattern.Matcher find/group");
+        if (!matcher.find() || matcher.group(1) !== "forge" || matcher.group(2) !== "12") throw new Error("Pattern.Matcher repeated find");
+        if (r.invokeJavaStatic("java.util.regex.Pattern", "matches", "[A-Z]+", "JAVA") !== true) throw new Error("Pattern.matches");
         console.log("java-compatibility-ok");
         """, StandardCharsets.UTF_8);
     Process node;
