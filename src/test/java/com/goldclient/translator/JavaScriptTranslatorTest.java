@@ -129,6 +129,26 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void removesReferenceCastsAndLowersUnknownAnalyzerValuesToValidJavaScript() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        function sample(local2) {
+          let item = (net.minecraft.item.ItemStack)local2;
+          let mode = (mezz.jei.api.recipe.IFocus$Mode) this.contents.get(this.current);
+          let missing = <unknown>;
+          return <unknown-stack>;
+        }
+        """);
+
+    assertFalse(lowered.contains("(net.minecraft.item.ItemStack)"), lowered);
+    assertFalse(lowered.contains("(mezz.jei.api.recipe.IFocus$Mode)"), lowered);
+    assertFalse(lowered.contains("<unknown>"), lowered);
+    assertFalse(lowered.contains("<unknown-stack>"), lowered);
+    assertTrue(lowered.contains("let item = local2;"), lowered);
+    assertTrue(lowered.contains("let missing = undefined;"), lowered);
+    assertTrue(lowered.contains("return undefined;"), lowered);
+  }
+
+  @Test
   void routesTranslatedStaticFieldReadsAndWritesThroughRuntime() {
     String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
         void sample() {
