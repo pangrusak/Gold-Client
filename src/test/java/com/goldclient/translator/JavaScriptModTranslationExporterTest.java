@@ -233,6 +233,23 @@ class JavaScriptModTranslationExporterTest {
     Path runner = output.resolve("java-compatibility-test.mjs");
     Files.writeString(runner, """
         import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        globalThis.goldClientForgeBindings = {
+          minecraft: {
+            call: (owner, method, args) => ({ owner, method, args }),
+            get: (owner, field) => owner + "." + field,
+            set: (owner, field, value) => { globalThis.__lastPlatformSet = [owner, field, value]; }
+          },
+          forge: {
+            call: (owner, method, args) => ({ owner, method, args }),
+            get: (owner, field) => owner + "." + field,
+            set: (owner, field, value) => { globalThis.__lastPlatformSet = [owner, field, value]; }
+          }
+        };
+        const clientCall = r.invokePlatformStatic("net.minecraft.client.Minecraft", "getMinecraft");
+        if (clientCall.owner !== "net.minecraft.client.Minecraft" || clientCall.method !== "getMinecraft") throw new Error("Minecraft static binding");
+        if (r.getStaticField("net.minecraft.init.Items", "IRON_INGOT") !== "net.minecraft.init.Items.IRON_INGOT") throw new Error("Minecraft static field binding");
+        r.setStaticField("net.minecraftforge.fml.common.registry.GameRegistry", "testField", 7);
+        if (globalThis.__lastPlatformSet[2] !== 7) throw new Error("Forge static field write binding");
         const list = r.createJava("java.util.ArrayList");
         list.add("alpha");
         list.addAll(["beta", "gamma"]);
