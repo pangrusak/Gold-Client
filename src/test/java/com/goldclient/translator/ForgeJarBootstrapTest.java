@@ -36,7 +36,8 @@ class ForgeJarBootstrapTest {
             @Mod(modid="example") public class Example {
               public static int constructions;
               public static Object received;
-              public Example() { constructions++; }
+              public static Object current;
+              public Example() { constructions++; current = this; }
               @Mod.EventHandler public void initialize(FMLInitializationEvent event) { received = event; }
             """ + extra + "\n}");
         List<String> arguments = new ArrayList<>(List.of("--release", "8", "-d", classes.toString()));
@@ -94,6 +95,14 @@ class ForgeJarBootstrapTest {
             Class<?> hostType = loader.loadClass("gold.generated.ForgeModBootstrap$Host");
             Object host = java.lang.reflect.Proxy.newProxyInstance(loader, new Class<?>[]{hostType},
                 (proxy, method, args) -> {
+                    if (method.getName().equals("afterConstruction")) {
+                        assertEquals("example", args[0]);
+                        assertSame(example.getField("current").get(null), args[1]);
+                        assertEquals(1, example.getField("constructions").get(null));
+                        assertNull(example.getField("received").get(null));
+                        calls.add("afterConstruction:example");
+                        return null;
+                    }
                     calls.add(method.getName() + ":" + String.join(":", Arrays.stream(args).map(Object::toString).toList()));
                     return method.getName().equals("eventFor") ? event : null;
                 });
@@ -105,7 +114,7 @@ class ForgeJarBootstrapTest {
             bootstrap.getMethod("main", String[].class).invoke(null, (Object) new String[0]);
             assertEquals(1, example.getField("constructions").get(null));
             assertSame(event, example.getField("received").get(null));
-            assertEquals(List.of("beforeConstruction:example", "afterPhase:example:preInit",
+            assertEquals(List.of("beforeConstruction:example", "afterConstruction:example", "afterPhase:example:preInit",
                     "eventFor:example:init", "afterPhase:example:init",
                     "afterPhase:example:postInit", "afterPhase:example:loadComplete"), calls);
             InvocationTargetException repeated = assertThrows(InvocationTargetException.class,

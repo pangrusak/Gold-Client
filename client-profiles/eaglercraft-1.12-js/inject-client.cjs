@@ -5,6 +5,7 @@ const path = require('node:path');
 const { installJeiReadiness } = require('./jei-readiness.cjs');
 const { installClientBridge } =
     require('../shared/client-bridge.cjs');
+const { installNativeRuntime } = require('../shared/native-runtime.cjs');
 const [clientPath, translatedPath, outputPath] = process.argv.slice(2);
 if (!clientPath || !translatedPath || !outputPath) {
     process.stderr.write(
@@ -227,6 +228,17 @@ output = output.replace(
     itemRegistryCall,
     recipeProbeSource + "\n" + itemRegistryCall
 );
+
+// GOLD_NATIVE_CLIENT_REFERENCE_V1
+const nativeReferenceSource =
+    'if (window.goldClientNativeRuntime === undefined) {\n' +
+    '    (' + installNativeRuntime.toString() + ')(window, function() {\n' +
+    '        return nmc_Minecraft_getMinecraft();\n' +
+    '    }, "supplied-eaglercraft-1.12.2-js");\n' +
+    '}\n';
+requireUnique(output, itemRegistryCall, 'native Minecraft binding callback');
+output = output.replace(itemRegistryCall,
+    nativeReferenceSource + itemRegistryCall);
 
 const absoluteOutput = path.resolve(outputPath);
 fs.mkdirSync(path.dirname(absoluteOutput), { recursive: true });

@@ -242,6 +242,7 @@ public final class ForgeJarBootstrap {
         code.append("  public interface SubscriberInvoker { void invoke(Object event) throws Exception; }\n")
             .append("  public interface Host {\n")
             .append("    void beforeConstruction(String modId);\n")
+            .append("    void afterConstruction(String modId, Object originalModInstance);\n")
             .append("    Object eventFor(String modId, String phase);\n")
             .append("    void afterPhase(String modId, String phase);\n")
             .append("    void registerStaticSubscriber(String modId, Class<?> owner, Class<?> eventType, String method, String priority, boolean receiveCanceled, SubscriberInvoker invoker);\n  }\n")
@@ -254,6 +255,9 @@ public final class ForgeJarBootstrap {
             .append("    if (started) throw new IllegalStateException(\"Mod bootstrap already started\");\n")
             .append("    started = true;\n    host.beforeConstruction(\"").append(id).append("\");\n")
             .append("    ").append(type).append(" mod = new ").append(type).append("();\n");
+        // GOLD_ORIGINAL_MOD_INSTANCE_HANDOFF_V1
+        code.append("    host.afterConstruction(").append((char) 34).append(id)
+            .append((char) 34).append(", mod);").append((char) 10);
         for (ProxyBinding proxy : proxies) {
             if (proxy.setter().isEmpty()) {
                 code.append("    ").append(proxy.owner()).append(".").append(proxy.field())
