@@ -470,13 +470,13 @@ public final class IntermediateRepresentationAnalyzer {
       callArguments.addAll(capturedNames);
       callArguments.addAll(lambdaArguments);
       String helperName = owner.startsWith("java.") ? "invokeJavaStatic" : "invokeStaticClass";
-      call = "GoldClientRuntime." + helperName + "(\\"" + owner + "\\", \\""
-          + implementationName + "\\", " + String.join(", ", callArguments) + ")";
+      call = "GoldClientRuntime." + helperName + "(\"" + owner + "\", \""
+          + implementationName + "\", " + String.join(", ", callArguments) + ")";
     } else if (tag == Opcodes.H_NEWINVOKESPECIAL) {
       callArguments.addAll(capturedNames);
       callArguments.addAll(lambdaArguments);
       String helperName = owner.startsWith("java.") ? "createJava" : "create";
-      call = "GoldClientRuntime." + helperName + "(\\"" + owner + "\\", "
+      call = "GoldClientRuntime." + helperName + "(\"" + owner + "\", "
           + String.join(", ", callArguments) + ")";
     } else if (tag == Opcodes.H_INVOKEVIRTUAL || tag == Opcodes.H_INVOKEINTERFACE
         || tag == Opcodes.H_INVOKESPECIAL) {
@@ -491,11 +491,11 @@ public final class IntermediateRepresentationAnalyzer {
       } else {
         receiver = "null";
       }
-      call = "GoldClientRuntime.invokeInstance(" + receiver + ", \\"" + implementationName
-          + "\\", " + String.join(", ", callArguments) + ")";
+      call = "GoldClientRuntime.invokeInstance(" + receiver + ", \"" + implementationName
+          + "\", " + String.join(", ", callArguments) + ")";
     } else {
       String detail = "unsupported lambda handle tag " + tag + " for " + owner + "." + implementationName;
-      call = "GoldClientRuntime.unsupported(\\"lambda-handle\\", \\"" + detail + "\\")";
+      call = "GoldClientRuntime.unsupported(\"lambda-handle\", \"" + detail + "\")";
       operations.add(op("UNSUPPORTED_DYNAMIC", List.of(name, detail), sourceInstruction));
     }
 
