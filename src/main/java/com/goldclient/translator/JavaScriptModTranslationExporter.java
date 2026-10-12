@@ -677,13 +677,101 @@ public final class JavaScriptModTranslationExporter {
             if (owner === "java.lang.Math") {
               if (method === "floorDiv") return this.intDiv(args[0], args[1]);
               if (method === "floorMod") return this.intMod(args[0], args[1]);
+              if (method === "addExact") {
+                const value = Number(args[0]) + Number(args[1]);
+                if (!Number.isSafeInteger(value) || value < -2147483648 || value > 2147483647) throw new RangeError("ArithmeticException: integer overflow");
+                return value;
+              }
+              if (method === "subtractExact") {
+                const value = Number(args[0]) - Number(args[1]);
+                if (!Number.isSafeInteger(value) || value < -2147483648 || value > 2147483647) throw new RangeError("ArithmeticException: integer overflow");
+                return value;
+              }
+              if (method === "multiplyExact") {
+                const value = Number(args[0]) * Number(args[1]);
+                if (!Number.isSafeInteger(value) || value < -2147483648 || value > 2147483647) throw new RangeError("ArithmeticException: integer overflow");
+                return value;
+              }
+              if (method === "incrementExact" || method === "decrementExact" || method === "negateExact") {
+                const value = method === "incrementExact" ? Number(args[0]) + 1
+                  : method === "decrementExact" ? Number(args[0]) - 1 : -Number(args[0]);
+                if (!Number.isSafeInteger(value) || value < -2147483648 || value > 2147483647) throw new RangeError("ArithmeticException: integer overflow");
+                return value;
+              }
+              if (method === "toIntExact") {
+                const value = Number(args[0]);
+                if (!Number.isInteger(value) || value < -2147483648 || value > 2147483647) throw new RangeError("ArithmeticException: integer overflow");
+                return value;
+              }
+              if (method === "signum") return Math.sign(args[0]);
+              if (method === "round") return Math.floor(Number(args[0]) + 0.5);
+              if (method === "min") return Math.min(...args);
+              if (method === "max") return Math.max(...args);
+              if (method === "copySign") return Math.abs(args[0]) * (args[1] < 0 || Object.is(args[1], -0) ? -1 : 1);
+              if (method === "nextUp") return args[0] === Infinity ? Infinity : Number(args[0]) + Number.EPSILON;
               if (typeof Math[method] === "function") return Math[method](...args);
             }
             if (owner === "java.util.Arrays") {
               if (method === "asList") return new GoldClientJavaList(args[0] ?? args);
-              if (method === "copyOf") return Array.from(args[0] ?? []).slice(0, args[1]);
-              if (method === "equals") return JSON.stringify(args[0]) === JSON.stringify(args[1]);
-              if (method === "toString") return "[" + Array.from(args[0] ?? []).join(", ") + "]";
+              if (method === "copyOf") {
+                const source = Array.from(args[0] ?? []);
+                const length = Math.max(0, Number(args[1]) | 0);
+                return Array.from({ length }, (_, index) => index < source.length ? source[index] : null);
+              }
+              if (method === "copyOfRange") {
+                const source = Array.from(args[0] ?? []);
+                const from = Number(args[1]) | 0;
+                const to = Number(args[2]) | 0;
+                if (from < 0 || to < from) throw new RangeError("ArrayIndexOutOfBoundsException");
+                return Array.from({ length: to - from }, (_, index) => source[from + index] ?? null);
+              }
+              if (method === "equals" || method === "deepEquals") {
+                const a = args[0], b = args[1];
+                return Array.isArray(a) && Array.isArray(b) && a.length === b.length
+                  && a.every((value, index) => Object.is(value, b[index]));
+              }
+              if (method === "hashCode") {
+                return Array.from(args[0] ?? []).reduce((hash, value) =>
+                  (Math.imul(hash, 31) + this.javaHashCode(value)) | 0, 1);
+              }
+              if (method === "fill") {
+                const array = args[0];
+                if (args.length === 2) array.fill(args[1]);
+                else array.fill(args[3], args[1], args[2]);
+                return;
+              }
+              if (method === "sort") {
+                const array = args[0];
+                const comparator = typeof args[1] === "function" ? args[1] : ((a, b) => String(a).localeCompare(String(b)));
+                array.sort(comparator);
+                return;
+              }
+              if (method === "binarySearch") {
+                const array = args[0], target = args[1];
+                const comparator = typeof args[2] === "function" ? args[2] : ((a, b) => a < b ? -1 : a > b ? 1 : 0);
+                let low = 0, high = array.length - 1;
+                while (low <= high) {
+                  const mid = (low + high) >>> 1;
+                  const compare = comparator(array[mid], target);
+                  if (compare < 0) low = mid + 1;
+                  else if (compare > 0) high = mid - 1;
+                  else return mid;
+                }
+                return -(low + 1);
+              }
+              if (method === "toString") return "[" + Array.from(args[0] ?? []).map(value => value == null ? "null" : String(value)).join(", ") + "]";
+            }
+            if (owner === "java.util.Comparator") {
+              if (method === "naturalOrder") return (a, b) => a < b ? -1 : a > b ? 1 : 0;
+              if (method === "reverseOrder") return (a, b) => a > b ? -1 : a < b ? 1 : 0;
+              if (method === "comparing") {
+                const key = args[0];
+                return (a, b) => {
+                  const av = typeof key === "function" ? key(a) : a?.[key];
+                  const bv = typeof key === "function" ? key(b) : b?.[key];
+                  return av < bv ? -1 : av > bv ? 1 : 0;
+                };
+              }
             }
             if (owner === "java.util.Collections") {
               if (method === "emptyList") return new GoldClientJavaList();
@@ -703,12 +791,53 @@ public final class JavaScriptModTranslationExporter {
               if (method === "reverse") { if (args[0]?.items) args[0].items.reverse(); else args[0]?.reverse?.(); return; }
               if (method === "sort") { if (args[0]?.items) args[0].items.sort(args[1]); else args[0]?.sort?.(args[1]); return; }
               if (method === "frequency") { const values = args[0]?.items ?? args[0] ?? []; return Array.from(values).filter(value => Object.is(value, args[1])).length; }
+              if (method === "disjoint") {
+                const left = Array.from(args[0]?.items ?? args[0] ?? []);
+                const right = new Set(args[1]?.items ?? args[1] ?? []);
+                return !left.some(value => right.has(value));
+              }
+              if (method === "min" || method === "max") {
+                const values = Array.from(args[0]?.items ?? args[0] ?? []);
+                if (!values.length) throw new Error("NoSuchElementException");
+                const comparator = typeof args[1] === "function" ? args[1] : ((a, b) => a < b ? -1 : a > b ? 1 : 0);
+                return values.reduce((best, value) => {
+                  const compare = comparator(value, best);
+                  return method === "min" ? (compare < 0 ? value : best) : (compare > 0 ? value : best);
+                });
+              }
+              if (method === "replaceAll") {
+                const collection = args[0], oldValue = args[1], newValue = args[2];
+                if (collection?.items) collection.items = collection.items.map(value => Object.is(value, oldValue) ? newValue : value);
+                else if (Array.isArray(collection)) for (let i = 0; i < collection.length; i++) if (Object.is(collection[i], oldValue)) collection[i] = newValue;
+                return;
+              }
+              if (method === "rotate") {
+                const collection = args[0]?.items ?? args[0];
+                if (!collection?.length) return;
+                const distance = ((Number(args[1]) % collection.length) + collection.length) % collection.length;
+                if (distance) collection.unshift(...collection.splice(collection.length - distance, distance));
+                return;
+              }
+              if (method === "shuffle") {
+                const collection = args[0]?.items ?? args[0];
+                for (let i = collection.length - 1; i > 0; i--) {
+                  const j = Math.floor(Math.random() * (i + 1));
+                  [collection[i], collection[j]] = [collection[j], collection[i]];
+                }
+                return;
+              }
             }
             if (owner === "java.util.Objects") {
               if (method === "equals") return Object.is(args[0], args[1]);
+              if (method === "deepEquals") return JSON.stringify(args[0]) === JSON.stringify(args[1]);
+              if (method === "isNull") return args[0] == null;
+              if (method === "nonNull") return args[0] != null;
               if (method === "hash") return args.reduce((hash, value) => (Math.imul(hash, 31) + this.javaHashCode(value)) | 0, 1);
               if (method === "toString") return args[0] == null ? (args[1] ?? "null") : String(args[0]);
               if (method === "requireNonNull") return this.requireNonNull(args[0], args[1]);
+              if (method === "requireNonNullElse") return args[0] == null ? this.requireNonNull(args[1]) : args[0];
+              if (method === "requireNonNullElseGet") return args[0] == null ? this.requireNonNull(args[1]()) : args[0];
+              if (method === "compare") return args[0] === args[1] ? 0 : args[0] < args[1] ? -1 : 1;
             }
             if (owner === "java.lang.Integer" || owner === "java.lang.Long") {
               if (method === "parseInt" || method === "parseLong" || method === "valueOf") return Number.parseInt(args[0], args[1] ?? 10);
@@ -739,7 +868,18 @@ public final class JavaScriptModTranslationExporter {
                   });
               }
             }
-            if (owner === "java.lang.System" && method === "currentTimeMillis") return Date.now();
+            if (owner === "java.lang.System") {
+              if (method === "currentTimeMillis") return Date.now();
+              if (method === "nanoTime") return Math.floor(performance.now() * 1e6);
+              if (method === "identityHashCode") return this.javaHashCode(args[0]);
+              if (method === "arraycopy") return this.arraycopy(...args);
+              if (method === "getProperty") {
+                const properties = { "line.separator": "\\n", "file.separator": "/", "path.separator": ":", "os.name": "Eaglercraft", "java.version": "translated-runtime" };
+                return Object.prototype.hasOwnProperty.call(properties, args[0]) ? properties[args[0]] : (args[1] ?? null);
+              }
+              if (method === "getenv") return args.length ? (args[1] ?? null) : Object.freeze({});
+              if (method === "lineSeparator") return "\\n";
+            }
             const translated = this.classes.get(owner);
             if (translated && typeof translated[method] === "function") return translated[method](...args);
             return this.unsupported("missing-java-static-adapter", owner + "." + method);
