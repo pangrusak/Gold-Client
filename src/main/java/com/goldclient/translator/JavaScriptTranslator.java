@@ -34,6 +34,10 @@ public final class JavaScriptTranslator {
   }
 
   public TranslationResult translate(IrMethodModel method) {
+    return translate(method, true);
+  }
+
+  public TranslationResult translate(IrMethodModel method, boolean isStatic) {
     TranslationResult structured = structuredTranslator.translate(method);
     String javaSource = structured.source();
     Matcher signature = SIGNATURE.matcher(javaSource);
@@ -46,7 +50,7 @@ public final class JavaScriptTranslator {
     }
 
     String originalName = signature.group(1);
-    String parameters = lowerParameters(signature.group(2));
+    String parameters = lowerParameters(signature.group(2), isStatic);
     String exportName = exportedName(originalName, method.descriptor());
     int bodyStart = javaSource.indexOf('{', signature.start());
     int bodyEnd = javaSource.lastIndexOf('}');
@@ -59,6 +63,7 @@ public final class JavaScriptTranslator {
     }
 
     String body = javaSource.substring(bodyStart + 1, bodyEnd);
+    if (!isStatic) body = body.replaceAll("\\blocal0\\b", "this");
     body = lowerJavaSyntax(body);
     boolean complete = structured.complete()
         && !body.contains("TODO:")
@@ -84,12 +89,16 @@ public final class JavaScriptTranslator {
    * that native/abstract behavior was reconstructed.
    */
   public TranslationResult translateStub(String methodName, String descriptor, String reason) {
+    return translateStub(methodName, descriptor, reason, true);
+  }
+
+  public TranslationResult translateStub(String methodName, String descriptor, String reason, boolean isStatic) {
     String signatureSource = structuredTranslator.translate(
         new IrMethodModel(methodName, descriptor, List.of())).source();
     Matcher signature = SIGNATURE.matcher(signatureSource);
     String parameters = "";
     String exportName = exportedName(methodName, descriptor);
-    if (signature.find()) parameters = lowerParameters(signature.group(2));
+    if (signature.find()) parameters = lowerParameters(signature.group(2), isStatic);
     String detail = methodName + (descriptor == null ? "" : descriptor) + ": "
         + (reason == null ? "bytecode unavailable" : reason);
     String source = "// Status: stubbed; original implementation was unavailable.\n"
@@ -283,14 +292,24 @@ public final class JavaScriptTranslator {
     return equalCalls.toString();
   }
 
-  private static String lowerParameters(String parameters) {
+  private static String lowerParameters(String parameters, boolean isStatic) {
     if (parameters == null || parameters.isBlank()) return "";
     List<String> lowered = new ArrayList<>();
+    int localSlot = isStatic ? 0 : 1;
     for (String parameter : parameters.split(",")) {
       String trimmed = parameter.trim();
       int lastSpace = trimmed.lastIndexOf(' ');
-      String name = lastSpace >= 0 ? trimmed.substring(lastSpace + 1) : trimmed;
-      lowered.add(safeIdentifier(name));
+      if (lastSpace < 0) {
+        lowered.add(safeIdentifier(trimmed));
+        continue;
+      }
+      String type = trimmed.substring(0, lastSpace).trim();
+      if (isStatic) {
+        lowered.add(safeIdentifier(trimmed.substring(lastSpace + 1)));
+      } else {
+        lowered.add("local" + localSlot);
+        localSlot += ("long".equals(type) || "double".equals(type)) ? 2 : 1;
+      }
     }
     return String.join(", ", lowered);
   }
