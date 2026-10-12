@@ -7,12 +7,15 @@ import com.goldclient.model.IrOperationModel;
 import com.goldclient.model.MethodModel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.Opcodes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JavaScriptModTranslationExporterTest {
@@ -50,6 +53,32 @@ class JavaScriptModTranslationExporterTest {
     assertTrue(Files.readString(module).contains("untranslated-method"));
     assertTrue(Files.readString(output.resolve("javascript-report.txt"))
         .contains("not the same as a working mod"));
+  }
+
+  @Test
+  void preservesModResourcesAndSkipsClassBytesAndSignatureFiles() throws Exception {
+    Path jar = tempDir.resolve("input.jar");
+    try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar))) {
+      output.putNextEntry(new JarEntry("assets/example/lang/en_us.json"));
+      output.write("{\"hello\":\"world\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      output.closeEntry();
+      output.putNextEntry(new JarEntry("example/Feature.class"));
+      output.write(new byte[] {1, 2, 3});
+      output.closeEntry();
+      output.putNextEntry(new JarEntry("META-INF/EXAMPLE.SF"));
+      output.write(new byte[] {4, 5});
+      output.closeEntry();
+    }
+
+    Path outputDir = tempDir.resolve("with-resources");
+    var report = new JavaScriptModTranslationExporter().export(jar, List.of(), outputDir);
+    assertEquals(1, report.resourceCount());
+    assertTrue(Files.isRegularFile(outputDir.resolve("resources/assets/example/lang/en_us.json")));
+    assertTrue(Files.readString(outputDir.resolve("resources/assets/example/lang/en_us.json"))
+        .contains("world"));
+    assertTrue(Files.readString(outputDir.resolve("resource-index.json")).contains("en_us.json"));
+    assertFalse(Files.exists(outputDir.resolve("resources/example/Feature.class")));
+    assertFalse(Files.exists(outputDir.resolve("resources/META-INF/EXAMPLE.SF")));
   }
 
   private static MethodModel method(
