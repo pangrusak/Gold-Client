@@ -22,5 +22,11 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Compile, run tests, and package
         run: mvn --batch-mode verify
+      - name: Test generic Eaglercraft injector
+        run: node --test client-profiles/eaglercraft-1.12-js/inject-gold-client.test.cjs
