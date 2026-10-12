@@ -733,7 +733,7 @@ public final class JavaScriptModTranslationExporter {
             return new GoldClientJavaPattern(source, [...new Set(jsFlags)].join(""));
           }
           static matches(regex, input) { return new RegExp("^(?:" + regex + ")$").test(String(input)); }
-          static quote(value) { return Array.from(String(value), character => ".^$*+?()[]{}|".includes(character) ? "\\\\" + character : character).join(""); }
+          static quote(value) { return Array.from(String(value), character => ".^$*+?()[]{}|".includes(character) || character.charCodeAt(0) === 92 ? "\\\\" + character : character).join(""); }
         }
 
         class GoldClientJavaOptional {
