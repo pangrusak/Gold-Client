@@ -138,9 +138,8 @@ public final class ForgeJarBootstrap {
                 blockers.add("Lifecycle handler needs unsupported dispatch: " + method.name() + method.descriptor());
             } else handlers.get(phase).add(method);
         }
-        for (var phase : handlers.entrySet()) {
-            if (phase.getValue().size() > 1) blockers.add("Multiple-handler ordering not implemented for " + phase.getKey());
-        }
+        // Methods are collected in class-file declaration order. Preserve that order
+        // when dispatching multiple handlers for the same Forge lifecycle phase.
         return new Plan(id, mod.name().replace('/', '.'), List.copyOf(blockers),
                 blockers.isEmpty() ? generate(id, mod, handlers, proxies, subscriberBindings) : "", types.size());
     }
@@ -290,10 +289,12 @@ public final class ForgeJarBootstrap {
                 String eventType = PHASES.get(phaseName).replace('/', '.');
                 code.append("    Object ").append(phaseName).append(" = host.eventFor(\"").append(id)
                     .append("\", \"").append(phaseName).append("\");\n")
-                    .append("    if (!(").append(phaseName).append(" instanceof ").append(eventType)
-                    .append(")) throw new IllegalStateException(\"Invalid original event for ").append(phaseName).append("\");\n")
-                    .append("    mod.").append(phase.getValue().get(0).name()).append("((").append(eventType).append(") ")
-                    .append(phaseName).append(");\n");
+                    .append("    if (!( ").append(phaseName).append(" instanceof ").append(eventType)
+                    .append(")) throw new IllegalStateException(\"Invalid original event for ").append(phaseName).append("\");\n");
+                for (Member handler : phase.getValue()) {
+                    code.append("    mod.").append(handler.name()).append("((").append(eventType).append(") ")
+                        .append(phaseName).append(");\n");
+                }
             }
             code.append("    host.afterPhase(\"").append(id).append("\", \"").append(phaseName).append("\");\n");
         }
