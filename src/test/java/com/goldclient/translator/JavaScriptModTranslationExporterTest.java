@@ -236,17 +236,21 @@ class JavaScriptModTranslationExporterTest {
         globalThis.goldClientForgeBindings = {
           minecraft: {
             call: (owner, method, args) => ({ owner, method, args }),
+            construct: (owner, args) => ({ constructed: owner, args }),
             get: (owner, field) => owner + "." + field,
             set: (owner, field, value) => { globalThis.__lastPlatformSet = [owner, field, value]; }
           },
           forge: {
             call: (owner, method, args) => ({ owner, method, args }),
+            construct: (owner, args) => ({ constructed: owner, args }),
             get: (owner, field) => owner + "." + field,
             set: (owner, field, value) => { globalThis.__lastPlatformSet = [owner, field, value]; }
           }
         };
         const clientCall = r.invokePlatformStatic("net.minecraft.client.Minecraft", "getMinecraft");
         if (clientCall.owner !== "net.minecraft.client.Minecraft" || clientCall.method !== "getMinecraft") throw new Error("Minecraft static binding");
+        const stack = r.create("net.minecraft.item.ItemStack", "item", 1);
+        if (stack.constructed !== "net.minecraft.item.ItemStack" || stack.args[1] !== 1) throw new Error("Minecraft constructor binding");
         if (r.getStaticField("net.minecraft.init.Items", "IRON_INGOT") !== "net.minecraft.init.Items.IRON_INGOT") throw new Error("Minecraft static field binding");
         r.setStaticField("net.minecraftforge.fml.common.registry.GameRegistry", "testField", 7);
         if (globalThis.__lastPlatformSet[2] !== 7) throw new Error("Forge static field write binding");
