@@ -359,7 +359,7 @@ public final class ModAnalyzer {
           @Override
           public void visitEnd() {
             fields.add(new FieldModel(
-                name, descriptor, fieldSignature, fieldAccess, fieldAnnotations
+                name, descriptor, fieldSignature, fieldAccess, fieldAnnotations, value
             ));
           }
         };
