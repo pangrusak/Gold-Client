@@ -288,6 +288,14 @@ class JavaScriptModTranslationExporterTest {
           .collect(r.invokeJavaStatic("java.util.stream.Collectors", "toList"));
         if (collected.toString() !== "[4, 6, 8]") throw new Error("Stream Collectors.toList");
         if (r.invokeJavaStatic("java.util.stream.Stream", "of", 1, 2, 3).reduce((a, b) => a + b).get() !== 6) throw new Error("Stream reduce");
+        if (r.invokeJavaStatic("java.lang.Character", "isDigit", "7") !== true) throw new Error("Character.isDigit");
+        if (r.invokeJavaStatic("java.lang.Character", "isLetter", "G") !== true) throw new Error("Character.isLetter");
+        const date = r.createJava("java.util.Date", 123456789);
+        if (date.getTime() !== 123456789 || date.before(r.createJava("java.util.Date", 123456790)) !== true) throw new Error("Date adapters");
+        const uuid = r.invokeJavaStatic("java.util.UUID", "fromString", "123e4567-e89b-12d3-a456-426614174000");
+        if (uuid.toString() !== "123e4567-e89b-12d3-a456-426614174000") throw new Error("UUID.fromString");
+        const randomUuid = r.invokeJavaStatic("java.util.UUID", "randomUUID");
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(randomUuid.toString())) throw new Error("UUID.randomUUID");
         console.log("java-compatibility-ok");
         """, StandardCharsets.UTF_8);
     Process node;
