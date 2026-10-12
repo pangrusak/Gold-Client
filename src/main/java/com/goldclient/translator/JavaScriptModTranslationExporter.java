@@ -585,6 +585,51 @@ public final class JavaScriptModTranslationExporter {
           static fromString(value) { return new GoldClientJavaUuid(value); }
         }
 
+        class GoldClientJavaLocale {
+          constructor(language = "", country = "", variant = "") {
+            this.language = String(language).toLowerCase();
+            this.country = String(country).toUpperCase();
+            this.variant = String(variant);
+          }
+          getLanguage() { return this.language; }
+          getCountry() { return this.country; }
+          getVariant() { return this.variant; }
+          getDisplayLanguage() { return this.language; }
+          getDisplayCountry() { return this.country; }
+          toLanguageTag() { return [this.language, this.country].filter(Boolean).join("-") || "und"; }
+          toString() { return [this.language, this.country, this.variant].filter(Boolean).join(this.variant ? "_" : "_"); }
+          equals(other) { return other instanceof GoldClientJavaLocale && this.toLanguageTag() === other.toLanguageTag() && this.variant === other.variant; }
+          static forLanguageTag(tag) {
+            const parts = String(tag).replace(/_/g, "-").split("-");
+            return new GoldClientJavaLocale(parts[0] === "und" ? "" : parts[0], parts[1] ?? "", parts.slice(2).join("_"));
+          }
+          static getDefault() { return GoldClientJavaLocale.defaultLocale ?? new GoldClientJavaLocale("en", "US"); }
+          static setDefault(locale) { GoldClientJavaLocale.defaultLocale = locale; }
+        }
+
+        class GoldClientJavaProperties extends GoldClientJavaMap {
+          setProperty(key, value) { const old = this.put(String(key), String(value)); return old; }
+          getProperty(key, fallback = null) {
+            const value = this.get(String(key));
+            return value == null ? fallback : String(value);
+          }
+          propertyNames() { return this.keySet().iterator(); }
+          stringPropertyNames() { return new GoldClientJavaSet(Array.from(this.items.keys()).filter(key => typeof key === "string")); }
+          list(output = console) {
+            for (const [key, value] of this.items) output?.println?.(key + "=" + value);
+          }
+          store(output, comment = "") {
+            const lines = [];
+            if (comment) lines.push("# " + comment);
+            lines.push("# " + new Date().toISOString());
+            for (const [key, value] of this.items) lines.push(String(key) + "=" + String(value));
+            const text = lines.join("\\n") + "\\n";
+            if (typeof output === "function") output(text);
+            else if (output && typeof output.write === "function") output.write(text);
+            return text;
+          }
+        }
+
         class GoldClientJavaAtomic {
           constructor(value = 0) { this.value = value; }
           get() { return this.value; }
@@ -976,6 +1021,10 @@ public final class JavaScriptModTranslationExporter {
                 return args.length ? GoldClientJavaUuid.fromString(args[0]) : GoldClientJavaUuid.randomUUID();
               case "java.util.PriorityQueue":
                 return new GoldClientJavaPriorityQueue(args[0] ?? [], args[1] ?? null);
+              case "java.util.Locale":
+                return new GoldClientJavaLocale(args[0] ?? "", args[1] ?? "", args[2] ?? "");
+              case "java.util.Properties":
+                return new GoldClientJavaProperties(args[0] ?? []);
               case "java.util.concurrent.atomic.AtomicInteger":
               case "java.util.concurrent.atomic.AtomicLong":
               case "java.util.concurrent.atomic.AtomicBoolean":
@@ -1143,6 +1192,12 @@ public final class JavaScriptModTranslationExporter {
                 return;
               }
             }
+            if (owner === "java.util.Locale") {
+              if (method === "forLanguageTag") return GoldClientJavaLocale.forLanguageTag(args[0]);
+              if (method === "getDefault") return GoldClientJavaLocale.getDefault();
+              if (method === "setDefault") return GoldClientJavaLocale.setDefault(args[0]);
+              if (method === "of") return new GoldClientJavaLocale(args[0] ?? "", args[1] ?? "", args[2] ?? "");
+            }
             if (owner === "java.util.UUID") {
               if (method === "randomUUID") return GoldClientJavaUuid.randomUUID();
               if (method === "fromString") return GoldClientJavaUuid.fromString(args[0]);
@@ -1251,6 +1306,10 @@ public final class JavaScriptModTranslationExporter {
               if (method === "nanoTime") return Math.floor(performance.now() * 1e6);
               if (method === "identityHashCode") return this.javaHashCode(args[0]);
               if (method === "arraycopy") return this.arraycopy(...args);
+              if (method === "getProperties") return new GoldClientJavaProperties([
+                ["line.separator", "\\n"], ["file.separator", "/"], ["path.separator", ":"],
+                ["os.name", "Eaglercraft"], ["java.version", "translated-runtime"]
+              ]);
               if (method === "getProperty") {
                 const properties = { "line.separator": "\\n", "file.separator": "/", "path.separator": ":", "os.name": "Eaglercraft", "java.version": "translated-runtime" };
                 return Object.prototype.hasOwnProperty.call(properties, args[0]) ? properties[args[0]] : (args[1] ?? null);
