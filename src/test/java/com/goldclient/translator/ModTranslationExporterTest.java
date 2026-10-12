@@ -61,7 +61,7 @@ class ModTranslationExporterTest {
     assertTrue(json.contains("\"incompleteCount\": 1"));
     assertTrue(json.contains("\"skippedCount\": 2"));
     assertTrue(Files.readString(output.resolve("translation-report.txt"))
-        .contains("not executable JavaScript"));
+        .contains("does not prove executable JavaScript"));
   }
 
   @Test
