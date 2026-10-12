@@ -45,6 +45,16 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void unsupportedOperationsBecomeExplicitRuntimeFailures() {
+    var method = new IrMethodModel("unknown", "()V", List.of(
+        op("UNKNOWN", "mystery-op"), op("RETURN")));
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+    assertFalse(result.complete());
+    assertTrue(result.source().contains("GoldClientRuntime.unsupported("), result.source());
+    assertFalse(result.source().contains("// TODO:"), result.source());
+  }
+
+  @Test
   void lowersCatchSyntaxAndJavaExceptionConstructors() {
     var method = new IrMethodModel("guard", "()V", List.of(
         op("TRY_BEGIN", "Ltry", "Lend", "Lhandler", "java.lang.IllegalArgumentException"),
