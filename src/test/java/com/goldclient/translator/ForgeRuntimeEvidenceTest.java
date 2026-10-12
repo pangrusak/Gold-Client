@@ -31,6 +31,12 @@ class ForgeRuntimeEvidenceTest {
         Path[] f=fixture();assertEquals("14.23.5.3000",ForgeRuntimeEvidence.verify(f[2],f[1]));
         Files.write(f[0],new byte[]{0},StandardOpenOption.APPEND);assertThrows(java.io.IOException.class,()->ForgeRuntimeEvidence.verify(f[2],f[1]));
     }
+    @Test void genericOptionalOrderingIsNotMisreportedAsMissingRuntimeEvidence() throws Exception {
+        List<String> blockers = new ArrayList<>();
+        ForgeRuntimeEvidence.dependencies("after:jei@[4.6.0,);after:applecore@[2.2.0,)", null, null, blockers);
+        assertTrue(blockers.isEmpty(), blockers.toString());
+    }
+
     @Test void delegatesRangeChecksAndRetainsUnsupportedDependencyBlockers()throws Exception {
         Path[] f=fixture();assertTrue(ForgeRuntimeEvidence.contains(f[2],f[1],"ACCEPT"));assertFalse(ForgeRuntimeEvidence.contains(f[2],f[1],"REJECT"));
         List<String> blockers=new ArrayList<>();ForgeRuntimeEvidence.dependencies("required-after:forge@ACCEPT;required-after:othermod@[1,)",f[2],f[1],blockers);
