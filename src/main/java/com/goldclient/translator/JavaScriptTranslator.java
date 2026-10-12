@@ -264,6 +264,11 @@ public final class JavaScriptTranslator {
     String result = input.toString()
         .replace("System.out.println(", "console.log(")
         .replace("System.err.println(", "console.error(")
+        .replace("java.lang.System.out.println(", "console.log(")
+        .replace("java.lang.System.err.println(", "console.error(")
+        .replace("System.currentTimeMillis(", "Date.now(")
+        .replace("Integer.parseInt(", "Number.parseInt(")
+        .replace("Long.parseLong(", "Number.parseInt(")
         .replace("new java.lang.IllegalStateException", "new Error")
         .replace("new java.lang.IllegalArgumentException", "new Error")
         .replace("new java.lang.NullPointerException", "new TypeError")
@@ -367,6 +372,26 @@ public final class JavaScriptTranslator {
     }
     allocation.appendTail(allocations);
     result = allocations.toString();
+
+    // java.util convenience APIs are common in mod code and have small direct adapters.
+    java.util.regex.Matcher simpleJavaCall = java.util.regex.Pattern.compile(
+        "\\b(Arrays|Collections|Objects)\\.([A-Za-z_$][\\w$]*)\\(")
+        .matcher(result);
+    StringBuffer simpleJavaCalls = new StringBuffer();
+    while (simpleJavaCall.find()) {
+      String owner = switch (simpleJavaCall.group(1)) {
+        case "Arrays" -> "java.util.Arrays";
+        case "Collections" -> "java.util.Collections";
+        default -> "java.util.Objects";
+      };
+      String replacement = "GoldClientRuntime.invokeJavaStatic(" + quote(owner) + ", "
+          + quote(simpleJavaCall.group(2)) + ", ";
+      simpleJavaCall.appendReplacement(simpleJavaCalls, java.util.regex.Matcher.quoteReplacement(replacement));
+    }
+    simpleJavaCall.appendTail(simpleJavaCalls);
+    result = simpleJavaCalls.toString();
+    result = result.replace("String.format(", "GoldClientRuntime.invokeJavaStatic(\\"java.lang.String\\", \\"format\\", ");
+    result = result.replace("Boolean.parseBoolean(", "GoldClientRuntime.invokeJavaStatic(\\"java.lang.Boolean\\", \\"parseBoolean\\", ");
 
     // JVM numeric literals carry suffixes which are not valid JavaScript.
     result = result.replaceAll(
