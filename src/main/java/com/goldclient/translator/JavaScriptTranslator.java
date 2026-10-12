@@ -148,20 +148,77 @@ public final class JavaScriptTranslator {
     typedLocal.appendTail(localBuffer);
     result = localBuffer.toString();
 
-    result = result.replace("System.out.println(", "console.log(")
+    return replaceCodeTokens(result);
+  }
+
+  /**
+   * Rewrites Java API spellings only in executable code, never inside string
+   * literals or comments. This matters for mods that log class names or source
+   * snippets containing Java syntax as ordinary text.
+   */
+  private static String replaceCodeTokens(String source) {
+    StringBuilder output = new StringBuilder(source.length() + 32);
+    StringBuilder code = new StringBuilder();
+    LexicalState state = LexicalState.CODE;
+    for (int i = 0; i < source.length(); i++) {
+      char current = source.charAt(i);
+      char next = i + 1 < source.length() ? source.charAt(i + 1) : '\\0';
+      if (state == LexicalState.CODE) {
+        if (current == '"') {
+          output.append(rewriteCode(code));
+          code.setLength(0);
+          state = LexicalState.STRING;
+          output.append(current);
+        } else if (current == '/' && next == '/') {
+          output.append(rewriteCode(code));
+          code.setLength(0);
+          state = LexicalState.LINE_COMMENT;
+          output.append("//");
+          i++;
+        } else if (current == '/' && next == '*') {
+          output.append(rewriteCode(code));
+          code.setLength(0);
+          state = LexicalState.BLOCK_COMMENT;
+          output.append("/*");
+          i++;
+        } else {
+          code.append(current);
+        }
+      } else if (state == LexicalState.STRING) {
+        output.append(current);
+        if (current == '\\\\' && i + 1 < source.length()) output.append(source.charAt(++i));
+        else if (current == '"') state = LexicalState.CODE;
+      } else if (state == LexicalState.LINE_COMMENT) {
+        output.append(current);
+        if (current == '\\n') state = LexicalState.CODE;
+      } else {
+        output.append(current);
+        if (current == '*' && next == '/') {
+          output.append('/');
+          i++;
+          state = LexicalState.CODE;
+        }
+      }
+    }
+    output.append(rewriteCode(code));
+    return output.toString();
+  }
+
+  private static String rewriteCode(StringBuilder input) {
+    return input.toString()
+        .replace("System.out.println(", "console.log(")
         .replace("System.err.println(", "console.error(")
-        .replace("java.lang.IllegalStateException", "Error")
-        .replace("java.lang.IllegalArgumentException", "Error")
-        .replace("java.lang.NullPointerException", "TypeError")
-        .replace("java.lang.UnsupportedOperationException", "Error")
-        .replace("java.lang.RuntimeException", "Error")
-        .replace("java.lang.Exception", "Error")
+        .replace("new java.lang.IllegalStateException", "new Error")
+        .replace("new java.lang.IllegalArgumentException", "new Error")
+        .replace("new java.lang.NullPointerException", "new TypeError")
+        .replace("new java.lang.UnsupportedOperationException", "new Error")
+        .replace("new java.lang.RuntimeException", "new Error")
+        .replace("new java.lang.Exception", "new Error")
         .replace("java.lang.String.valueOf(", "String(")
         .replace("Integer.toString(", "String(")
         .replace("Boolean.toString(", "String(")
         .replace("Math.floorDiv(", "GoldClientRuntime.intDiv(")
         .replace("Math.floorMod(", "GoldClientRuntime.intMod(");
-    return result;
   }
 
   private static String lowerParameters(String parameters) {
