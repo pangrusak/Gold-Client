@@ -409,6 +409,10 @@ public final class JavaScriptModTranslationExporter {
   }
 
   private static String runtimeSource() {
+    return runtimeSourcePartOne() + runtimeSourcePartTwo();
+  }
+
+  private static String runtimeSourcePartOne() {
     return """
         // Small compatibility helpers used by generated JavaScript.
         // This is not a replacement for Minecraft/Forge or a full JVM runtime.
@@ -786,6 +790,11 @@ public final class JavaScriptModTranslationExporter {
           static now() { return new GoldClientJavaDate(Date.now()); }
         }
 
+        """;
+  }
+
+  private static String runtimeSourcePartTwo() {
+    return """
         class GoldClientJavaStream {
           constructor(values = []) {
             this.values = Array.from(values?.items ?? values ?? []);
@@ -1615,8 +1624,7 @@ public final class JavaScriptModTranslationExporter {
           unsupported(operation, detail = "") {
             throw new Error("Unsupported translated JVM operation: " + operation + " " + detail);
           }
-        });
-        """;
+        });        """;
   }
 
   public record ExportReport(String formatVersion, int classCount, int methodCount,
