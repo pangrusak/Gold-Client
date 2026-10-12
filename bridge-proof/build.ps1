@@ -19,6 +19,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $repo "target\gold-client-0.1.0-SNAP
 
 Push-Location $repo
 try {
+    & node --test bridge-proof\test-injector.cjs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Live player-stat injection tests failed with exit code $LASTEXITCODE"
+    }
+
     & mvn.cmd -q test-compile
     if ($LASTEXITCODE -ne 0) {
         throw "Maven test compilation failed with exit code $LASTEXITCODE"
