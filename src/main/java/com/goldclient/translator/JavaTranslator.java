@@ -109,7 +109,7 @@ public final class JavaTranslator {
         }
       }
 
-      if ("METHOD_CALL".equals(operation.kind())
+      if (("METHOD_CALL".equals(operation.kind()) || "CALL_VALUE".equals(operation.kind()))
           && i + 1 < end
           && "THROW".equals(operations.get(i + 1).kind())
           && !operation.operands().isEmpty()
