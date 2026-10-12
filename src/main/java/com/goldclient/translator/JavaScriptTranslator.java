@@ -162,7 +162,7 @@ public final class JavaScriptTranslator {
     LexicalState state = LexicalState.CODE;
     for (int i = 0; i < source.length(); i++) {
       char current = source.charAt(i);
-      char next = i + 1 < source.length() ? source.charAt(i + 1) : '\\0';
+      char next = i + 1 < source.length() ? source.charAt(i + 1) : '\0';
       if (state == LexicalState.CODE) {
         if (current == '"') {
           output.append(rewriteCode(code));
@@ -186,11 +186,11 @@ public final class JavaScriptTranslator {
         }
       } else if (state == LexicalState.STRING) {
         output.append(current);
-        if (current == '\\\\' && i + 1 < source.length()) output.append(source.charAt(++i));
+        if (current == '\\' && i + 1 < source.length()) output.append(source.charAt(++i));
         else if (current == '"') state = LexicalState.CODE;
       } else if (state == LexicalState.LINE_COMMENT) {
         output.append(current);
-        if (current == '\\n') state = LexicalState.CODE;
+        if (current == '\n') state = LexicalState.CODE;
       } else {
         output.append(current);
         if (current == '*' && next == '/') {
