@@ -1,6 +1,7 @@
 package com.goldclient.translator;
 
 import com.goldclient.model.ClassModel;
+import com.goldclient.model.FieldModel;
 import com.goldclient.model.MethodModel;
 import com.google.gson.GsonBuilder;
 import java.io.IOException;
@@ -162,13 +163,40 @@ public final class JavaScriptModTranslationExporter {
     for (var field : clazz.fields()) {
       if ((field.access() & Opcodes.ACC_STATIC) != 0) {
         module.append(className).append('.').append(field.name()).append(" = ")
-            .append(defaultValue(field.descriptor())).append(";\n");
+            .append(fieldInitializer(field, true)).append(";\n");
       }
     }
     module.append("GoldClientRuntime.registerClass(")
         .append(quote(clazz.name().replace('/', '.'))).append(", ")
         .append(className).append(", (__goldMethods.get(\"<clinit>\") ?? [])")
         .append(".find(method => method.isStatic)?.fn ?? null);\n");
+  }
+
+  private static String fieldInitializer(FieldModel field, boolean useConstant) {
+    Object value = useConstant ? field.constantValue() : null;
+    if (value == null) return defaultValue(field.descriptor());
+    String descriptor = field.descriptor();
+    if ("Z".equals(descriptor)) {
+      if (value instanceof Number number) return number.intValue() == 0 ? "false" : "true";
+      if (value instanceof Boolean bool) return bool ? "true" : "false";
+    }
+    if ("C".equals(descriptor) && value instanceof Number number) {
+      return "String.fromCharCode(" + number.intValue() + ")";
+    }
+    if (("Ljava/lang/String;".equals(descriptor) || value instanceof String)
+        && value instanceof String text) {
+      return quote(text);
+    }
+    if (value instanceof Number number) {
+      if (number instanceof Float || number instanceof Double) {
+        double d = number.doubleValue();
+        if (Double.isNaN(d)) return "Number.NaN";
+        if (d == Double.POSITIVE_INFINITY) return "Number.POSITIVE_INFINITY";
+        if (d == Double.NEGATIVE_INFINITY) return "Number.NEGATIVE_INFINITY";
+      }
+      return number.toString();
+    }
+    return defaultValue(descriptor);
   }
 
   private static String defaultValue(String descriptor) {
@@ -332,7 +360,8 @@ public final class JavaScriptModTranslationExporter {
             clazz.referencedClasses().stream().map(name -> name.replace('/', '.')).toList(),
             clazz.fields().stream().map(field -> new FieldManifest(
                 field.name(), field.descriptor(), (field.access() & Opcodes.ACC_STATIC) != 0,
-                (field.access() & Opcodes.ACC_FINAL) != 0, field.annotations())).toList(),
+                (field.access() & Opcodes.ACC_FINAL) != 0, field.annotations(),
+                field.constantValue())).toList(),
             clazz.methods().stream().map(method -> new MethodManifest(
                 method.name(), method.descriptor(),
                 (method.access() & Opcodes.ACC_STATIC) != 0,
@@ -350,7 +379,7 @@ public final class JavaScriptModTranslationExporter {
       List<String> annotations, List<String> referencedClasses,
       List<FieldManifest> fields, List<MethodManifest> methods) {}
   public record FieldManifest(String name, String descriptor, boolean isStatic, boolean isFinal,
-      List<String> annotations) {}
+      List<String> annotations, Object constantValue) {}
   public record MethodManifest(String name, String descriptor, boolean isStatic,
       boolean isAbstract, boolean isNative, List<String> annotations,
       List<String> referencedClasses) {}
