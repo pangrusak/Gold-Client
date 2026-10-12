@@ -252,15 +252,15 @@ public final class JavaScriptTranslator {
 
     // Primitive casts are compile-time hints on the JS target; int conversion
     // is explicit where Java's 32-bit semantics matter.
-    result = result.replaceAll("\\\\((?:byte|short|float|double|char)\\\\)\\\\s*(?=[A-Za-z_$0-9(])", "");
-    result = result.replaceAll("\\\\(long\\\\)\\\\s*(?=[A-Za-z_$0-9(])", "");
+    result = result.replaceAll("\\((?:byte|short|float|double|char)\\)\\s*(?=[A-Za-z_$0-9(])", "");
+    result = result.replaceAll("\\(long\\)\\s*(?=[A-Za-z_$0-9(])", "");
     result = result.replaceAll(
-        "\\\\(int\\\\)\\\\s*([A-Za-z_$][\\\\w$]*|[-+]?[0-9]+|\\\\([^()]*\\\\))",
+        "\\(int\\)\\s*([A-Za-z_$][\\w$]*|[-+]?[0-9]+|\\([^()]*\\))",
         "GoldClientRuntime.toInt32($1)");
 
     // Primitive JVM arrays must be allocated with JavaScript-compatible syntax.
     java.util.regex.Matcher array = java.util.regex.Pattern.compile(
-        "\\\\bnew\\\\s+(boolean|byte|char|short|int|long|float|double|Object)\\\\s*\\\\[([^\\\\[\\\\]]*)\\\\]")
+        "\\bnew\\s+(boolean|byte|char|short|int|long|float|double|Object)\\s*\\[([^\\[\\]]*)\\]")
         .matcher(result);
     StringBuffer arrays = new StringBuffer();
     while (array.find()) {
@@ -272,7 +272,7 @@ public final class JavaScriptTranslator {
 
     // Common Java value APIs with direct equivalents in the compatibility layer.
     java.util.regex.Matcher equals = java.util.regex.Pattern.compile(
-        "([A-Za-z_$][\\\\w$]*(?:\\\\.[A-Za-z_$][\\\\w$]*)*)\\\\.equals\\\\(([^()]*?)\\\\)")
+        "([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*)\\.equals\\(([^()]*?)\\)")
         .matcher(result);
     StringBuffer equalCalls = new StringBuffer();
     while (equals.find()) {
