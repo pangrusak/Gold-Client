@@ -10,6 +10,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class IntermediateRepresentationAnalyzerTest {
   @Test
+  void lowersLambdaMetafactoryInvokedynamicIntoAClosure() {
+    MethodModel method = method("lambda", "()V", List.of(
+        instruction(186, "INVOKEDYNAMIC", "run", "()Ljava/lang/Runnable;",
+            "Handle(6,java/lang/invoke/LambdaMetafactory,metafactory,(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;,false)",
+            "Type(()V)",
+            "Handle(6,example/Test,lambda$run$0,()V,false)",
+            "Type(()V)"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        operation.kind().equals("CALL_VALUE") && operation.operands().get(0).contains("=>")));
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        operation.kind().equals("UNSUPPORTED_DYNAMIC")));
+  }
+
+  @Test
   void reconstructsSimpleExceptionPath() {
     List<InstructionModel> instructions = List.of(
         instruction(178, "GETSTATIC", "example/Test", "CONFIG", "Lexample/Config;"),
