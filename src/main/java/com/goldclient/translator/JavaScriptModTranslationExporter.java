@@ -1164,7 +1164,16 @@ public final class JavaScriptModTranslationExporter {
           },
           create(name, ...args) {
             const constructor = this.classes.get(name);
-            if (!constructor) return this.unsupported("missing-class-adapter", name);
+            if (!constructor) {
+              const service = this.platformService(name);
+              if (service) {
+                const bindings = globalThis.window?.goldClientForgeBindings ?? globalThis.goldClientForgeBindings;
+                const target = bindings?.[service];
+                if (typeof target?.construct === "function") return target.construct(name, args);
+                return this.unsupported("missing-platform-constructor-binding", name);
+              }
+              return this.unsupported("missing-class-adapter", name);
+            }
             return Reflect.construct(constructor, args);
           },
           createJava(name, ...args) {
