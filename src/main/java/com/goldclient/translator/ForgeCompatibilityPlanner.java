@@ -176,15 +176,18 @@ public final class ForgeCompatibilityPlanner {
   private static void scanText(String text, String methodKey, String operation,
       Map<String, MutableReference> refs) {
     if (text == null || text.isEmpty()) return;
-    String normalized = text.replace('.', '/');
-    Matcher matcher = INTERNAL_OWNER.matcher(normalized);
+    // Keep dotted method separators intact so owner extraction never absorbs a method name.
+    Matcher matcher = INTERNAL_OWNER.matcher(text);
     while (matcher.find()) {
       String owner = matcher.group(1);
       if (owner.indexOf('/') >= 0) addReference(owner, methodKey, operation, refs);
     }
-    if (normalized.startsWith("net/") || normalized.startsWith("org/") || normalized.startsWith("com/")) {
-      String owner = normalized.split("[^A-Za-z0-9_$/]", 2)[0];
-      if (owner.indexOf('/') >= 0 && owner.indexOf(' ') < 0) addReference(owner, methodKey, operation, refs);
+    // ASM metadata usually uses internal names; annotations and textual operands may use
+    // binary names. Convert only the class-like prefix, never an entire method expression.
+    String candidate = text.trim();
+    if (candidate.matches("(?:net|org|com|java|javax)\\.[A-Za-z0-9_$.]+")
+        && candidate.indexOf('(') < 0) {
+      addReference(candidate.replace('.', '/'), methodKey, operation, refs);
     }
   }
 
