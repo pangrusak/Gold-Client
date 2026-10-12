@@ -391,7 +391,13 @@ public final class JavaTranslator {
     return switch (operation.kind()) {
       case "LABEL", "DROP" -> "";
       case "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
-          "DUP", "SWAP", "ARITHMETIC", "TYPE_CONVERSION", "TYPE_CHECK" -> null;
+          "ARRAY_READ", "ARRAY_LENGTH", "DUP", "SWAP", "ARITHMETIC",
+          "TYPE_CONVERSION", "TYPE_CHECK" -> null;
+      case "ARRAY_WRITE" -> operands.size() >= 3
+          ? normalizeExpression(operands.get(0)) + "["
+              + normalizeExpression(operands.get(1)) + "] = "
+              + normalizeExpression(operands.get(2)) + ";"
+          : null;
       case "LOCAL_WRITE" -> translateLocalWrite(operands, context);
       case "FIELD_WRITE" -> translateFieldWrite(operands);
       case "METHOD_CALL" -> translateMethodCall(operands);
@@ -409,7 +415,8 @@ public final class JavaTranslator {
   private static boolean isExpressionOnly(IrOperationModel operation) {
     return switch (operation.kind()) {
       case "CONSTANT", "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
-          "DUP", "SWAP", "ARITHMETIC", "TYPE_CONVERSION", "TYPE_CHECK", "DROP" -> true;
+          "ARRAY_READ", "ARRAY_LENGTH", "DUP", "SWAP", "ARITHMETIC",
+          "TYPE_CONVERSION", "TYPE_CHECK", "DROP" -> true;
       default -> false;
     };
   }

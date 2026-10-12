@@ -347,6 +347,16 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("TODO"), result.source());
   }
 
+  @Test
+  void rendersArrayStoreStatements() {
+    IrMethodModel method = new IrMethodModel("write", "([II)V", List.of(
+        new IrOperationModel("ARRAY_WRITE", List.of("array", "index", "value"), 0),
+        new IrOperationModel("RETURN", List.of(), 1)));
+    TranslationResult result = new JavaTranslator().translate(method);
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("array[index] = value;"), result.source());
+  }
+
   private static int occurrences(String text, String needle) {
     int count = 0;
     int offset = 0;

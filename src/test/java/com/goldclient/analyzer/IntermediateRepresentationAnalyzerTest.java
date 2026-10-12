@@ -106,6 +106,54 @@ class IntermediateRepresentationAnalyzerTest {
             && o.operands().get(0).equals("local1 == local2")));
   }
 
+  @Test
+  void translatesArrayLoadsStoresAndBitwiseArithmetic() {
+    List<InstructionModel> instructions = List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(21, "ILOAD", "1"),
+        instruction(21, "ILOAD", "2"),
+        instruction(126, "IAND"),
+        instruction(79, "IASTORE"),
+        instruction(25, "ALOAD", "0"),
+        instruction(21, "ILOAD", "1"),
+        instruction(46, "IALOAD"),
+        instruction(87, "POP"),
+        instruction(25, "ALOAD", "0"),
+        instruction(190, "ARRAYLENGTH"),
+        instruction(172, "IRETURN"));
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(
+        method("arrays", "([III)I", instructions));
+    assertTrue(ir.operations().stream().anyMatch(o ->
+        o.kind().equals("ARITHMETIC") && o.operands().get(0).equals("(local1 & local2)")));
+    assertTrue(ir.operations().stream().anyMatch(o ->
+        o.kind().equals("ARRAY_WRITE") && o.operands().equals(
+            List.of("local0", "local1", "(local1 & local2)"))));
+    assertTrue(ir.operations().stream().anyMatch(o ->
+        o.kind().equals("ARRAY_READ") && o.operands().get(0).equals("local0[local1]")));
+    assertTrue(ir.operations().stream().anyMatch(o ->
+        o.kind().equals("ARRAY_LENGTH") && o.operands().get(0).equals("local0.length")));
+  }
+
+  @Test
+  void translatesShiftAndUnsignedShiftOpcodes() {
+    List<InstructionModel> instructions = List.of(
+        instruction(21, "ILOAD", "1"),
+        instruction(21, "ILOAD", "2"),
+        instruction(120, "ISHL"),
+        instruction(54, "ISTORE", "3"),
+        instruction(21, "ILOAD", "3"),
+        instruction(21, "ILOAD", "2"),
+        instruction(124, "IUSHR"),
+        instruction(54, "ISTORE", "4"),
+        instruction(177, "RETURN"));
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(
+        method("shifts", "(II)V", instructions));
+    assertTrue(ir.operations().stream().anyMatch(o ->
+        o.kind().equals("LOCAL_WRITE") && o.operands().get(1).equals("(local1 << local2)")));
+    assertTrue(ir.operations().stream().anyMatch(o ->
+        o.kind().equals("LOCAL_WRITE") && o.operands().get(1).equals("(local3 >>> local2)")));
+  }
+
   private static MethodModel method(
       String name,
       String descriptor,

@@ -209,6 +209,31 @@ public final class IntermediateRepresentationAnalyzer {
       return;
     }
 
+    if (isArrayLoad(opcode)) {
+      String index = pop(stack);
+      String array = pop(stack);
+      String expression = array + "[" + index + "]";
+      stack.push(expression);
+      operations.add(op("ARRAY_READ", List.of(expression), sourceInstruction));
+      return;
+    }
+
+    if (isArrayStore(opcode)) {
+      String value = pop(stack);
+      String index = pop(stack);
+      String array = pop(stack);
+      operations.add(op("ARRAY_WRITE", List.of(array, index, value), sourceInstruction));
+      return;
+    }
+
+    if ("ARRAYLENGTH".equals(opcode)) {
+      String array = pop(stack);
+      String expression = array + ".length";
+      stack.push(expression);
+      operations.add(op("ARRAY_LENGTH", List.of(expression), sourceInstruction));
+      return;
+    }
+
     if (isStackOperation(opcode)) {
       translateStackOperation(opcode, stack, operations, sourceInstruction);
       return;
@@ -534,6 +559,12 @@ public final class IntermediateRepresentationAnalyzer {
     if (opcode.endsWith("MUL")) return "*";
     if (opcode.endsWith("DIV")) return "/";
     if (opcode.endsWith("REM")) return "%";
+    if (opcode.endsWith("AND")) return "&";
+    if (opcode.endsWith("OR")) return "|";
+    if (opcode.endsWith("XOR")) return "^";
+    if (opcode.endsWith("SHL")) return "<<";
+    if (opcode.endsWith("SHR")) return ">>";
+    if (opcode.endsWith("USHR")) return ">>>";
     return "?";
   }
 
@@ -586,7 +617,20 @@ public final class IntermediateRepresentationAnalyzer {
   private static boolean isArithmetic(String opcode) {
     return opcode.endsWith("ADD") || opcode.endsWith("SUB")
         || opcode.endsWith("MUL") || opcode.endsWith("DIV")
-        || opcode.endsWith("REM") || opcode.endsWith("NEG");
+        || opcode.endsWith("REM") || opcode.endsWith("NEG")
+        || opcode.endsWith("AND") || opcode.endsWith("OR")
+        || opcode.endsWith("XOR") || opcode.endsWith("SHL")
+        || opcode.endsWith("SHR") || opcode.endsWith("USHR");
+  }
+
+  private static boolean isArrayLoad(String opcode) {
+    return Set.of("IALOAD", "LALOAD", "FALOAD", "DALOAD", "AALOAD",
+        "BALOAD", "CALOAD", "SALOAD").contains(opcode);
+  }
+
+  private static boolean isArrayStore(String opcode) {
+    return Set.of("IASTORE", "LASTORE", "FASTORE", "DASTORE", "AASTORE",
+        "BASTORE", "CASTORE", "SASTORE").contains(opcode);
   }
 
   private static boolean isTypeConversion(String opcode) {
