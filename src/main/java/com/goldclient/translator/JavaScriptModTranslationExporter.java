@@ -654,6 +654,20 @@ public final class JavaScriptModTranslationExporter {
             }
             return method.apply(constructor, args);
           },
+          invokeInstance(receiver, methodName, ...args) {
+            if (receiver === null || receiver === undefined) {
+              throw new TypeError("NullPointerException: " + methodName);
+            }
+            if (methodName === "equals") return this.javaEquals(receiver, args[0]);
+            if (methodName === "hashCode") return this.javaHashCode(receiver);
+            if (methodName === "toString") return this.javaString(receiver);
+            if (methodName === "compareTo") return String(receiver).localeCompare(String(args[0]));
+            const method = receiver[methodName];
+            if (typeof method !== "function") {
+              return this.unsupported("missing-instance-method", methodName + " on " + String(receiver));
+            }
+            return method.apply(receiver, args);
+          },
           invoke(receiver, methods, name, args, optional = false) {
             const candidates = methods.get(name) ?? [];
             const target = candidates.find(method => !method.isStatic && method.arity === args.length);
