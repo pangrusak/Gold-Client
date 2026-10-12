@@ -585,6 +585,54 @@ public final class JavaScriptModTranslationExporter {
           static fromString(value) { return new GoldClientJavaUuid(value); }
         }
 
+        class GoldClientJavaBitSet {
+          constructor(initial = []) {
+            this.bits = new Set();
+            for (const bit of initial?.bits ?? initial ?? []) if (Number.isInteger(bit) && bit >= 0) this.bits.add(bit);
+          }
+          set(from, to, value = true) {
+            if (typeof to === "boolean") { value = to; to = from + 1; }
+            if (to === undefined) to = from + 1;
+            if (from < 0 || to < from) throw new RangeError("IndexOutOfBoundsException");
+            for (let bit = from; bit < to; bit++) value ? this.bits.add(bit) : this.bits.delete(bit);
+          }
+          get(from, to) {
+            if (to === undefined) return this.bits.has(from);
+            const result = new GoldClientJavaBitSet();
+            for (const bit of this.bits) if (bit >= from && bit < to) result.bits.add(bit - from);
+            return result;
+          }
+          clear(from, to) {
+            if (from === undefined) { this.bits.clear(); return; }
+            if (to === undefined) { this.bits.delete(from); return; }
+            for (let bit = from; bit < to; bit++) this.bits.delete(bit);
+          }
+          flip(from, to) {
+            if (to === undefined) to = from + 1;
+            if (from < 0 || to < from) throw new RangeError("IndexOutOfBoundsException");
+            for (let bit = from; bit < to; bit++) this.bits.has(bit) ? this.bits.delete(bit) : this.bits.add(bit);
+          }
+          nextSetBit(from) { return Array.from(this.bits).filter(bit => bit >= from).sort((a, b) => a - b)[0] ?? -1; }
+          nextClearBit(from) { let bit = from; while (this.bits.has(bit)) bit++; return bit; }
+          previousSetBit(from) { return Array.from(this.bits).filter(bit => bit <= from).sort((a, b) => b - a)[0] ?? -1; }
+          cardinality() { return this.bits.size; }
+          length() { return this.bits.size ? Math.max(...this.bits) + 1 : 0; }
+          isEmpty() { return this.bits.size === 0; }
+          intersects(other) { return Array.from(this.bits).some(bit => other.bits.has(bit)); }
+          and(other) { for (const bit of this.bits) if (!other.bits.has(bit)) this.bits.delete(bit); }
+          or(other) { for (const bit of other.bits) this.bits.add(bit); }
+          xor(other) { for (const bit of other.bits) this.bits.has(bit) ? this.bits.delete(bit) : this.bits.add(bit); }
+          andNot(other) { for (const bit of other.bits) this.bits.delete(bit); }
+          clone() { return new GoldClientJavaBitSet(this.bits); }
+          toArray() { return Array.from(this.bits).sort((a, b) => a - b); }
+          toString() { return "{" + this.toArray().join(", ") + "}"; }
+          static valueOf(values) {
+            const result = new GoldClientJavaBitSet();
+            Array.from(values ?? []).forEach((value, index) => { if (value) result.set(index); });
+            return result;
+          }
+        }
+
         class GoldClientJavaLocale {
           constructor(language = "", country = "", variant = "") {
             this.language = String(language).toLowerCase();
@@ -1023,6 +1071,8 @@ public final class JavaScriptModTranslationExporter {
                 return new GoldClientJavaPriorityQueue(args[0] ?? [], args[1] ?? null);
               case "java.util.Locale":
                 return new GoldClientJavaLocale(args[0] ?? "", args[1] ?? "", args[2] ?? "");
+              case "java.util.BitSet":
+                return new GoldClientJavaBitSet();
               case "java.util.Properties":
                 return new GoldClientJavaProperties(args[0] ?? []);
               case "java.util.concurrent.atomic.AtomicInteger":
@@ -1192,6 +1242,7 @@ public final class JavaScriptModTranslationExporter {
                 return;
               }
             }
+            if (owner === "java.util.BitSet" && method === "valueOf") return GoldClientJavaBitSet.valueOf(args[0]);
             if (owner === "java.util.Locale") {
               if (method === "forLanguageTag") return GoldClientJavaLocale.forLanguageTag(args[0]);
               if (method === "getDefault") return GoldClientJavaLocale.getDefault();
