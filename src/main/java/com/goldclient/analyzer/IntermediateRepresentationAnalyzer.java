@@ -273,7 +273,8 @@ public final class IntermediateRepresentationAnalyzer {
       List<String> operands = new ArrayList<>();
       operands.add(value);
       operands.addAll(instruction.operands());
-      operations.add(op("SWITCH", operands, sourceInstruction));
+      operations.add(op("TABLESWITCH".equals(opcode) ? "TABLE_SWITCH" : "LOOKUP_SWITCH",
+          operands, sourceInstruction));
       return;
     }
 
