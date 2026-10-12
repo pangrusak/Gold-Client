@@ -78,13 +78,33 @@ public final class ForgeRuntimeEvidence {
         try(View view=open(load(evidence))){return view.contains(range);}catch(Exception e){throw new IOException("Original Forge version-range evaluation failed: "+range,e);}
     }
     static void dependencies(String declarations,Path evidence,Path atJar,List<String> blockers)throws IOException {
-        for(String clause:declarations.split(";")){
-            clause=clause.trim();if(clause.isEmpty())continue;
-            var match=java.util.regex.Pattern.compile("^(required-after|after):forge(?:@(.+))?$").matcher(clause);
-            if(!match.matches()){blockers.add("Dependency/version ordering not implemented: "+clause);continue;}
-            if(evidence==null){blockers.add("Original Forge runtime evidence required: "+clause);continue;}
-            verify(evidence,atJar);String range=match.group(2);
-            if(range!=null&&!contains(evidence,atJar,range))blockers.add("Original Forge runtime version does not satisfy: "+clause);
+        List<ForgeDependencyGraph.Dependency> parsed;
+        try {
+            parsed = ForgeDependencyGraph.parse(declarations);
+        } catch (IllegalArgumentException error) {
+            blockers.add(error.getMessage());
+            return;
+        }
+        for (ForgeDependencyGraph.Dependency dependency : parsed) {
+            if (dependency.modId().equals("forge")) {
+                if (!dependency.required()) continue;
+                if (evidence == null) {
+                    blockers.add("Original Forge runtime evidence required: " + dependency.kind() + ":forge"
+                            + (dependency.versionRange().isEmpty() ? "" : "@" + dependency.versionRange()));
+                    continue;
+                }
+                verify(evidence, atJar);
+                if (!dependency.versionRange().isEmpty()
+                        && !contains(evidence, atJar, dependency.versionRange())) {
+                    blockers.add("Original Forge runtime version does not satisfy: " + dependency.kind()
+                            + ":forge@" + dependency.versionRange());
+                }
+            } else if (dependency.required()) {
+                blockers.add("Required mod dependency must be resolved by a multi-mod load plan: "
+                        + dependency.modId());
+            }
+            // Optional before/after clauses are scheduling constraints, not missing-JAR errors.
+            // ForgeDependencyGraph applies them when the referenced mod is in the supplied set.
         }
     }
 }
