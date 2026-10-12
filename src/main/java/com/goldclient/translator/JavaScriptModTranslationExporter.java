@@ -106,7 +106,6 @@ public final class JavaScriptModTranslationExporter {
   private static void appendExecutableClassWrapper(StringBuilder module, ClassModel clazz) {
     String className = "Translated_" + safeIdentifier(clazz.name().replace('/', '_').replace('.', '_'));
     List<MethodModel> methods = clazz.methods().stream()
-        .filter(method -> !"<clinit>".equals(method.name()))
         .sorted(Comparator.comparing(MethodModel::name).thenComparing(MethodModel::descriptor))
         .toList();
 
@@ -132,7 +131,14 @@ public final class JavaScriptModTranslationExporter {
     module.append("]);\n");
     module.append("export class ").append(className).append(" {\n")
         .append("  constructor(...args) {\n")
-        .append("    GoldClientRuntime.invoke(this, __goldMethods, \"<init>\", args, true);\n")
+        .append("    GoldClientRuntime.ensureInitialized(").append(className).append(");\n");
+    for (var field : clazz.fields()) {
+      if ((field.access() & Opcodes.ACC_STATIC) == 0) {
+        module.append("    this.").append(field.name()).append(" = ")
+            .append(defaultValue(field.descriptor())).append(";\n");
+      }
+    }
+    module.append("    GoldClientRuntime.invoke(this, __goldMethods, \"<init>\", args, true);\n")
         .append("  }\n");
 
     for (var entry : byName.entrySet()) {
@@ -152,10 +158,26 @@ public final class JavaScriptModTranslationExporter {
             .append(quote(name)).append(", args); }\n");
       }
     }
-    module.append("}\n")
-        .append("GoldClientRuntime.registerClass(")
+    module.append("}\n");
+    for (var field : clazz.fields()) {
+      if ((field.access() & Opcodes.ACC_STATIC) != 0) {
+        module.append(className).append('.').append(field.name()).append(" = ")
+            .append(defaultValue(field.descriptor())).append(";\n");
+      }
+    }
+    module.append("GoldClientRuntime.registerClass(")
         .append(quote(clazz.name().replace('/', '.'))).append(", ")
-        .append(className).append(");\n");
+        .append(className).append(", (__goldMethods.get(\"<clinit>\") ?? [])")
+        .append(".find(method => method.isStatic)?.fn ?? null);\n");
+  }
+
+  private static String defaultValue(String descriptor) {
+    if (descriptor == null || descriptor.isEmpty()) return "null";
+    return switch (descriptor.charAt(0)) {
+      case 'Z' -> "false";
+      case 'B', 'C', 'S', 'I', 'J', 'F', 'D' -> "0";
+      default -> "null";
+    };
   }
 
   private static int descriptorArity(String descriptor) {
@@ -479,9 +501,31 @@ public final class JavaScriptModTranslationExporter {
             return Number(value) | 0;
           },
           classes: new Map(),
-          registerClass(name, constructor) {
+          registerClass(name, constructor, staticInitializer = null) {
+            constructor.__goldStaticInitializer = staticInitializer;
+            constructor.__goldInitialized = false;
             this.classes.set(name, constructor);
             return constructor;
+          },
+          ensureInitialized(constructor) {
+            if (!constructor || constructor.__goldInitialized) return;
+            constructor.__goldInitialized = true;
+            if (typeof constructor.__goldStaticInitializer === "function") {
+              constructor.__goldStaticInitializer.call(constructor);
+            }
+          },
+          getStaticField(className, fieldName) {
+            const constructor = this.classes.get(className);
+            if (!constructor) return this.unsupported("missing-static-field-class", className);
+            this.ensureInitialized(constructor);
+            return constructor[fieldName];
+          },
+          setStaticField(className, fieldName, value) {
+            const constructor = this.classes.get(className);
+            if (!constructor) return this.unsupported("missing-static-field-class", className);
+            this.ensureInitialized(constructor);
+            constructor[fieldName] = value;
+            return value;
           },
           resolveClass(name) {
             return this.classes.get(name) ?? null;
@@ -574,6 +618,7 @@ public final class JavaScriptModTranslationExporter {
           invokeStaticClass(className, methodName, ...args) {
             const constructor = this.classes.get(className);
             if (!constructor) return this.unsupported("missing-static-class", className);
+            this.ensureInitialized(constructor);
             const method = constructor[methodName];
             if (typeof method !== "function") {
               return this.unsupported("missing-static-method", className + "." + methodName);
@@ -590,6 +635,7 @@ public final class JavaScriptModTranslationExporter {
             return target.fn.apply(receiver, args);
           },
           invokeStatic(receiver, methods, name, args) {
+            this.ensureInitialized(receiver);
             const candidates = methods.get(name) ?? [];
             const target = candidates.find(method => method.isStatic && method.arity === args.length);
             if (!target) return this.unsupported("missing-static-method", name + "/" + args.length);
