@@ -59,7 +59,7 @@ public final class JavaScriptModTranslationExporter {
         TranslationResult result = translator.translate(method.intermediateRepresentation());
         statuses.add(new MethodStatus(clazz.name(), method.name(), method.descriptor(),
             result.complete() ? "complete" : "incomplete",
-            result.complete() ? null : "Unsupported IR or unverified Java-to-JS behavior."));
+            result.complete() ? null : incompleteReason(result.source())));
         module.append(result.source()).append("\n");
       }
       Files.writeString(destination, module, StandardCharsets.UTF_8);
@@ -97,6 +97,20 @@ public final class JavaScriptModTranslationExporter {
 
   private static String quote(String value) {
     return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+  }
+
+  private static String incompleteReason(String source) {
+    java.util.regex.Matcher todo = java.util.regex.Pattern
+        .compile("(?m)^\\s*// TODO: ([^\\n]+)")
+        .matcher(source);
+    if (todo.find()) return "Untranslated IR/control-flow operation: " + todo.group(1).trim();
+    java.util.regex.Matcher audit = java.util.regex.Pattern
+        .compile("(?m)^\\s*// CONTROL-FLOW ERROR at operation ([^\\n]+)")
+        .matcher(source);
+    if (audit.find()) return "Control-flow audit: " + audit.group(1).trim();
+    if (source.contains("Unsupported JVM IR")) return "Unsupported JVM IR operation remains.";
+    if (source.contains("<exception>")) return "Exception stack value was not lowered.";
+    return "Translation emitted, but semantics or host API compatibility remain unverified.";
   }
 
   private static int count(List<MethodStatus> statuses, String status) {
