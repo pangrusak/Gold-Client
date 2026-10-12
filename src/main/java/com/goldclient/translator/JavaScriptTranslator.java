@@ -283,7 +283,7 @@ public final class JavaScriptTranslator {
     // Route fully-qualified calls on translated classes through the class registry.
     // Java standard-library calls are handled by dedicated compatibility helpers.
     java.util.regex.Matcher staticCall = java.util.regex.Pattern.compile(
-        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\w$]*\\.)*[A-Z][A-Za-z0-9_$]*)\\.([A-Za-z_$][A-Za-z0-9_$]*)\\()")
+        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\w$]*\\.)*[A-Z][A-Za-z0-9_$]*)\\.([A-Za-z_$][A-Za-z0-9_$]*)\\("
         .matcher(result);
     StringBuffer staticCalls = new StringBuffer();
     while (staticCall.find()) {
