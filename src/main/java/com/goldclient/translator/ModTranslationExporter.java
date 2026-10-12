@@ -61,7 +61,6 @@ public final class ModTranslationExporter {
           .toList();
 
       for (MethodModel method : orderedMethods) {
-        String key = clazz.name() + "#" + method.name() + method.descriptor();
         if ((method.access() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0) {
           statuses.add(new MethodStatus(
               clazz.name(), method.name(), method.descriptor(), "skipped",
@@ -85,7 +84,7 @@ public final class ModTranslationExporter {
         statuses.add(new MethodStatus(
             clazz.name(), method.name(), method.descriptor(), status,
             result.complete() ? null : "Translator emitted one or more unsupported operations.",
-            classFile.getFileName().toString()));
+            root.relativize(classFile).toString().replace('\\\\', '/')));
         output.append("// Method: ").append(method.name()).append(method.descriptor())
             .append("\n// Translation status: ").append(status).append("\n")
             .append(result.source()).append("\n\n");
