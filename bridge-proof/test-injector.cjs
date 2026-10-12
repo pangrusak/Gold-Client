@@ -32,6 +32,10 @@ test('injector exposes best-effort live player stats without fake defaults', t =
 
     const html = fs.readFileSync(output, 'utf8');
     assert.match(html, /goldClientReadPlayerSnapshot/);
+    assert.match(html, /goldClientClientApi/);
+    assert.match(html, /onClientTick: function\(listener\)/);
+    assert.match(html, /getCapabilities: function\(\)/);
+    assert.match(html, /goldClientBridgeTickListeners\[listenerIndex\]/);
     assert.match(html, /goldClientReadNestedNumber/);
     assert.match(html, /saturation:/);
     assert.match(html, /exhaustion:/);
