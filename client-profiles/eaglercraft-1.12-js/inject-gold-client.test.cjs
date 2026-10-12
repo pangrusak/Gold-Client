@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
+const vm = require('node:vm');
 
 const script = path.resolve(__dirname, 'inject-gold-client.cjs');
 
@@ -43,6 +44,37 @@ test('injects a module entrypoint without rewriting the original client', () => 
     assert.match(injected, /goldClientClientApi/);
     assert.match(injected, /goldClientReadPlayerSnapshot/);
     assert.match(injected, /blockSampling: false/);
+
+    const adapterStart = injected.indexOf('var goldClientBridgePlayerSnapshot = null;');
+    const adapterEnd = injected.indexOf('function nmc_Minecraft_runTick($this) {', adapterStart);
+    assert.ok(adapterStart >= 0 && adapterEnd > adapterStart, 'tick adapter must wrap the actual client tick');
+    const sandbox = {
+        window: {},
+        nmc_Minecraft_runTick: function(minecraft) { return minecraft; }
+    };
+    vm.runInNewContext(injected.slice(adapterStart, adapterEnd), sandbox);
+    const seen = [];
+    sandbox.window.goldClientClientApi.onClientTick(snapshot => seen.push(snapshot));
+    const minecraft = {
+        $world: {},
+        $player: {
+            $posX: -1.25, $posY: 64.75, $posZ: 8.5, $health: 17,
+            $foodStats: {
+                $foodLevel: 14,
+                $foodSaturationLevel: 5.5,
+                $foodExhaustionLevel: 1.25
+            }
+        }
+    };
+    sandbox.nmc_Minecraft_runTick(minecraft);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].connected, true);
+    assert.equal(seen[0].x, -1.25);
+    assert.equal(seen[0].health, 17);
+    assert.equal(seen[0].hunger, 14);
+    assert.equal(seen[0].saturation, 5.5);
+    assert.equal(seen[0].exhaustion, 1.25);
+    assert.equal(seen[0].capabilities.blockSampling, false);
 });
 
 test('rejects a partial translated bundle rather than emitting a broken page', () => {
