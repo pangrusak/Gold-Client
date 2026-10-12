@@ -31,6 +31,7 @@ public final class ForgeHostRuntimeExporter {
         new GsonBuilder().setPrettyPrinting().create().toJson(contract) + System.lineSeparator(),
         StandardCharsets.UTF_8);
     Files.writeString(root.resolve("forge-host-runtime.js"), runtimeSource(), StandardCharsets.UTF_8);
+    Files.writeString(root.resolve("eaglercraft-forge-entry.js"), entrypointSource(), StandardCharsets.UTF_8);
     return contract;
   }
 
@@ -79,6 +80,64 @@ public final class ForgeHostRuntimeExporter {
             "mixins, coremods, ASM transformers and access-transformer effects",
             "native methods and unsupported bytecode operations"
         ));
+  }
+
+  private static String entrypointSource() {
+    return """
+        // Browser entrypoint for a translated Forge mod bundle.
+        // The Eaglercraft-specific binding object must be installed by the real client adapter.
+        import { startForgeModsWithBindings, forgeMods, forgeLifecycleBlockers }
+          from "./forge-lifecycle.js";
+        import { assertForgeHostBindings, describeForgeHost }
+          from "./forge-host-runtime.js";
+
+        export async function startGoldClientForgeMods(bindings = globalThis.window?.goldClientForgeBindings) {
+          if (!bindings) {
+            throw new Error("Gold Client: window.goldClientForgeBindings is missing. Install a real Eaglercraft/Forge adapter first.");
+          }
+          if (forgeLifecycleBlockers.length) {
+            throw new Error("Gold Client lifecycle blockers: " + forgeLifecycleBlockers.join("; "));
+          }
+          const validation = assertForgeHostBindings(bindings);
+          const started = await startForgeModsWithBindings(bindings);
+          return Object.freeze({
+            started: Object.freeze(started),
+            modCount: forgeMods.length,
+            bindingValidation: validation,
+            host: describeForgeHost()
+          });
+        }
+
+        export function installGoldClientForgeEntrypoint(target = globalThis.window) {
+          if (!target || (typeof target !== "object" && typeof target !== "function")) {
+            throw new TypeError("Gold Client requires a browser window object");
+          }
+          const start = bindings => startGoldClientForgeMods(
+            bindings ?? target.goldClientForgeBindings
+          );
+          Object.defineProperty(target, "goldClientStartForgeMods", {
+            value: start, configurable: true, writable: false
+          });
+          Object.defineProperty(target, "goldClientForgeEntrypoint", {
+            value: Object.freeze({
+              formatVersion: "gold-eaglercraft-entry-v1",
+              start,
+              getStatus: () => ({
+                modCount: forgeMods.length,
+                blockers: forgeLifecycleBlockers.slice(),
+                bindingsInstalled: !!target.goldClientForgeBindings
+              })
+            }),
+            configurable: true,
+            writable: false
+          });
+          return target.goldClientForgeEntrypoint;
+        }
+
+        if (typeof globalThis.window !== "undefined") {
+          installGoldClientForgeEntrypoint(globalThis.window);
+        }
+        """;
   }
 
   private static String runtimeSource() {
