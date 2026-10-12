@@ -283,13 +283,18 @@ public final class JavaScriptTranslator {
     // Route fully-qualified calls on translated classes through the class registry.
     // Java standard-library calls are handled by dedicated compatibility helpers.
     java.util.regex.Matcher staticCall = java.util.regex.Pattern.compile(
-        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\\\w$]*\\\\.)*[A-Z][A-Za-z0-9_$]*)\\\\.([A-Za-z_$][A-Za-z0-9_$]*)\\\\(")
+        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\w$]*\\.)*[A-Z][A-Za-z0-9_$]*)\\.([A-Za-z_$][A-Za-z0-9_$]*)\\(")
         .matcher(result);
     StringBuffer staticCalls = new StringBuffer();
     while (staticCall.find()) {
       String owner = staticCall.group(1);
       if (owner.startsWith("java.") || owner.startsWith("javax.")
-          || owner.startsWith("org.") || owner.startsWith("com.google.")) {
+          || owner.startsWith("org.") || owner.startsWith("com.google.")
+          || owner.startsWith("GoldClientRuntime")
+          || java.util.Set.of("String", "Integer", "Boolean", "Math", "System", "Objects",
+              "Collections", "Arrays", "Character", "Long", "Double", "Float", "Byte",
+              "Short", "Thread", "Class", "Enum", "Runtime", "Throwable", "Exception",
+              "Error", "Object").contains(owner)) {
         staticCall.appendReplacement(staticCalls, java.util.regex.Matcher.quoteReplacement(staticCall.group()));
       } else {
         String replacement = "GoldClientRuntime.invokeStaticClass(" + quote(owner.replace('/', '.'))
@@ -302,7 +307,7 @@ public final class JavaScriptTranslator {
 
     // Constructor expressions for mod classes resolve through the generated registry.
     java.util.regex.Matcher allocation = java.util.regex.Pattern.compile(
-        "\\\\bnew\\\\s+((?:[a-z_$][\\\\w$]*\\\\.)+[A-Z][A-Za-z0-9_$]*)\\\\s*\\\\(")
+        "\\bnew\\s+((?:[a-z_$][\\w$]*\\.)+[A-Z][A-Za-z0-9_$]*)\\s*\\(")
         .matcher(result);
     StringBuffer allocations = new StringBuffer();
     while (allocation.find()) {
