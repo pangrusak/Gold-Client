@@ -132,7 +132,7 @@ public final class Main {
       if (translateJsDir != null) {
         com.goldclient.translator.JavaScriptModTranslationExporter.ExportReport report =
             new com.goldclient.translator.JavaScriptModTranslationExporter()
-                .export(a.classes(), Path.of(translateJsDir));
+                .export(Path.of(jar), a.classes(), Path.of(translateJsDir));
         System.out.println();
         System.out.println("=== JavaScript Translation Export ===");
         System.out.println("Output: " + Path.of(translateJsDir).toAbsolutePath().normalize());
@@ -145,6 +145,8 @@ public final class Main {
         System.out.println("Class modules: " + report.fileCount());
         System.out.println("Entry module: " + Path.of(translateJsDir).resolve("mod-index.js"));
         System.out.println("Class metadata: " + Path.of(translateJsDir).resolve("mod-manifest.json"));
+        System.out.println("Resources preserved: " + report.resourceCount());
+        System.out.println("Resource index: " + Path.of(translateJsDir).resolve("resource-index.json"));
         System.out.println("Report: " + Path.of(translateJsDir).resolve("javascript-report.txt"));
         System.out.println("Note: Minecraft/Forge APIs and loader behavior still require adapters.");
       }
