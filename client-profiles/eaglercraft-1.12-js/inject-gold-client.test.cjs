@@ -15,8 +15,12 @@ function fixture() {
     const bundle = path.join(root, 'translated-js');
     const output = path.join(root, 'out', 'client.html');
     fs.mkdirSync(bundle);
-    fs.writeFileSync(client,
-        '<!doctype html><html><head><title>Eaglercraft 1.12.2</title></head><body><main>game</main></body></html>');
+    fs.writeFileSync(client, [
+        '<!doctype html><html><head><title>Eaglercraft 1.12.2</title></head><body><main>game</main>',
+        '<script>',
+        '    function nmc_Minecraft_runTick($this) { return $this; }',
+        '</script></body></html>'
+    ].join(''));
     for (const name of [
         'eaglercraft-forge-entry.js', 'forge-lifecycle.js', 'forge-host-runtime.js',
         'gold-client-runtime.js', 'mod-index.js'
@@ -35,6 +39,10 @@ test('injects a module entrypoint without rewriting the original client', () => 
         /<script type="module" src="\.\.\/translated-js\/eaglercraft-forge-entry\.js"><\/script>/);
     assert.equal(fs.readFileSync(f.client, 'utf8'), original);
     assert.match(result.stdout, /goldClientForgeBindings/);
+    const injected = fs.readFileSync(f.output, "utf8");
+    assert.match(injected, /goldClientClientApi/);
+    assert.match(injected, /goldClientReadPlayerSnapshot/);
+    assert.match(injected, /blockSampling: false/);
 });
 
 test('rejects a partial translated bundle rather than emitting a broken page', () => {
