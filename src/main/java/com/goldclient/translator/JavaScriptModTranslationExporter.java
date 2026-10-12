@@ -1624,7 +1624,8 @@ public final class JavaScriptModTranslationExporter {
           unsupported(operation, detail = "") {
             throw new Error("Unsupported translated JVM operation: " + operation + " " + detail);
           }
-        });        """;
+        });
+        """;
   }
 
   public record ExportReport(String formatVersion, int classCount, int methodCount,
