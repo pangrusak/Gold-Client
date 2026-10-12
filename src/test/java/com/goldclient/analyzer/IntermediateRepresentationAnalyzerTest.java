@@ -54,7 +54,7 @@ class IntermediateRepresentationAnalyzerTest {
     IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
 
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("METHOD_CALL")
+        o.kind().equals("CALL_VALUE")
             && o.operands().get(0).equals(
                 "new java.lang.IllegalStateException(\"missing\")")));
 
