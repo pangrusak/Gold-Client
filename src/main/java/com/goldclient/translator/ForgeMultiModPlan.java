@@ -31,7 +31,7 @@ public final class ForgeMultiModPlan {
 
     private ForgeMultiModPlan() {}
 
-    private record LocatedMod(Path jar, ForgeDependencyGraph.Mod mod, String metadataSource) {}
+    record LocatedMod(Path jar, ForgeDependencyGraph.Mod mod, String metadataSource) {}
 
     public static void main(String[] args) throws Exception {
         if (args.length < 2) {
