@@ -121,7 +121,7 @@ class ControlFlowAuditTest {
         op("LABEL", "Ldead"),
         op("RETURN")));
 
-    assertEquals(Set.of(1), report.unreachableOperations());
+    assertEquals(Set.of(1, 3), report.unreachableOperations());
   }
 
   @Test

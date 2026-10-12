@@ -22,6 +22,17 @@ public final class JavaTranslator {
     source.append(rendered.source());
     complete &= rendered.complete();
 
+    // Validate the raw graph as well as the rendered structure. A renderer can
+    // recover readable text from malformed IR, but that text must not be marked
+    // complete when its branches or exception-table metadata are inconsistent.
+    ControlFlowAudit.Report audit = ControlFlowAudit.analyze(operations);
+    for (ControlFlowAudit.Issue issue : audit.errors()) {
+      source.append("  // CONTROL-FLOW ERROR at operation ")
+          .append(issue.operationIndex()).append(": ")
+          .append(issue.message()).append("\n");
+    }
+    complete &= audit.valid();
+
     source.append("}");
     return new TranslationResult(source.toString(), complete);
   }
