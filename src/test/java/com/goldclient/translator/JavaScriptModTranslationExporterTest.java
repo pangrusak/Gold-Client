@@ -237,7 +237,11 @@ class JavaScriptModTranslationExporterTest {
         list.add("alpha");
         list.addAll(["beta", "gamma"]);
         if (list.size() !== 3 || list.get(1) !== "beta" || !list.containsAll(["alpha", "gamma"])) throw new Error("list basics");
-        if (list.remove("beta") !== true || list.toString() !== "[alpha, gamma]") throw new Error("list removal");
+        list.add(1, "inserted");
+        if (list.toString() !== "[alpha, inserted, beta, gamma]") throw new Error("indexed list add");
+        if (list.remove("beta") !== true || list.toString() !== "[alpha, inserted, gamma]") throw new Error("list removal");
+        const copiedList = r.createJava("java.util.ArrayList", list);
+        if (copiedList.size() !== 3 || copiedList.get(1) !== "inserted") throw new Error("list copy constructor");
         if (list.subList(0, 1).get(0) !== "alpha") throw new Error("list subList");
         const map = r.createJava("java.util.HashMap");
         map.put("n", 2);
