@@ -268,6 +268,7 @@ public final class JavaScriptTranslator {
         // output parseable while the method remains marked incomplete.
         .replace("<unknown-stack>", "undefined")
         .replace("<unknown>", "undefined")
+        .replace("<exception>", "undefined")
         .replace("System.out.println(", "console.log(")
         .replace("System.err.println(", "console.error(")
         .replace("java.lang.System.out.println(", "console.log(")
