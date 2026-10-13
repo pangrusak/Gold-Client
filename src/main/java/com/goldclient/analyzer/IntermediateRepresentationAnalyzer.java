@@ -614,8 +614,15 @@ public final class IntermediateRepresentationAnalyzer {
       }
       case "POP2" -> {
         String first = pop(stack);
-        if (!isCategory2(first)) pop(stack);
-        operations.add(op("DROP", List.of(first), sourceInstruction));
+        if (isCategory2(first)) {
+          operations.add(op("DROP", List.of(first), sourceInstruction));
+        } else {
+          String second = pop(stack);
+          // The lower value was produced first, so preserve that evaluation
+          // order when POP2 discards two category-one values.
+          operations.add(op("DROP", List.of(second), sourceInstruction));
+          operations.add(op("DROP", List.of(first), sourceInstruction));
+        }
       }
       case "DUP" -> {
         String value = pop(stack);
