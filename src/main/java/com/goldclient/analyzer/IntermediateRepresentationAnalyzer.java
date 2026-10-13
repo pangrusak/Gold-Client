@@ -649,6 +649,7 @@ public final class IntermediateRepresentationAnalyzer {
       String operand = pop(stack);
       value = opcode.startsWith("I")
           ? "GoldClientRuntime.toInt32(-(" + operand + "))"
+          : opcode.startsWith("F") ? "Math.fround(-(" + operand + "))"
           : "(-" + operand + ")";
     } else {
       String right = pop(stack);
@@ -664,6 +665,7 @@ public final class IntermediateRepresentationAnalyzer {
         // do not, so lower those operations through the runtime's JVM helper.
         value = opcode.startsWith("I")
             ? "GoldClientRuntime.toInt32(" + expression + ")"
+            : opcode.startsWith("F") ? "Math.fround(" + expression + ")"
             : expression;
       }
     }
