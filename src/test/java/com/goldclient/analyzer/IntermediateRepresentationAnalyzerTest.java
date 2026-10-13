@@ -11,6 +11,27 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class IntermediateRepresentationAnalyzerTest {
   @Test
+  void wrapsIincAndEscapesStringConstants() {
+    MethodModel method = method("increment", "()V", List.of(
+        instruction(132, "IINC", "1", "1"),
+        instruction(18, "LDC", "line one\nline two\\path"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "LOCAL_WRITE".equals(operation.kind())
+            && operation.operands().get(1).contains("GoldClientRuntime.toInt32(local1 + (1))")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONSTANT".equals(operation.kind())
+            && operation.operands().get(0).contains("\\n")
+            && operation.operands().get(0).contains("\\\\path")),
+        ir.operations().toString());
+  }
+
+  @Test
   void lowersStringConcatFactoryMakeConcatIntoRuntimeConcat() {
     MethodModel method = method("concat", "(Ljava/lang/String;I)Ljava/lang/String;", List.of(
         instruction(25, "ALOAD", "0"),
