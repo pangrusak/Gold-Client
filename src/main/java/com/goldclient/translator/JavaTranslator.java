@@ -251,7 +251,11 @@ public final class JavaTranslator {
         .append(catchBody.source());
     source.append(indent(indent)).append("}\n");
     boolean complete = tryBody.complete() && catchBody.complete();
-    if (joinLabel == null && handlerEnd < end) complete = false;
+    // A handler may legitimately terminate with return/throw instead of
+    // jumping to a shared continuation. That is structured control flow, not
+    // evidence that the exception region was only partially rendered.
+    if (joinLabel == null && handlerEnd < end
+        && !isTerminal(operations.get(handlerEnd - 1))) complete = false;
     int last = joinLabel == null ? handlerEnd - 1 : handlerEnd;
     return new ConditionalRender(source.toString(), complete, last);
   }
