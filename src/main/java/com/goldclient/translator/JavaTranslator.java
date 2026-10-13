@@ -59,7 +59,10 @@ public final class JavaTranslator {
           i = guarded.lastIndex();
           continue;
         }
-        source.append(indent(indent)).append("// TODO: unsupported try/catch region\n");
+        source.append(indent(indent))
+            .append("GoldClientRuntime.unsupported(\"try-catch-region\", \"")
+            .append(escapeJava(operation.operands().toString()))
+            .append("\");\n");
         complete = false;
         continue;
       }
@@ -148,9 +151,9 @@ public final class JavaTranslator {
           continue;
 
         source.append(indent(indent))
-            .append("// TODO: JUMP ")
-            .append(operation.operands())
-            .append("\n");
+            .append("GoldClientRuntime.unsupported(\"JUMP\", \"")
+            .append(escapeJava(operation.operands().toString()))
+            .append("\");\n");
         complete = false;
         continue;
       }
