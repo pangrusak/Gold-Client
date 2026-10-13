@@ -109,6 +109,23 @@ public final class JavaTranslator {
         }
       }
 
+      if ("MONITOR".equals(operation.kind())) {
+        String opcode = operation.operands().isEmpty() ? "monitor" : operation.operands().get(0);
+        String value = operation.operands().size() > 1 ? operation.operands().get(1) : "undefined";
+        source.append(indent(indent)).append("GoldClientRuntime.unsupported(\\\"monitor\\\", \\")
+            .append(escapeJava(opcode + " on " + value))
+            .append("\\\");\\n");
+        complete = false;
+        continue;
+      }
+
+      if ("UNSUPPORTED_DYNAMIC".equals(operation.kind())) {
+        source.append(indent(indent)).append("// unsupported invokedynamic: ")
+            .append(operation.operands()).append("\\n");
+        complete = false;
+        continue;
+      }
+
       if (("METHOD_CALL".equals(operation.kind()) || "CALL_VALUE".equals(operation.kind()))
           && i + 1 < end
           && "THROW".equals(operations.get(i + 1).kind())
@@ -522,6 +539,7 @@ public final class JavaTranslator {
     return switch (operation.kind()) {
       case "LABEL" -> "";
       case "DROP" -> translateDrop(operands);
+      case "STACK_OPERATION" -> "";
       case "CALL_VALUE" -> null;
       case "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
           "ARRAY_READ", "ARRAY_LENGTH", "DUP", "SWAP", "ARITHMETIC",
@@ -548,7 +566,7 @@ public final class JavaTranslator {
   private static boolean isExpressionOnly(IrOperationModel operation) {
     return switch (operation.kind()) {
       case "CONSTANT", "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE", "CALL_VALUE",
-          "ARRAY_READ", "ARRAY_LENGTH", "DUP", "SWAP", "ARITHMETIC",
+          "ARRAY_READ", "ARRAY_LENGTH", "DUP", "SWAP", "STACK_OPERATION", "ARITHMETIC",
           "TYPE_CONVERSION", "TYPE_CHECK", "DROP" -> true;
       default -> false;
     };
