@@ -303,6 +303,34 @@ public final class IntermediateRepresentationAnalyzer {
       return;
     }
 
+    // JVM comparison instructions push -1, 0, or 1. Keep them as expressions
+    // so subsequent branches consume a real comparison result.
+    if ("LCMP".equals(opcode) || "FCMPL".equals(opcode) || "FCMPG".equals(opcode)
+        || "DCMPL".equals(opcode) || "DCMPG".equals(opcode)) {
+      String right = pop(stack);
+      String left = pop(stack);
+      String comparison;
+      if (opcode.endsWith("CMPL")) {
+        comparison = "((" + left + " < " + right + ") ? -1 : ("
+            + left + " > " + right + ") ? 1 : ("
+            + left + " == " + right + ") ? 0 : -1)";
+      } else {
+        comparison = "((" + left + " > " + right + ") ? 1 : ("
+            + left + " < " + right + ") ? -1 : ("
+            + left + " == " + right + ") ? 0 : 1)";
+      }
+      stack.push(comparison);
+      operations.add(op("ARITHMETIC", List.of(comparison), sourceInstruction));
+      return;
+    }
+
+    // JavaScript has no JVM monitor intrinsics. Preserve evaluation order and
+    // report the semantic gap explicitly instead of leaving the stack dirty.
+    if ("MONITORENTER".equals(opcode) || "MONITOREXIT".equals(opcode)) {
+      operations.add(op("MONITOR", List.of(opcode, pop(stack)), sourceInstruction));
+      return;
+    }
+
     if ("IINC".equals(opcode)) {
       String local = instruction.operands().isEmpty() ? "local?" : "local" + instruction.operands().get(0);
       String amount = instruction.operands().size() > 1 ? instruction.operands().get(1) : "1";
@@ -585,24 +613,99 @@ public final class IntermediateRepresentationAnalyzer {
         operations.add(op("DROP", List.of(value), sourceInstruction));
       }
       case "POP2" -> {
-        String value = pop(stack);
-        operations.add(op("DROP", List.of(value), sourceInstruction));
+        String first = pop(stack);
+        if (!isCategory2(first)) pop(stack);
+        operations.add(op("DROP", List.of(first), sourceInstruction));
       }
       case "DUP" -> {
         String value = pop(stack);
-        stack.push(value);
-        stack.push(value);
+        pushInOrder(stack, value, value);
         operations.add(op("DUP", List.of(value), sourceInstruction));
       }
+      case "DUP_X1" -> {
+        String v1 = pop(stack), v2 = pop(stack);
+        pushInOrder(stack, v1, v2, v1);
+        operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2), sourceInstruction));
+      }
+      case "DUP_X2" -> {
+        String v1 = pop(stack), v2 = pop(stack);
+        if (isCategory2(v2)) {
+          pushInOrder(stack, v1, v2, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2), sourceInstruction));
+        } else {
+          String v3 = pop(stack);
+          pushInOrder(stack, v1, v3, v2, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2, v3), sourceInstruction));
+        }
+      }
+      case "DUP2" -> {
+        String v1 = pop(stack);
+        if (isCategory2(v1)) {
+          pushInOrder(stack, v1, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1), sourceInstruction));
+        } else {
+          String v2 = pop(stack);
+          pushInOrder(stack, v2, v1, v2, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2), sourceInstruction));
+        }
+      }
+      case "DUP2_X1" -> {
+        String v1 = pop(stack);
+        if (isCategory2(v1)) {
+          String v2 = pop(stack);
+          pushInOrder(stack, v1, v2, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2), sourceInstruction));
+        } else {
+          String v2 = pop(stack), v3 = pop(stack);
+          pushInOrder(stack, v2, v1, v3, v2, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2, v3), sourceInstruction));
+        }
+      }
+      case "DUP2_X2" -> {
+        String v1 = pop(stack);
+        if (isCategory2(v1)) {
+          String v2 = pop(stack);
+          if (isCategory2(v2)) {
+            pushInOrder(stack, v1, v2, v1);
+            operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2), sourceInstruction));
+          } else {
+            String v3 = pop(stack);
+            pushInOrder(stack, v1, v3, v2, v1);
+            operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2, v3), sourceInstruction));
+          }
+        } else {
+          String v2 = pop(stack), v3 = pop(stack);
+          if (isCategory2(v3)) {
+            pushInOrder(stack, v2, v1, v3, v2, v1);
+            operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2, v3), sourceInstruction));
+          } else {
+            String v4 = pop(stack);
+            pushInOrder(stack, v2, v1, v4, v3, v2, v1);
+            operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2, v3, v4), sourceInstruction));
+          }
+        }
+      }
       case "SWAP" -> {
-        String first = pop(stack);
-        String second = pop(stack);
-        stack.push(first);
-        stack.push(second);
+        String first = pop(stack), second = pop(stack);
+        pushInOrder(stack, first, second);
         operations.add(op("SWAP", List.of(first, second), sourceInstruction));
       }
       default -> operations.add(op("STACK_OPERATION", List.of(opcode), sourceInstruction));
     }
+  }
+
+  // Values are supplied bottom-to-top; Deque.push() in that order leaves the
+  // intended top value at the head of the symbolic operand stack.
+  private static void pushInOrder(Deque<String> stack, String... bottomToTop) {
+    for (String value : bottomToTop) stack.push(value);
+  }
+
+  private static boolean isCategory2(String value) {
+    if (value == null) return false;
+    String expression = value.trim();
+    return expression.matches(".*(?:[0-9]+[lL]|[0-9]+(?:\\\\.[0-9]+)?[dD])$")
+        || expression.startsWith("long ") || expression.startsWith("double ")
+        || expression.contains("Long.valueOf(") || expression.contains("Double.valueOf(");
   }
 
   private static boolean isConstant(String opcode) {
