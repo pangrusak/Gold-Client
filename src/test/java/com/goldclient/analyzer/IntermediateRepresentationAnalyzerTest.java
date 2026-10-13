@@ -11,6 +11,58 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class IntermediateRepresentationAnalyzerTest {
   @Test
+  void lowersStringConcatFactoryMakeConcatIntoRuntimeConcat() {
+    MethodModel method = method("concat", "(Ljava/lang/String;I)Ljava/lang/String;", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(21, "ILOAD", "1"),
+        instruction(186, "INVOKEDYNAMIC", "makeConcat",
+            "(Ljava/lang/String;I)Ljava/lang/String;",
+            "Handle(6,java/lang/invoke/StringConcatFactory,makeConcat,()V,false)"),
+        instruction(176, "ARETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().get(0).contains("GoldClientRuntime.concat([local0, local1])")),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
+  }
+
+  @Test
+  void lowersPrimitiveNarrowingAndReferenceChecksToRuntimeCalls() {
+    MethodModel method = method("casts", "(Ljava/lang/Object;I)V", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(192, "CHECKCAST", "java/lang/String"),
+        instruction(87, "POP"),
+        instruction(21, "ILOAD", "1"),
+        instruction(145, "I2B"),
+        instruction(87, "POP"),
+        instruction(25, "ALOAD", "0"),
+        instruction(193, "INSTANCEOF", "java/lang/String"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "TYPE_CHECK".equals(operation.kind())
+            && operation.operands().stream().anyMatch(value ->
+                value.contains("GoldClientRuntime.checkCast(local0, \\"java.lang.String\\")"))),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "TYPE_CONVERSION".equals(operation.kind())
+            && operation.operands().get(1).contains("GoldClientRuntime.toByte(local1)")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "TYPE_CHECK".equals(operation.kind())
+            && operation.operands().stream().anyMatch(value ->
+                value.contains("GoldClientRuntime.instanceOf(local0, \\"java.lang.String\\")"))),
+        ir.operations().toString());
+  }
+
+  @Test
   void lowersLambdaMetafactoryInvokedynamicIntoAClosure() {
     MethodModel method = method("lambda", "()V", List.of(
         instruction(186, "INVOKEDYNAMIC", "run", "()Ljava/lang/Runnable;",
