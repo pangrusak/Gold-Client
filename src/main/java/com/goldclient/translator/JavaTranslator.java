@@ -423,7 +423,10 @@ public final class JavaTranslator {
     String target = branch.operands().get(1);
     Integer targetIndex = labels.get(labelKey(target));
 
-    if (targetIndex == null || targetIndex >= end)
+    // A branch to the exclusive end of a nested render range is a normal
+    // structured exit. Render the fall-through path under the inverse
+    // condition instead of leaking an unsupported branch marker.
+    if (targetIndex == null || targetIndex > end)
       return null;
 
     if (targetIndex <= branchIndex) {
