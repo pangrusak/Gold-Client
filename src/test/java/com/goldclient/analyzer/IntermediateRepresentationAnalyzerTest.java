@@ -11,6 +11,39 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class IntermediateRepresentationAnalyzerTest {
   @Test
+  void routesArrayLoadsStoresAndLengthsThroughRuntimeChecks() {
+    MethodModel method = method("arrays", "([II)V", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(21, "ILOAD", "1"),
+        instruction(46, "IALOAD"),
+        instruction(87, "POP"),
+        instruction(25, "ALOAD", "0"),
+        instruction(21, "ILOAD", "1"),
+        instruction(5, "ICONST_2"),
+        instruction(79, "IASTORE"),
+        instruction(25, "ALOAD", "0"),
+        instruction(190, "ARRAYLENGTH"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARRAY_READ".equals(operation.kind())
+            && operation.operands().get(0).contains("GoldClientRuntime.arrayGet(local0, local1)")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARRAY_WRITE".equals(operation.kind())
+            && operation.operands().get(0).equals("local0")
+            && operation.operands().get(1).equals("local1")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARRAY_LENGTH".equals(operation.kind())
+            && operation.operands().get(0).contains("GoldClientRuntime.arrayLength(local0)")),
+        ir.operations().toString());
+  }
+
+  @Test
   void wrapsIincAndEscapesStringConstants() {
     MethodModel method = method("increment", "()V", List.of(
         instruction(132, "IINC", "1", "1"),
