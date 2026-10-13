@@ -471,6 +471,40 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("TODO"), result.source());
   }
 
+  @Test
+  void ignoresJumpsThatOnlyCrossLabels() {
+    IrMethodModel method = new IrMethodModel(
+        "fallthroughJump",
+        "()V",
+        List.of(
+            new IrOperationModel("JUMP", List.of("[Lnext]"), 0),
+            new IrOperationModel("LABEL", List.of("Lnext"), 1),
+            new IrOperationModel("RETURN", List.of(), 2)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("return;"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void doesNotDiscardJumpsThatSkipExecutableInstructions() {
+    IrMethodModel method = new IrMethodModel(
+        "realJump",
+        "()V",
+        List.of(
+            new IrOperationModel("JUMP", List.of("Lend"), 0),
+            new IrOperationModel("METHOD_CALL", List.of("unreachable()"), 1),
+            new IrOperationModel("LABEL", List.of("Lend"), 2),
+            new IrOperationModel("RETURN", List.of(), 3)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(!result.complete(), result.source());
+    assertTrue(result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
   private static int occurrences(String text, String needle) {
     int count = 0;
     int offset = 0;
