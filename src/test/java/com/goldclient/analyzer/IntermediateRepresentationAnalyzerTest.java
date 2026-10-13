@@ -256,6 +256,23 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void lowersMultiANewArrayIntoAUsableRuntimeExpression() {
+    MethodModel method = method("matrix", "()V", List.of(
+        instruction(5, "ICONST_2"),
+        instruction(6, "ICONST_3"),
+        instruction(197, "MULTIANEWARRAY", "[[I", "2"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARRAY_CREATE".equals(operation.kind())
+            && operation.operands().contains("GoldClientRuntime.newMultiArray(\"int\", [2, 3], 2)")),
+        ir.operations().toString());
+  }
+
+  @Test
   void longCompareProducesAnExpressionForConditionalBranch() {
     MethodModel method = method("compare", "()V", List.of(
         instruction(9, "LCONST_0"),
