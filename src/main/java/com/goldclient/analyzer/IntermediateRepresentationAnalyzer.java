@@ -826,7 +826,8 @@ public final class IntermediateRepresentationAnalyzer {
   }
 
   private static boolean isConstant(String opcode) {
-    return opcode.startsWith("ICONST_")
+    return "ACONST_NULL".equals(opcode)
+        || opcode.startsWith("ICONST_")
         || opcode.startsWith("LCONST_")
         || opcode.startsWith("FCONST_")
         || opcode.startsWith("DCONST_")
@@ -837,6 +838,7 @@ public final class IntermediateRepresentationAnalyzer {
 
   private static String constantValue(InstructionModel instruction) {
     String opcode = instruction.opcodeName();
+    if ("ACONST_NULL".equals(opcode)) return "null";
     if (opcode.startsWith("ICONST_")) {
       String value = opcode.substring("ICONST_".length());
       return "M1".equals(value) ? "-1" : value;
