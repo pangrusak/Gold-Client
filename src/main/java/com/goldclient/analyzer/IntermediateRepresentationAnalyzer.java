@@ -114,6 +114,10 @@ public final class IntermediateRepresentationAnalyzer {
           handler.startLabel(), handler.endLabel(), handler.handlerLabel(),
           normalizeExceptionType(handler.exceptionType())),
           result.get(Math.min(end, result.size() - 1)).sourceInstruction()));
+      // Inserting TRY_END shifts the handler marker when the handler follows
+      // the protected range. Keep CATCH_BEGIN aligned with the handler label;
+      // otherwise the renderer starts the catch body before the real handler.
+      if (end <= catchIndex) catchIndex++;
       result.add(catchIndex, new IrOperationModel("CATCH_BEGIN", List.of(
           handler.startLabel(), handler.endLabel(), handler.handlerLabel(),
           normalizeExceptionType(handler.exceptionType())),

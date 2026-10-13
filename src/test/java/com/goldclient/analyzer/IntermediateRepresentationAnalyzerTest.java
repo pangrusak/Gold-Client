@@ -197,6 +197,28 @@ class IntermediateRepresentationAnalyzerTest {
     assertTrue(ir.operations().stream().anyMatch(o -> o.kind().equals("TRY_BEGIN")));
     assertTrue(ir.operations().stream().anyMatch(o -> o.kind().equals("TRY_END")));
     assertTrue(ir.operations().stream().anyMatch(o -> o.kind().equals("CATCH_BEGIN")));
+
+    int tryEnd = indexOfKind(ir, "TRY_END");
+    int catchBegin = indexOfKind(ir, "CATCH_BEGIN");
+    int handlerLabel = indexOfLabel(ir, "Lhandler");
+    assertTrue(tryEnd < catchBegin, ir.operations().toString());
+    assertTrue(catchBegin < handlerLabel, ir.operations().toString());
+  }
+
+  private static int indexOfKind(IrMethodModel method, String kind) {
+    for (int i = 0; i < method.operations().size(); i++) {
+      if (kind.equals(method.operations().get(i).kind())) return i;
+    }
+    return -1;
+  }
+
+  private static int indexOfLabel(IrMethodModel method, String label) {
+    for (int i = 0; i < method.operations().size(); i++) {
+      var operation = method.operations().get(i);
+      if ("LABEL".equals(operation.kind()) && !operation.operands().isEmpty()
+          && label.equals(operation.operands().get(0))) return i;
+    }
+    return -1;
   }
 
   private static MethodModel method(
