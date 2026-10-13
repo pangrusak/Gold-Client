@@ -1290,6 +1290,7 @@ public final class JavaScriptModTranslationExporter {
           },
           classes: new Map(),
           registerClass(name, constructor, staticInitializer = null) {
+            constructor.__goldClassName = name;
             constructor.__goldStaticInitializer = staticInitializer;
             constructor.__goldInitialized = false;
             this.classes.set(name, constructor);
