@@ -135,6 +135,24 @@ public final class IntermediateRepresentationAnalyzer {
     return -1;
   }
 
+  private static String multiArrayElementKind(String descriptor) {
+    if (descriptor == null || descriptor.isBlank()) return "Object";
+    int element = 0;
+    while (element < descriptor.length() && descriptor.charAt(element) == '[') element++;
+    if (element >= descriptor.length()) return "Object";
+    return switch (descriptor.charAt(element)) {
+      case 'Z' -> "boolean";
+      case 'B' -> "byte";
+      case 'C' -> "char";
+      case 'S' -> "short";
+      case 'I' -> "int";
+      case 'J' -> "long";
+      case 'F' -> "float";
+      case 'D' -> "double";
+      default -> "Object";
+    };
+  }
+
   private static String normalizeExceptionType(String type) {
     if (type == null || type.isBlank()) return "java.lang.Throwable";
     return type.replace('/', '.');
@@ -251,13 +269,16 @@ public final class IntermediateRepresentationAnalyzer {
     }
 
     if ("MULTIANEWARRAY".equals(opcode)) {
-      String descriptor = instruction.operands().isEmpty() ? "[?" : instruction.operands().get(0);
+      String descriptor = instruction.operands().isEmpty() ? "[Ljava/lang/Object;"
+          : instruction.operands().get(0);
       int dimensions = instruction.operands().size() > 1
           ? Integer.parseInt(instruction.operands().get(1)) : 1;
       List<String> dimensionsValues = new ArrayList<>();
       for (int i = 0; i < dimensions; i++)
         dimensionsValues.add(0, pop(stack));
-      String array = descriptor + " " + dimensionsValues;
+      String kind = multiArrayElementKind(descriptor);
+      String array = "GoldClientRuntime.newMultiArray(\\\"" + kind + "\\\", ["
+          + String.join(", ", dimensionsValues) + "])";
       stack.push(array);
       operations.add(op("ARRAY_CREATE", List.of(array), sourceInstruction));
       return;
