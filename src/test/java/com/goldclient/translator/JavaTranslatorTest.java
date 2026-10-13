@@ -129,6 +129,30 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void resolvesBracketedBytecodeBranchLabels() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "()V",
+        List.of(
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("local1 == 0", "[Lelse]"), 0),
+            new IrOperationModel("METHOD_CALL", List.of("foo()"), 1),
+            new IrOperationModel("JUMP", List.of("[Lend]"), 2),
+            new IrOperationModel("LABEL", List.of("Lelse"), 3),
+            new IrOperationModel("METHOD_CALL", List.of("bar()"), 4),
+            new IrOperationModel("LABEL", List.of("Lend"), 5),
+            new IrOperationModel("RETURN", List.of(), 6)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (local1 == 0) {"), result.source());
+    assertTrue(result.source().contains("foo();"), result.source());
+    assertTrue(result.source().contains("bar();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+    assertTrue(!result.source().contains("unsupported(\"CONDITIONAL_BRANCH\""), result.source());
+  }
+
+  @Test
   void translatesIfElse() {
     IrMethodModel method = new IrMethodModel(
         "test",
@@ -290,7 +314,7 @@ class JavaTranslatorTest {
     TranslationResult result = new JavaTranslator().translate(method);
 
     assertTrue(!result.complete());
-    assertTrue(result.source().contains("TODO: UNSUPPORTED"));
+    assertTrue(result.source().contains("GoldClientRuntime.unsupported(\"UNSUPPORTED\", \"x\");"), result.source());
   }
 
   @Test
@@ -365,12 +389,12 @@ class JavaTranslatorTest {
 
   @Test
   void rendersArrayStoreStatements() {
-    IrMethodModel method = new IrMethodModel("write", "([II)V", List.of(
+    IrMethodModel method = new IrMethodModel("write", "([III)V", List.of(
         new IrOperationModel("ARRAY_WRITE", List.of("array", "index", "value"), 0),
         new IrOperationModel("RETURN", List.of(), 1)));
     TranslationResult result = new JavaTranslator().translate(method);
     assertTrue(result.complete(), result.source());
-    assertTrue(result.source().contains("array[index] = value;"), result.source());
+    assertTrue(result.source().contains("GoldClientRuntime.arraySet(array, index, value);"), result.source());
   }
 
   @Test
@@ -456,4 +480,55 @@ class JavaTranslatorTest {
     }
     return count;
   }
+
+  @Test
+  void modelsJVMStackPermutationsWithoutEmittingPseudoInstructions() {
+    IrMethodModel method = new IrMethodModel(
+        "stackOps",
+        "()V",
+        List.of(
+            new IrOperationModel("STACK_OPERATION", List.of("DUP_X1", "local0", "local1"), 0),
+            new IrOperationModel("METHOD_CALL", List.of("consume(local0, local1)"), 1),
+            new IrOperationModel("RETURN", List.of(), 2)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.source().contains("consume(local0, local1);"), result.source());
+    assertTrue(!result.source().contains("TODO: STACK_OPERATION"), result.source());
+  }
+
+  @Test
+  void keepsMonitorOperationsExplicitAndMarksMethodIncomplete() {
+    IrMethodModel method = new IrMethodModel(
+        "synchronizedBlock",
+        "()V",
+        List.of(
+            new IrOperationModel("MONITOR", List.of("MONITORENTER", "local0"), 0),
+            new IrOperationModel("RETURN", List.of(), 1)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(!result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "GoldClientRuntime.unsupported(\"monitor\", \"MONITORENTER on local0\");"),
+        result.source());
+    assertTrue(!result.source().contains("TODO: MONITOR"), result.source());
+  }
+
+  @Test
+  void unsupportedDynamicCallIsVisibleButDoesNotBreakSourceStructure() {
+    IrMethodModel method = new IrMethodModel(
+        "dynamic",
+        "()V",
+        List.of(
+            new IrOperationModel("UNSUPPORTED_DYNAMIC", List.of("run", "()V"), 0),
+            new IrOperationModel("RETURN", List.of(), 1)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(!result.complete(), result.source());
+    assertTrue(result.source().contains("unsupported invokedynamic"), result.source());
+    assertTrue(result.source().contains("return;"), result.source());
+  }
+
 }

@@ -59,7 +59,10 @@ public final class JavaTranslator {
           i = guarded.lastIndex();
           continue;
         }
-        source.append(indent(indent)).append("// TODO: unsupported try/catch region\n");
+        source.append(indent(indent))
+            .append("GoldClientRuntime.unsupported(\"try-catch-region\", \"")
+            .append(escapeJava(operation.operands().toString()))
+            .append("\");\n");
         complete = false;
         continue;
       }
@@ -109,6 +112,24 @@ public final class JavaTranslator {
         }
       }
 
+      if ("MONITOR".equals(operation.kind())) {
+        String opcode = operation.operands().isEmpty() ? "monitor" : operation.operands().get(0);
+        String value = operation.operands().size() > 1 ? operation.operands().get(1) : "undefined";
+        source.append(indent(indent))
+            .append("GoldClientRuntime.unsupported(\"monitor\", \"")
+            .append(escapeJava(opcode + " on " + value))
+            .append("\");\n");
+        complete = false;
+        continue;
+      }
+
+      if ("UNSUPPORTED_DYNAMIC".equals(operation.kind())) {
+        source.append(indent(indent)).append("// unsupported invokedynamic: ")
+            .append(operation.operands()).append("\n");
+        complete = false;
+        continue;
+      }
+
       if (("METHOD_CALL".equals(operation.kind()) || "CALL_VALUE".equals(operation.kind()))
           && i + 1 < end
           && "THROW".equals(operations.get(i + 1).kind())
@@ -124,15 +145,15 @@ public final class JavaTranslator {
 
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
         String target = operation.operands().get(0);
-        Integer targetIndex = labels.get(target);
+        Integer targetIndex = labels.get(labelKey(target));
 
         if (targetIndex != null && targetIndex == end)
           continue;
 
         source.append(indent(indent))
-            .append("// TODO: JUMP ")
-            .append(operation.operands())
-            .append("\n");
+            .append("GoldClientRuntime.unsupported(\"JUMP\", \"")
+            .append(escapeJava(operation.operands().toString()))
+            .append("\");\n");
         complete = false;
         continue;
       }
@@ -142,12 +163,15 @@ public final class JavaTranslator {
         if (isExpressionOnly(operation))
           continue;
 
+        // Keep emitting syntactically valid JavaScript even when this opcode
+        // is not implemented yet. The runtime failure is explicit and retains
+        // the operation details for debugging; completeness stays false.
         source.append(indent(indent))
-            .append("// TODO: ")
-            .append(operation.kind())
-            .append(" ")
-            .append(operation.operands())
-            .append("\n");
+            .append("GoldClientRuntime.unsupported(\"")
+            .append(escapeJava(operation.kind()))
+            .append("\", \"")
+            .append(escapeJava(String.join(" | ", operation.operands())))
+            .append("\");\n");
         complete = false;
       } else if (!line.isBlank()) {
         source.append(indent(indent)).append(line).append("\n");
@@ -204,8 +228,8 @@ public final class JavaTranslator {
 
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
         String target = operation.operands().get(0);
-        Integer targetIndex = labels.get(target);
-        Integer protectedEnd = labels.get(endLabel);
+        Integer targetIndex = labels.get(labelKey(target));
+        Integer protectedEnd = labels.get(labelKey(endLabel));
         if (targetIndex != null && protectedEnd != null && targetIndex > protectedEnd) {
           handlerEnd = i;
           joinLabel = target;
@@ -297,11 +321,11 @@ public final class JavaTranslator {
       return null;
     }
 
-    Integer defaultIndex = labels.get(defaultLabel);
+    Integer defaultIndex = labels.get(labelKey(defaultLabel));
     if (defaultIndex == null || defaultIndex <= switchIndex || defaultIndex >= end) return null;
     Map<String, Integer> targetIndices = new HashMap<>();
     for (SwitchArm arm : arms) {
-      Integer target = labels.get(arm.label());
+      Integer target = labels.get(labelKey(arm.label()));
       if (target == null || target <= switchIndex || target >= end) return null;
       targetIndices.put(arm.label(), target);
     }
@@ -315,7 +339,7 @@ public final class JavaTranslator {
       IrOperationModel candidate = operations.get(index);
       if (!"JUMP".equals(candidate.kind()) || candidate.operands().isEmpty()) continue;
       String targetLabel = candidate.operands().get(0);
-      Integer targetIndex = labels.get(targetLabel);
+      Integer targetIndex = labels.get(labelKey(targetLabel));
       if (targetIndex != null && targetIndex > lastTarget && targetIndex < joinIndex) {
         joinIndex = targetIndex;
         joinLabel = targetLabel;
@@ -397,9 +421,12 @@ public final class JavaTranslator {
     IrOperationModel branch = operations.get(branchIndex);
     String condition = branch.operands().get(0);
     String target = branch.operands().get(1);
-    Integer targetIndex = labels.get(target);
+    Integer targetIndex = labels.get(labelKey(target));
 
-    if (targetIndex == null || targetIndex >= end)
+    // A branch to the exclusive end of a nested render range is a normal
+    // structured exit. Render the fall-through path under the inverse
+    // condition instead of leaking an unsupported branch marker.
+    if (targetIndex == null || targetIndex > end)
       return null;
 
     if (targetIndex <= branchIndex) {
@@ -412,7 +439,7 @@ public final class JavaTranslator {
     if (jumpIndex >= 0) {
       IrOperationModel jump = operations.get(jumpIndex);
       if (!jump.operands().isEmpty()) {
-        Integer endIndex = labels.get(jump.operands().get(0));
+        Integer endIndex = labels.get(labelKey(jump.operands().get(0)));
         if (endIndex != null && endIndex > targetIndex && endIndex <= end) {
           RenderResult fallthroughBody = renderRange(
               operations, branchIndex + 1, jumpIndex, indent + 1, context, labels);
@@ -484,7 +511,7 @@ public final class JavaTranslator {
       IrOperationModel operation = operations.get(i);
       if ("CONDITIONAL_BRANCH".equals(operation.kind())
           && operation.operands().size() >= 2
-          && label.equals(operation.operands().get(1)))
+          && labelKey(label).equals(labelKey(operation.operands().get(1))))
         return i;
     }
     return -1;
@@ -501,6 +528,16 @@ public final class JavaTranslator {
     return -1;
   }
 
+  /** Normalizes label references from bytecode dumps (for example "[L12]") to label IDs. */
+  private static String labelKey(String label) {
+    if (label == null) return "";
+    String normalized = label.trim();
+    while (normalized.length() >= 2 && normalized.startsWith("[") && normalized.endsWith("]"))
+      normalized = normalized.substring(1, normalized.length() - 1).trim();
+    if (normalized.endsWith(":")) normalized = normalized.substring(0, normalized.length() - 1).trim();
+    return normalized;
+  }
+
   private static Map<String, Integer> findLabels(
       List<IrOperationModel> operations,
       int start,
@@ -509,7 +546,7 @@ public final class JavaTranslator {
     for (int i = start; i < end; i++) {
       IrOperationModel operation = operations.get(i);
       if ("LABEL".equals(operation.kind()) && !operation.operands().isEmpty())
-        labels.put(operation.operands().get(0), i);
+        labels.put(labelKey(operation.operands().get(0)), i);
     }
     return labels;
   }
@@ -522,14 +559,16 @@ public final class JavaTranslator {
     return switch (operation.kind()) {
       case "LABEL" -> "";
       case "DROP" -> translateDrop(operands);
+      case "STACK_OPERATION" -> "";
       case "CALL_VALUE" -> null;
       case "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE",
           "ARRAY_READ", "ARRAY_LENGTH", "DUP", "SWAP", "ARITHMETIC",
           "TYPE_CONVERSION", "TYPE_CHECK" -> null;
       case "ARRAY_WRITE" -> operands.size() >= 3
-          ? normalizeExpression(operands.get(0)) + "["
-              + normalizeExpression(operands.get(1)) + "] = "
-              + normalizeExpression(operands.get(2)) + ";"
+          ? "GoldClientRuntime.arraySet("
+              + normalizeExpression(operands.get(0)) + ", "
+              + normalizeExpression(operands.get(1)) + ", "
+              + normalizeExpression(operands.get(2)) + ");"
           : null;
       case "LOCAL_WRITE" -> translateLocalWrite(operands, context);
       case "FIELD_WRITE" -> translateFieldWrite(operands);
@@ -548,7 +587,7 @@ public final class JavaTranslator {
   private static boolean isExpressionOnly(IrOperationModel operation) {
     return switch (operation.kind()) {
       case "CONSTANT", "LOCAL_READ", "FIELD_READ", "OBJECT_CREATE", "ARRAY_CREATE", "CALL_VALUE",
-          "ARRAY_READ", "ARRAY_LENGTH", "DUP", "SWAP", "ARITHMETIC",
+          "ARRAY_READ", "ARRAY_LENGTH", "DUP", "SWAP", "STACK_OPERATION", "ARITHMETIC",
           "TYPE_CONVERSION", "TYPE_CHECK", "DROP" -> true;
       default -> false;
     };

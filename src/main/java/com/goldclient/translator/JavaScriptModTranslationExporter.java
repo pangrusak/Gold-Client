@@ -1113,8 +1113,26 @@ public final class JavaScriptModTranslationExporter {
             return value;
           },
           arrayLength(value) {
-            if (value === null || value === undefined) throw new TypeError("null array");
+            if (value === null || value === undefined) throw new TypeError("NullPointerException: arraylength");
+            if (!Array.isArray(value) && typeof value.length !== "number") {
+              return this.unsupported("arraylength", "value is not an array");
+            }
             return value.length;
+          },
+          arrayIndex(value, index) {
+            if (value === null || value === undefined) throw new TypeError("NullPointerException: array access");
+            const i = Number(index);
+            if (!Number.isInteger(i) || i < 0 || i >= value.length) {
+              throw new RangeError("ArrayIndexOutOfBoundsException: " + index);
+            }
+            return i;
+          },
+          arrayGet(value, index) {
+            return value[this.arrayIndex(value, index)];
+          },
+          arraySet(value, index, element) {
+            value[this.arrayIndex(value, index)] = element;
+            return element;
           },
           newArray(kind, length) {
             const size = Number(length);
@@ -1123,6 +1141,24 @@ public final class JavaScriptModTranslationExporter {
               int: 0, long: 0, float: 0, double: 0, Object: null };
             return Array(size).fill(Object.prototype.hasOwnProperty.call(defaults, kind)
               ? defaults[kind] : null);
+          },
+          newMultiArray(kind, dimensions, totalDimensions = dimensions.length) {
+            const sizes = dimensions.map(Number);
+            for (const size of sizes) {
+              if (!Number.isInteger(size) || size < 0) throw new RangeError("invalid array length");
+            }
+            const defaults = { boolean: false, byte: 0, char: "\0", short: 0,
+              int: 0, long: 0, float: 0, double: 0, Object: null };
+            const leafDefault = Object.prototype.hasOwnProperty.call(defaults, kind)
+              ? defaults[kind] : null;
+            const allocate = depth => {
+              const size = sizes[depth];
+              if (depth === sizes.length - 1) {
+                return Array(size).fill(totalDimensions > sizes.length ? null : leafDefault);
+              }
+              return Array.from({ length: size }, () => allocate(depth + 1));
+            };
+            return sizes.length === 0 ? [] : allocate(0);
           },
           unmodifiable(collection) {
             const mutators = new Set([
@@ -1148,7 +1184,16 @@ public final class JavaScriptModTranslationExporter {
           javaString(value) {
             if (value === null || value === undefined) return "null";
             if (typeof value === "boolean") return value ? "true" : "false";
+            if (typeof value === "object") {
+              const method = value.toString;
+              if (typeof method === "function" && method !== Object.prototype.toString) {
+                return String(method.call(value));
+              }
+            }
             return String(value);
+          },
+          concat(values) {
+            return values.map(value => this.javaString(value)).join("");
           },
           javaHashCode(value) {
             if (value === null || value === undefined) return 0;
@@ -1168,8 +1213,84 @@ public final class JavaScriptModTranslationExporter {
           toInt32(value) {
             return Number(value) | 0;
           },
+          toByte(value) {
+            const number = Number(value) | 0;
+            return (number << 24) >> 24;
+          },
+          toShort(value) {
+            const number = Number(value) | 0;
+            return (number << 16) >> 16;
+          },
+          toChar(value) {
+            return (Number(value) | 0) & 0xffff;
+          },
+          floatToInt(value) {
+            const number = Number(value);
+            if (Number.isNaN(number)) return 0;
+            if (number >= 2147483647) return 2147483647;
+            if (number <= -2147483648) return -2147483648;
+            return Math.trunc(number);
+          },
+          floatToLong(value) {
+            const number = Number(value);
+            if (Number.isNaN(number)) return 0;
+            if (number >= 9223372036854775807) return 9223372036854775807;
+            if (number <= -9223372036854775808) return -9223372036854775808;
+            return Math.trunc(number);
+          },
+          checkCast(value, className) {
+            if (value === null || value === undefined) return value;
+            const constructor = this.classes.get(className);
+            if (constructor && !(value instanceof constructor)) {
+              throw new TypeError("ClassCastException: " + className);
+            }
+            return value;
+          },
+          instanceOf(value, className) {
+            if (value === null || value === undefined) return false;
+            if (className === "java.lang.Object") return true;
+            if (className.endsWith("[]")) return Array.isArray(value);
+            if (className === "java.lang.String") {
+              return typeof value === "string" || value instanceof String;
+            }
+            if (className === "java.lang.Number") return typeof value === "number";
+            if (className === "java.lang.Boolean") return typeof value === "boolean";
+            if (className === "java.lang.CharSequence") {
+              return typeof value === "string" || value instanceof String;
+            }
+            const constructor = this.classes.get(className);
+            return constructor ? value instanceof constructor : false;
+          },
+          classLiteral(className) {
+            const runtime = this;
+            return Object.freeze({
+              __goldClassName: className,
+              getName() { return className; },
+              getSimpleName() { return className.split(/[.$]/).pop(); },
+              isInstance(value) { return runtime.instanceOf(value, className); },
+              isAssignableFrom(other) {
+                const otherName = other?.__goldClassName ?? other?.name;
+                if (otherName === className || className === "java.lang.Object") return true;
+                const target = runtime.classes.get(className);
+                const source = runtime.classes.get(otherName);
+                return Boolean(target && source && source.prototype instanceof target);
+              },
+              toString() { return (className.endsWith("[]") ? "class " : "class ") + className; }
+            });
+          },
+          methodType(descriptor) {
+            return Object.freeze({
+              descriptor,
+              toString() { return descriptor; },
+              parameterCount() {
+                const args = descriptor.slice(1, descriptor.indexOf(")"));
+                return (args.match(/L[^;]+;|\\[+[^\\[;]+;?|[ZBCSIJFD]/g) ?? []).length;
+              }
+            });
+          },
           classes: new Map(),
           registerClass(name, constructor, staticInitializer = null) {
+            constructor.__goldClassName = name;
             constructor.__goldStaticInitializer = staticInitializer;
             constructor.__goldInitialized = false;
             this.classes.set(name, constructor);
@@ -1314,6 +1435,120 @@ public final class JavaScriptModTranslationExporter {
             }
           },
           invokeJavaStatic(owner, method, ...args) {
+            if (owner === "java.lang.reflect.Array") {
+              if (method === "getLength") return this.arrayLength(args[0]);
+              if (method === "get") return this.arrayGet(args[0], args[1]);
+              if (method === "set") return this.arraySet(args[0], args[1], args[2]);
+              if (method === "getBoolean" || method === "getByte" || method === "getChar"
+                  || method === "getShort" || method === "getInt" || method === "getLong"
+                  || method === "getFloat" || method === "getDouble") {
+                return this.arrayGet(args[0], args[1]);
+              }
+              if (method === "setBoolean" || method === "setByte" || method === "setChar"
+                  || method === "setShort" || method === "setInt" || method === "setLong"
+                  || method === "setFloat" || method === "setDouble") {
+                return this.arraySet(args[0], args[1], args[2]);
+              }
+              if (method === "newInstance") {
+                const type = args[0]?.__goldClassName ?? "java.lang.Object";
+                const kind = ({ boolean: "boolean", byte: "byte", char: "char", short: "short",
+                  int: "int", long: "long", float: "float", double: "double" })[type] ?? "Object";
+                const dimensions = Array.isArray(args[1]) ? args[1] : [args[1]];
+                if (dimensions.length === 1) return this.newArray(kind, dimensions[0]);
+                return this.newMultiArray(kind, dimensions, dimensions.length);
+              }
+            }
+            if (owner === "java.lang.System") {
+              if (method === "identityHashCode") return this.javaHashCode(args[0]);
+              if (method === "currentTimeMillis") return Date.now();
+              if (method === "nanoTime") return Date.now() * 1000000;
+              if (method === "lineSeparator") return "\\n";
+              if (method === "getProperty") {
+                const properties = { "line.separator": "\\n", "file.separator": "/", "path.separator": ":" };
+                return properties[args[0]] ?? args[1] ?? null;
+              }
+              if (method === "gc") return;
+            }
+            if (owner === "java.util.Objects") {
+              if (method === "equals") return this.javaEquals(args[0], args[1]);
+              if (method === "deepEquals") {
+                const a = args[0], b = args[1];
+                return Array.isArray(a) && Array.isArray(b)
+                  ? a.length === b.length && a.every((value, index) => this.javaEquals(value, b[index]))
+                  : this.javaEquals(a, b);
+              }
+              if (method === "hashCode") return this.javaHashCode(args[0]);
+              if (method === "hash") return args.reduce((hash, value) =>
+                (Math.imul(hash, 31) + this.javaHashCode(value)) | 0, 1);
+              if (method === "toString") return args[0] == null ? args[1] : this.javaString(args[0]);
+              if (method === "isNull") return args[0] == null;
+              if (method === "nonNull") return args[0] != null;
+              if (method === "requireNonNull") {
+                return this.requireNonNull(args[0], args[1] ?? "null");
+              }
+              if (method === "compare") {
+                const a = args[0], b = args[1];
+                return a < b ? -1 : a > b ? 1 : 0;
+              }
+            }
+            if (owner === "java.lang.Class" && method === "forName") {
+              return this.classLiteral(String(args[0]).replace(/\\//g, "."));
+            }
+            if (owner === "java.lang.String") {
+              if (method === "valueOf") return args[0] == null ? "null" : this.javaString(args[0]);
+              if (method === "join") {
+                const delimiter = String(args[0]);
+                const values = args.length > 2 ? args.slice(1) : Array.from(args[1] ?? []);
+                return values.map(value => value == null ? "" : this.javaString(value)).join(delimiter);
+              }
+              if (method === "format") {
+                let index = 1;
+                return String(args[0]).replace(/%([sdif%])/g, (match, specifier) => {
+                  if (specifier === "%") return "%";
+                  const value = args[index++];
+                  if (specifier === "d" || specifier === "i") return String(Number(value) | 0);
+                  if (specifier === "f") return String(Number(value));
+                  return this.javaString(value);
+                });
+              }
+            }
+            if (owner === "java.lang.Integer" || owner === "java.lang.Short"
+                || owner === "java.lang.Byte") {
+              if (method === "parseInt" || method === "parseShort" || method === "parseByte") {
+                const radix = args[1] == null ? 10 : Number(args[1]);
+                const value = Number.parseInt(String(args[0]), radix);
+                if (!Number.isInteger(value)) throw new TypeError("NumberFormatException: " + args[0]);
+                if (method === "parseShort" && (value < -32768 || value > 32767)) throw new RangeError("NumberFormatException");
+                if (method === "parseByte" && (value < -128 || value > 127)) throw new RangeError("NumberFormatException");
+                return value | 0;
+              }
+              if (method === "valueOf") return Number(args[0]) | 0;
+              if (method === "toString") return String(Number(args[0]) | 0);
+              if (method === "compare") return Math.sign((Number(args[0]) | 0) - (Number(args[1]) | 0));
+              if (method === "sum") return (Number(args[0]) + Number(args[1])) | 0;
+              if (method === "max") return Math.max(Number(args[0]) | 0, Number(args[1]) | 0);
+              if (method === "min") return Math.min(Number(args[0]) | 0, Number(args[1]) | 0);
+              if (method === "bitCount") {
+                let value = Number(args[0]) | 0, count = 0;
+                while (value) { count += value & 1; value >>>= 1; }
+                return count;
+              }
+              if (method === "numberOfLeadingZeros") {
+                const value = Number(args[0]) | 0;
+                return value === 0 ? 32 : Math.clz32(value);
+              }
+              if (method === "numberOfTrailingZeros") {
+                const value = Number(args[0]) | 0;
+                return value === 0 ? 32 : 31 - Math.clz32(value & -value);
+              }
+            }
+            if (owner === "java.lang.Boolean") {
+              if (method === "parseBoolean") return String(args[0]).toLowerCase() === "true";
+              if (method === "valueOf") return typeof args[0] === "boolean"
+                ? args[0] : String(args[0]).toLowerCase() === "true";
+              if (method === "toString") return args[0] ? "true" : "false";
+              if (method === "compare") return args[0] === args[1] ? 0 : args[0] ? 1 : -1;
+            }
             if (owner === "java.lang.Math") {
               if (method === "floorDiv") return this.floorDiv(args[0], args[1]);
               if (method === "floorMod") return this.floorMod(args[0], args[1]);
@@ -1646,7 +1881,15 @@ public final class JavaScriptModTranslationExporter {
             if (methodName === "equals") return this.javaEquals(receiver, args[0]);
             if (methodName === "hashCode") return this.javaHashCode(receiver);
             if (methodName === "toString") return this.javaString(receiver);
-            if (methodName === "compareTo") return String(receiver).localeCompare(String(args[0]));
+            if (methodName === "getClass") {
+              if (Array.isArray(receiver)) return this.classLiteral("java.lang.Object[]");
+              return this.classLiteral(receiver?.constructor?.__goldClassName ?? "java.lang.Object");
+            }
+            if (Array.isArray(receiver) && methodName === "clone") return receiver.slice();
+            if (methodName === "compareTo") {
+              const a = String(receiver), b = String(args[0]);
+              return a < b ? -1 : a > b ? 1 : 0;
+            }
             if (typeof receiver === "string" || receiver instanceof String) {
               const value = String(receiver);
               switch (methodName) {
@@ -1655,11 +1898,22 @@ public final class JavaScriptModTranslationExporter {
                 case "charAt":
                   if (args[0] < 0 || args[0] >= value.length) throw new RangeError("StringIndexOutOfBoundsException");
                   return value.charAt(args[0]);
-                case "substring":
-                  if (args.length === 1) return value.substring(args[0]);
-                  if (args[0] > args[1]) throw new RangeError("StringIndexOutOfBoundsException");
-                  return value.substring(args[0], args[1]);
-                case "subSequence": return value.substring(args[0], args[1]);
+                case "substring": {
+                  const start = Number(args[0]);
+                  const end = args.length === 1 ? value.length : Number(args[1]);
+                  if (!Number.isInteger(start) || !Number.isInteger(end)
+                      || start < 0 || end < start || end > value.length) {
+                    throw new RangeError("StringIndexOutOfBoundsException");
+                  }
+                  return value.substring(start, end);
+                }
+                case "subSequence": {
+                  const start = Number(args[0]), end = Number(args[1]);
+                  if (start < 0 || end < start || end > value.length) {
+                    throw new RangeError("StringIndexOutOfBoundsException");
+                  }
+                  return value.substring(start, end);
+                }
                 case "contains": return value.includes(String(args[0]));
                 case "startsWith": return value.startsWith(String(args[0]), args[1] ?? 0);
                 case "endsWith": return value.endsWith(String(args[0]));
@@ -1672,7 +1926,10 @@ public final class JavaScriptModTranslationExporter {
                 case "stripLeading": return value.trimStart();
                 case "stripTrailing": return value.trimEnd();
                 case "equalsIgnoreCase": return value.toLowerCase() === String(args[0]).toLowerCase();
-                case "compareToIgnoreCase": return value.toLowerCase().localeCompare(String(args[0]).toLowerCase());
+                case "compareToIgnoreCase": {
+                  const a = value.toLowerCase(), b = String(args[0]).toLowerCase();
+                  return a < b ? -1 : a > b ? 1 : 0;
+                }
                 case "matches": return new RegExp("^(?:" + args[0] + ")$").test(value);
                 case "replace": return value.split(String(args[0])).join(String(args[1]));
                 case "replaceAll": return value.replace(new RegExp(args[0], "g"), String(args[1]));
@@ -1680,7 +1937,11 @@ public final class JavaScriptModTranslationExporter {
                 case "split": return value.split(new RegExp(args[0]), args[1] === 0 ? undefined : args[1]);
                 case "toCharArray": return Array.from(value);
                 case "getBytes": return Array.from(new TextEncoder().encode(value));
-                case "repeat": return value.repeat(Math.max(0, args[0] | 0));
+                case "repeat": {
+                  const count = Number(args[0]);
+                  if (!Number.isInteger(count) || count < 0) throw new RangeError("IllegalArgumentException");
+                  return value.repeat(count);
+                }
                 case "isBlank": return value.trim().length === 0;
                 case "codePointAt": return value.codePointAt(args[0]);
               }

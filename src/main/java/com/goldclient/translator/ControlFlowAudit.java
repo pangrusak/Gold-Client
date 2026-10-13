@@ -48,7 +48,7 @@ public final class ControlFlowAudit {
     for (int index = 0; index < operations.size(); index++) {
       IrOperationModel operation = operations.get(index);
       if (!"LABEL".equals(operation.kind()) || operation.operands().isEmpty()) continue;
-      String name = operation.operands().get(0);
+      String name = labelKey(operation.operands().get(0));
       Integer previous = labels.putIfAbsent(name, index);
       if (previous != null) {
         issues.add(new Issue(Severity.ERROR, index,
@@ -149,7 +149,7 @@ public final class ControlFlowAudit {
   private static void addNamedTarget(
       int index, String name, Map<String, Integer> labels,
       Set<Integer> targets, List<Issue> issues) {
-    Integer target = labels.get(name);
+    Integer target = labels.get(labelKey(name));
     if (target == null) {
       issues.add(new Issue(Severity.ERROR, index, "unresolved branch target '" + name + "'"));
     } else {
@@ -180,12 +180,13 @@ public final class ControlFlowAudit {
       String start = metadata.get(0);
       String end = metadata.get(1);
       String handler = metadata.get(2);
-      if (!labels.containsKey(start) || !labels.containsKey(end) || !labels.containsKey(handler)) {
+      if (!labels.containsKey(labelKey(start)) || !labels.containsKey(labelKey(end))
+          || !labels.containsKey(labelKey(handler))) {
         issues.add(new Issue(Severity.ERROR, index,
             operation.kind() + " references an undefined protected-range label"));
         continue;
       }
-      if (labels.get(start) >= labels.get(end)) {
+      if (labels.get(labelKey(start)) >= labels.get(labelKey(end))) {
         issues.add(new Issue(Severity.ERROR, index,
             "exception protected range must start before its end label"));
       }
@@ -211,8 +212,17 @@ public final class ControlFlowAudit {
   }
 
   private static String exceptionKey(List<String> metadata) {
-    return metadata.get(0) + "|" + metadata.get(1) + "|" + metadata.get(2) + "|"
-        + metadata.get(3);
+    return labelKey(metadata.get(0)) + "|" + labelKey(metadata.get(1)) + "|"
+        + labelKey(metadata.get(2)) + "|" + metadata.get(3);
+  }
+
+  private static String labelKey(String label) {
+    if (label == null) return "";
+    String normalized = label.trim();
+    while (normalized.length() >= 2 && normalized.startsWith("[") && normalized.endsWith("]"))
+      normalized = normalized.substring(1, normalized.length() - 1).trim();
+    if (normalized.endsWith(":")) normalized = normalized.substring(0, normalized.length() - 1).trim();
+    return normalized;
   }
 
   private static boolean isExceptionMarker(String kind) {

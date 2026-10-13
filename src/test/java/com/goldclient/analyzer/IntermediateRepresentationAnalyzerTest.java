@@ -11,6 +11,154 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class IntermediateRepresentationAnalyzerTest {
   @Test
+  void translatesAconstNullAsARealNullConstant() {
+    MethodModel method = method("nullValue", "()V", List.of(
+        instruction(1, "ACONST_NULL"),
+        instruction(58, "ASTORE", "0"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONSTANT".equals(operation.kind())
+            && operation.operands().equals(List.of("null"))),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_OPCODE".equals(operation.kind())
+            && operation.operands().contains("ACONST_NULL")),
+        ir.operations().toString());
+  }
+
+  @Test
+  void translatesClassAndMethodTypeConstants() {
+    MethodModel method = method("reflection", "()V", List.of(
+        instruction(18, "LDC", "Type(Ljava/lang/String;)"),
+        instruction(87, "POP"),
+        instruction(18, "LDC", "Type((Ljava/lang/String;)I)"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONSTANT".equals(operation.kind())
+            && operation.operands().get(0).contains(
+                "GoldClientRuntime.classLiteral(\"java.lang.String\")")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONSTANT".equals(operation.kind())
+            && operation.operands().get(0).contains(
+                "GoldClientRuntime.methodType(\"(Ljava/lang/String;)I\")")),
+        ir.operations().toString());
+  }
+
+  @Test
+  void routesArrayLoadsStoresAndLengthsThroughRuntimeChecks() {
+    MethodModel method = method("arrays", "([II)V", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(21, "ILOAD", "1"),
+        instruction(46, "IALOAD"),
+        instruction(87, "POP"),
+        instruction(25, "ALOAD", "0"),
+        instruction(21, "ILOAD", "1"),
+        instruction(5, "ICONST_2"),
+        instruction(79, "IASTORE"),
+        instruction(25, "ALOAD", "0"),
+        instruction(190, "ARRAYLENGTH"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARRAY_READ".equals(operation.kind())
+            && operation.operands().get(0).contains("GoldClientRuntime.arrayGet(local0, local1)")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARRAY_WRITE".equals(operation.kind())
+            && operation.operands().get(0).equals("local0")
+            && operation.operands().get(1).equals("local1")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARRAY_LENGTH".equals(operation.kind())
+            && operation.operands().get(0).contains("GoldClientRuntime.arrayLength(local0)")),
+        ir.operations().toString());
+  }
+
+  @Test
+  void wrapsIincAndEscapesStringConstants() {
+    MethodModel method = method("increment", "()V", List.of(
+        instruction(132, "IINC", "1", "1"),
+        instruction(18, "LDC", "line one\nline two\\path"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "LOCAL_WRITE".equals(operation.kind())
+            && operation.operands().get(1).contains("GoldClientRuntime.toInt32(local1 + (1))")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONSTANT".equals(operation.kind())
+            && operation.operands().get(0).contains("\\n")
+            && operation.operands().get(0).contains("\\\\path")),
+        ir.operations().toString());
+  }
+
+  @Test
+  void lowersStringConcatFactoryMakeConcatIntoRuntimeConcat() {
+    MethodModel method = method("concat", "(Ljava/lang/String;I)Ljava/lang/String;", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(21, "ILOAD", "1"),
+        instruction(186, "INVOKEDYNAMIC", "makeConcat",
+            "(Ljava/lang/String;I)Ljava/lang/String;",
+            "Handle(6,java/lang/invoke/StringConcatFactory,makeConcat,()V,false)"),
+        instruction(176, "ARETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().get(0).contains("GoldClientRuntime.concat([local0, local1])")),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
+  }
+
+  @Test
+  void lowersPrimitiveNarrowingAndReferenceChecksToRuntimeCalls() {
+    MethodModel method = method("casts", "(Ljava/lang/Object;I)V", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(192, "CHECKCAST", "java/lang/String"),
+        instruction(87, "POP"),
+        instruction(21, "ILOAD", "1"),
+        instruction(145, "I2B"),
+        instruction(87, "POP"),
+        instruction(25, "ALOAD", "0"),
+        instruction(193, "INSTANCEOF", "java/lang/String"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "TYPE_CHECK".equals(operation.kind())
+            && operation.operands().stream().anyMatch(value ->
+                value.contains("GoldClientRuntime.checkCast(local0, \"java.lang.String\")"))),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "TYPE_CONVERSION".equals(operation.kind())
+            && operation.operands().get(1).contains("GoldClientRuntime.toByte(local1)")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "TYPE_CHECK".equals(operation.kind())
+            && operation.operands().stream().anyMatch(value ->
+                value.contains("GoldClientRuntime.instanceOf(local0, \"java.lang.String\")"))),
+        ir.operations().toString());
+  }
+
+  @Test
   void lowersLambdaMetafactoryInvokedynamicIntoAClosure() {
     MethodModel method = method("lambda", "()V", List.of(
         instruction(186, "INVOKEDYNAMIC", "run", "()Ljava/lang/Runnable;",
@@ -143,14 +291,14 @@ class IntermediateRepresentationAnalyzerTest {
     IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(
         method("arrays", "([III)I", instructions));
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("ARITHMETIC") && o.operands().get(0).equals("(local1 & local2)")));
+        o.kind().equals("ARITHMETIC") && o.operands().get(0).equals("GoldClientRuntime.toInt32((local1 & local2))")));
     assertTrue(ir.operations().stream().anyMatch(o ->
         o.kind().equals("ARRAY_WRITE") && o.operands().equals(
-            List.of("local0", "local1", "(local1 & local2)"))));
+            List.of("local0", "local1", "GoldClientRuntime.toInt32((local1 & local2))"))));
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("ARRAY_READ") && o.operands().get(0).equals("local0[local1]")));
+        o.kind().equals("ARRAY_READ") && o.operands().get(0).equals("GoldClientRuntime.arrayGet(local0, local1)")));
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("ARRAY_LENGTH") && o.operands().get(0).equals("local0.length")));
+        o.kind().equals("ARRAY_LENGTH") && o.operands().get(0).equals("GoldClientRuntime.arrayLength(local0)")));
   }
 
   @Test
@@ -168,9 +316,9 @@ class IntermediateRepresentationAnalyzerTest {
     IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(
         method("shifts", "(II)V", instructions));
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("LOCAL_WRITE") && o.operands().get(1).equals("(local1 << local2)")));
+        o.kind().equals("LOCAL_WRITE") && o.operands().get(1).equals("GoldClientRuntime.toInt32((local1 << local2))")));
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("LOCAL_WRITE") && o.operands().get(1).equals("(local3 >>> local2)")));
+        o.kind().equals("LOCAL_WRITE") && o.operands().get(1).equals("GoldClientRuntime.toInt32((local3 >>> local2))")));
   }
 
   @Test
@@ -203,6 +351,139 @@ class IntermediateRepresentationAnalyzerTest {
     int handlerLabel = indexOfLabel(ir, "Lhandler");
     assertTrue(tryEnd < catchBegin, ir.operations().toString());
     assertTrue(catchBegin < handlerLabel, ir.operations().toString());
+  }
+
+  @Test
+  void floatArithmeticRoundsAtEachJvmOperation() {
+    MethodModel method = method("floatMath", "()V", List.of(
+        instruction(11, "FCONST_0"),
+        instruction(12, "FCONST_1"),
+        instruction(98, "FADD"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARITHMETIC".equals(operation.kind())
+            && operation.operands().get(0).contains("Math.fround((0F + 1F))")),
+        ir.operations().toString());
+  }
+
+  @Test
+  void integerArithmeticUsesJavaOverflowAndDivisionHelpers() {
+    MethodModel method = method("integerMath", "()V", List.of(
+        instruction(4, "ICONST_1"),
+        instruction(5, "ICONST_2"),
+        instruction(96, "IADD"),
+        instruction(87, "POP"),
+        instruction(4, "ICONST_1"),
+        instruction(5, "ICONST_2"),
+        instruction(108, "IDIV"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARITHMETIC".equals(operation.kind())
+            && operation.operands().contains("GoldClientRuntime.toInt32((1 + 2))")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARITHMETIC".equals(operation.kind())
+            && operation.operands().contains("GoldClientRuntime.intDiv(1, 2)")),
+        ir.operations().toString());
+  }
+
+  @Test
+  void unsupportedOpcodesKeepTheirOriginalNamesInSemanticIr() {
+    MethodModel method = method("unsupported", "()V", List.of(
+        instruction(202, "BREAKPOINT"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_OPCODE".equals(operation.kind())
+            && operation.operands().contains("BREAKPOINT")),
+        ir.operations().toString());
+  }
+
+  @Test
+  void dupX1PreservesOperandOrderForTheNextStaticCall() {
+    MethodModel method = method("stack", "()V", List.of(
+        instruction(4, "ICONST_1"),
+        instruction(5, "ICONST_2"),
+        instruction(90, "DUP_X1"),
+        instruction(184, "INVOKESTATIC", "example/Owner", "consume", "(II)V", "false"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "METHOD_CALL".equals(operation.kind())
+            && operation.operands().contains("example.Owner.consume(1, 2)")),
+        ir.operations().toString());
+  }
+
+  @Test
+  void dup2AndPop2TreatLongAsOneCategoryTwoValue() {
+    MethodModel method = method("wideStack", "()V", List.of(
+        instruction(9, "LCONST_0"),
+        instruction(92, "DUP2"),
+        instruction(88, "POP2"),
+        instruction(88, "POP2"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().filter(operation ->
+        "DROP".equals(operation.kind())).count() == 2, ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        operation.operands().stream().anyMatch(value -> value.contains("<unknown>"))),
+        ir.operations().toString());
+  }
+
+  @Test
+  void lowersMultiANewArrayIntoAUsableRuntimeExpression() {
+    MethodModel method = method("matrix", "()V", List.of(
+        instruction(5, "ICONST_2"),
+        instruction(6, "ICONST_3"),
+        instruction(197, "MULTIANEWARRAY", "[[I", "2"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARRAY_CREATE".equals(operation.kind())
+            && operation.operands().contains("GoldClientRuntime.newMultiArray(\"int\", [2, 3], 2)")),
+        ir.operations().toString());
+  }
+
+  @Test
+  void longCompareProducesAnExpressionForConditionalBranch() {
+    MethodModel method = method("compare", "()V", List.of(
+        instruction(9, "LCONST_0"),
+        instruction(10, "LCONST_1"),
+        instruction(148, "LCMP"),
+        instruction(153, "IFEQ", "L0"),
+        instruction(177, "RETURN"),
+        instruction(-1, "LABEL", "L0"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARITHMETIC".equals(operation.kind())
+            && operation.operands().get(0).contains("0L")
+            && operation.operands().get(0).contains("1L")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONDITIONAL_BRANCH".equals(operation.kind())
+            && operation.operands().get(0).contains("== 0")),
+        ir.operations().toString());
   }
 
   private static int indexOfKind(IrMethodModel method, String kind) {

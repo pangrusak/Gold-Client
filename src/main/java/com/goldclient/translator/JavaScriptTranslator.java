@@ -435,7 +435,7 @@ public final class JavaScriptTranslator {
 
     // Primitive JVM arrays must be allocated with JavaScript-compatible syntax.
     java.util.regex.Matcher array = java.util.regex.Pattern.compile(
-        "\\bnew\\s+(boolean|byte|char|short|int|long|float|double|Object)\\s*\\[([^\\[\\]]*)\\]")
+        "\\bnew\\s+(boolean|byte|char|short|int|long|float|double|Object|(?:[a-z_$][\\w$]*\\.)*[A-Z_$][\\w$]*(?:\\$[A-Za-z_$][\\w$]*)*)\\s*\\[([^\\[\\]]*)\\]")
         .matcher(result);
     StringBuffer arrays = new StringBuffer();
     while (array.find()) {

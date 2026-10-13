@@ -135,6 +135,31 @@ public final class IntermediateRepresentationAnalyzer {
     return -1;
   }
 
+  private static int multiArrayDepth(String descriptor) {
+    if (descriptor == null) return 1;
+    int depth = 0;
+    while (depth < descriptor.length() && descriptor.charAt(depth) == '[') depth++;
+    return Math.max(1, depth);
+  }
+
+  private static String multiArrayElementKind(String descriptor) {
+    if (descriptor == null || descriptor.isBlank()) return "Object";
+    int element = 0;
+    while (element < descriptor.length() && descriptor.charAt(element) == '[') element++;
+    if (element >= descriptor.length()) return "Object";
+    return switch (descriptor.charAt(element)) {
+      case 'Z' -> "boolean";
+      case 'B' -> "byte";
+      case 'C' -> "char";
+      case 'S' -> "short";
+      case 'I' -> "int";
+      case 'J' -> "long";
+      case 'F' -> "float";
+      case 'D' -> "double";
+      default -> "Object";
+    };
+  }
+
   private static String normalizeExceptionType(String type) {
     if (type == null || type.isBlank()) return "java.lang.Throwable";
     return type.replace('/', '.');
@@ -251,13 +276,16 @@ public final class IntermediateRepresentationAnalyzer {
     }
 
     if ("MULTIANEWARRAY".equals(opcode)) {
-      String descriptor = instruction.operands().isEmpty() ? "[?" : instruction.operands().get(0);
+      String descriptor = instruction.operands().isEmpty() ? "[Ljava/lang/Object;"
+          : instruction.operands().get(0);
       int dimensions = instruction.operands().size() > 1
           ? Integer.parseInt(instruction.operands().get(1)) : 1;
       List<String> dimensionsValues = new ArrayList<>();
       for (int i = 0; i < dimensions; i++)
         dimensionsValues.add(0, pop(stack));
-      String array = descriptor + " " + dimensionsValues;
+      String kind = multiArrayElementKind(descriptor);
+      String array = "GoldClientRuntime.newMultiArray(\"" + kind + "\", ["
+          + String.join(", ", dimensionsValues) + "], " + multiArrayDepth(descriptor) + ")";
       stack.push(array);
       operations.add(op("ARRAY_CREATE", List.of(array), sourceInstruction));
       return;
@@ -266,7 +294,7 @@ public final class IntermediateRepresentationAnalyzer {
     if (isArrayLoad(opcode)) {
       String index = pop(stack);
       String array = pop(stack);
-      String expression = array + "[" + index + "]";
+      String expression = "GoldClientRuntime.arrayGet(" + array + ", " + index + ")";
       stack.push(expression);
       operations.add(op("ARRAY_READ", List.of(expression), sourceInstruction));
       return;
@@ -282,7 +310,7 @@ public final class IntermediateRepresentationAnalyzer {
 
     if ("ARRAYLENGTH".equals(opcode)) {
       String array = pop(stack);
-      String expression = array + ".length";
+      String expression = "GoldClientRuntime.arrayLength(" + array + ")";
       stack.push(expression);
       operations.add(op("ARRAY_LENGTH", List.of(expression), sourceInstruction));
       return;
@@ -303,17 +331,53 @@ public final class IntermediateRepresentationAnalyzer {
       return;
     }
 
+    // JVM comparison instructions push -1, 0, or 1. Keep them as expressions
+    // so subsequent branches consume a real comparison result.
+    if ("LCMP".equals(opcode) || "FCMPL".equals(opcode) || "FCMPG".equals(opcode)
+        || "DCMPL".equals(opcode) || "DCMPG".equals(opcode)) {
+      String right = pop(stack);
+      String left = pop(stack);
+      String comparison;
+      if (opcode.endsWith("CMPL")) {
+        comparison = "((" + left + " < " + right + ") ? -1 : ("
+            + left + " > " + right + ") ? 1 : ("
+            + left + " == " + right + ") ? 0 : -1)";
+      } else {
+        comparison = "((" + left + " > " + right + ") ? 1 : ("
+            + left + " < " + right + ") ? -1 : ("
+            + left + " == " + right + ") ? 0 : 1)";
+      }
+      stack.push(comparison);
+      operations.add(op("ARITHMETIC", List.of(comparison), sourceInstruction));
+      return;
+    }
+
+    // JavaScript has no JVM monitor intrinsics. Preserve evaluation order and
+    // report the semantic gap explicitly instead of leaving the stack dirty.
+    if ("MONITORENTER".equals(opcode) || "MONITOREXIT".equals(opcode)) {
+      operations.add(op("MONITOR", List.of(opcode, pop(stack)), sourceInstruction));
+      return;
+    }
+
     if ("IINC".equals(opcode)) {
       String local = instruction.operands().isEmpty() ? "local?" : "local" + instruction.operands().get(0);
       String amount = instruction.operands().size() > 1 ? instruction.operands().get(1) : "1";
-      String expression = local + " + " + amount;
+      String expression = "GoldClientRuntime.toInt32(" + local + " + (" + amount + "))";
       operations.add(op("LOCAL_WRITE", List.of(local, expression), sourceInstruction));
       return;
     }
 
     if (isTypeConversion(opcode)) {
       String value = pop(stack);
-      String converted = "(" + conversionType(opcode) + ")" + value;
+      String converted = switch (opcode) {
+        case "I2B" -> "GoldClientRuntime.toByte(" + value + ")";
+        case "I2S" -> "GoldClientRuntime.toShort(" + value + ")";
+        case "I2C" -> "GoldClientRuntime.toChar(" + value + ")";
+        case "L2I" -> "GoldClientRuntime.toInt32(" + value + ")";
+        case "F2I", "D2I" -> "GoldClientRuntime.floatToInt(" + value + ")";
+        case "F2L", "D2L" -> "GoldClientRuntime.floatToLong(" + value + ")";
+        default -> value;
+      };
       stack.push(converted);
       operations.add(op("TYPE_CONVERSION", List.of(value, converted), sourceInstruction));
       return;
@@ -321,8 +385,9 @@ public final class IntermediateRepresentationAnalyzer {
 
     if ("CHECKCAST".equals(opcode)) {
       String value = pop(stack);
-      String type = instruction.operands().isEmpty() ? "unknown" : instruction.operands().get(0).replace('/', '.');
-      String converted = "(" + type + ")" + value;
+      String type = instruction.operands().isEmpty() ? "java.lang.Object"
+          : instruction.operands().get(0).replace('/', '.');
+      String converted = "GoldClientRuntime.checkCast(" + value + ", \"" + type + "\")";
       stack.push(converted);
       operations.add(op("TYPE_CHECK", List.of(value, converted), sourceInstruction));
       return;
@@ -330,8 +395,9 @@ public final class IntermediateRepresentationAnalyzer {
 
     if ("INSTANCEOF".equals(opcode)) {
       String value = pop(stack);
-      String type = instruction.operands().isEmpty() ? "unknown" : instruction.operands().get(0).replace('/', '.');
-      String expression = value + " instanceof " + type;
+      String type = instruction.operands().isEmpty() ? "java.lang.Object"
+          : instruction.operands().get(0).replace('/', '.');
+      String expression = "GoldClientRuntime.instanceOf(" + value + ", \"" + type + "\")";
       stack.push(expression);
       operations.add(op("TYPE_CHECK", List.of(expression), sourceInstruction));
       return;
@@ -370,7 +436,13 @@ public final class IntermediateRepresentationAnalyzer {
       return;
     }
 
-    operations.add(op(kindOf(instruction), instruction.operands(), sourceInstruction));
+    // Never discard the actual opcode when it falls outside the current
+    // semantic lowering table. The exporter can now emit a useful runtime
+    // diagnostic naming the bytecode instruction rather than a generic OTHER.
+    List<String> unsupportedOperands = new ArrayList<>();
+    unsupportedOperands.add(opcode);
+    unsupportedOperands.addAll(instruction.operands());
+    operations.add(op("UNSUPPORTED_OPCODE", unsupportedOperands, sourceInstruction));
   }
 
   private static void translateMethodCall(
@@ -437,6 +509,13 @@ public final class IntermediateRepresentationAnalyzer {
     int capturedCount = argumentCount(callSiteDescriptor);
     List<String> captured = new ArrayList<>();
     for (int i = 0; i < capturedCount; i++) captured.add(0, pop(stack));
+
+    if (bootstrap.contains("java/lang/invoke/StringConcatFactory")) {
+      String concat = translateStringConcat(name, operands, captured);
+      stack.push(concat);
+      operations.add(op("CALL_VALUE", List.of(concat), sourceInstruction));
+      return;
+    }
 
     boolean lambdaMetafactory = bootstrap.contains("java/lang/invoke/LambdaMetafactory")
         && (bootstrap.contains(",metafactory,") || bootstrap.contains(",altMetafactory,"));
@@ -512,6 +591,49 @@ public final class IntermediateRepresentationAnalyzer {
     operations.add(op("CALL_VALUE", List.of(lambda), sourceInstruction));
   }
 
+  private static String translateStringConcat(
+      String name, List<String> operands, List<String> captured) {
+    if (name.equals("makeConcat") || operands.size() < 4) {
+      return "GoldClientRuntime.concat([" + String.join(", ", captured) + "])";
+    }
+
+    String recipe = operands.get(3);
+    List<String> constants = operands.size() > 4
+        ? operands.subList(4, operands.size()) : List.of();
+    List<String> pieces = new ArrayList<>();
+    StringBuilder literal = new StringBuilder();
+    int dynamicIndex = 0;
+    int constantIndex = 0;
+    for (int i = 0; i < recipe.length(); i++) {
+      char token = recipe.charAt(i);
+      if (token == 1 || token == 2) {
+        if (!literal.isEmpty()) {
+          pieces.add(quoteJs(literal.toString()));
+          literal.setLength(0);
+        }
+        if (token == 1) {
+          pieces.add(dynamicIndex < captured.size()
+              ? "GoldClientRuntime.javaString(" + captured.get(dynamicIndex++) + ")"
+              : "GoldClientRuntime.javaString(undefined)");
+        } else {
+          String constant = constantIndex < constants.size()
+              ? constants.get(constantIndex++) : "";
+          pieces.add(quoteJs(constant));
+        }
+      } else {
+        literal.append(token);
+      }
+    }
+    if (!literal.isEmpty()) pieces.add(quoteJs(literal.toString()));
+    if (pieces.isEmpty()) return quoteJs("");
+    return "(" + String.join(" + ", pieces) + ")";
+  }
+
+  private static String quoteJs(String value) {
+    return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"")
+        .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\"";
+  }
+
   private static String descriptorFromType(String value) {
     if (value == null || !value.startsWith("Type(") || !value.endsWith(")")) return null;
     return value.substring(5, value.length() - 1);
@@ -524,12 +646,28 @@ public final class IntermediateRepresentationAnalyzer {
       int sourceInstruction) {
     String value;
     if (opcode.endsWith("NEG")) {
-      value = "-" + pop(stack);
+      String operand = pop(stack);
+      value = opcode.startsWith("I")
+          ? "GoldClientRuntime.toInt32(-(" + operand + "))"
+          : opcode.startsWith("F") ? "Math.fround(-(" + operand + "))"
+          : "(-" + operand + ")";
     } else {
       String right = pop(stack);
       String left = pop(stack);
-      String operator = arithmeticOperator(opcode);
-      value = "(" + left + " " + operator + " " + right + ")";
+      if ("IDIV".equals(opcode)) {
+        value = "GoldClientRuntime.intDiv(" + left + ", " + right + ")";
+      } else if ("IREM".equals(opcode)) {
+        value = "GoldClientRuntime.intMod(" + left + ", " + right + ")";
+      } else {
+        String operator = arithmeticOperator(opcode);
+        String expression = "(" + left + " " + operator + " " + right + ")";
+        // Java int arithmetic wraps to signed 32 bits. JavaScript's +, -, and *
+        // do not, so lower those operations through the runtime's JVM helper.
+        value = opcode.startsWith("I")
+            ? "GoldClientRuntime.toInt32(" + expression + ")"
+            : opcode.startsWith("F") ? "Math.fround(" + expression + ")"
+            : expression;
+      }
     }
     stack.push(value);
     operations.add(op("ARITHMETIC", List.of(value), sourceInstruction));
@@ -585,28 +723,111 @@ public final class IntermediateRepresentationAnalyzer {
         operations.add(op("DROP", List.of(value), sourceInstruction));
       }
       case "POP2" -> {
-        String value = pop(stack);
-        operations.add(op("DROP", List.of(value), sourceInstruction));
+        String first = pop(stack);
+        if (isCategory2(first)) {
+          operations.add(op("DROP", List.of(first), sourceInstruction));
+        } else {
+          String second = pop(stack);
+          // The lower value was produced first, so preserve that evaluation
+          // order when POP2 discards two category-one values.
+          operations.add(op("DROP", List.of(second), sourceInstruction));
+          operations.add(op("DROP", List.of(first), sourceInstruction));
+        }
       }
       case "DUP" -> {
         String value = pop(stack);
-        stack.push(value);
-        stack.push(value);
+        pushInOrder(stack, value, value);
         operations.add(op("DUP", List.of(value), sourceInstruction));
       }
+      case "DUP_X1" -> {
+        String v1 = pop(stack), v2 = pop(stack);
+        pushInOrder(stack, v1, v2, v1);
+        operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2), sourceInstruction));
+      }
+      case "DUP_X2" -> {
+        String v1 = pop(stack), v2 = pop(stack);
+        if (isCategory2(v2)) {
+          pushInOrder(stack, v1, v2, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2), sourceInstruction));
+        } else {
+          String v3 = pop(stack);
+          pushInOrder(stack, v1, v3, v2, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2, v3), sourceInstruction));
+        }
+      }
+      case "DUP2" -> {
+        String v1 = pop(stack);
+        if (isCategory2(v1)) {
+          pushInOrder(stack, v1, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1), sourceInstruction));
+        } else {
+          String v2 = pop(stack);
+          pushInOrder(stack, v2, v1, v2, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2), sourceInstruction));
+        }
+      }
+      case "DUP2_X1" -> {
+        String v1 = pop(stack);
+        if (isCategory2(v1)) {
+          String v2 = pop(stack);
+          pushInOrder(stack, v1, v2, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2), sourceInstruction));
+        } else {
+          String v2 = pop(stack), v3 = pop(stack);
+          pushInOrder(stack, v2, v1, v3, v2, v1);
+          operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2, v3), sourceInstruction));
+        }
+      }
+      case "DUP2_X2" -> {
+        String v1 = pop(stack);
+        if (isCategory2(v1)) {
+          String v2 = pop(stack);
+          if (isCategory2(v2)) {
+            pushInOrder(stack, v1, v2, v1);
+            operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2), sourceInstruction));
+          } else {
+            String v3 = pop(stack);
+            pushInOrder(stack, v1, v3, v2, v1);
+            operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2, v3), sourceInstruction));
+          }
+        } else {
+          String v2 = pop(stack), v3 = pop(stack);
+          if (isCategory2(v3)) {
+            pushInOrder(stack, v2, v1, v3, v2, v1);
+            operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2, v3), sourceInstruction));
+          } else {
+            String v4 = pop(stack);
+            pushInOrder(stack, v2, v1, v4, v3, v2, v1);
+            operations.add(op("STACK_OPERATION", List.of(opcode, v1, v2, v3, v4), sourceInstruction));
+          }
+        }
+      }
       case "SWAP" -> {
-        String first = pop(stack);
-        String second = pop(stack);
-        stack.push(first);
-        stack.push(second);
+        String first = pop(stack), second = pop(stack);
+        pushInOrder(stack, first, second);
         operations.add(op("SWAP", List.of(first, second), sourceInstruction));
       }
       default -> operations.add(op("STACK_OPERATION", List.of(opcode), sourceInstruction));
     }
   }
 
+  // Values are supplied bottom-to-top; Deque.push() in that order leaves the
+  // intended top value at the head of the symbolic operand stack.
+  private static void pushInOrder(Deque<String> stack, String... bottomToTop) {
+    for (String value : bottomToTop) stack.push(value);
+  }
+
+  private static boolean isCategory2(String value) {
+    if (value == null) return false;
+    String expression = value.trim();
+    return expression.matches(".*(?:[0-9]+[lL]|[0-9]+(?:\\.[0-9]+)?[dD])$")
+        || expression.startsWith("long ") || expression.startsWith("double ")
+        || expression.contains("Long.valueOf(") || expression.contains("Double.valueOf(");
+  }
+
   private static boolean isConstant(String opcode) {
-    return opcode.startsWith("ICONST_")
+    return "ACONST_NULL".equals(opcode)
+        || opcode.startsWith("ICONST_")
         || opcode.startsWith("LCONST_")
         || opcode.startsWith("FCONST_")
         || opcode.startsWith("DCONST_")
@@ -617,6 +838,7 @@ public final class IntermediateRepresentationAnalyzer {
 
   private static String constantValue(InstructionModel instruction) {
     String opcode = instruction.opcodeName();
+    if ("ACONST_NULL".equals(opcode)) return "null";
     if (opcode.startsWith("ICONST_")) {
       String value = opcode.substring("ICONST_".length());
       return "M1".equals(value) ? "-1" : value;
@@ -629,14 +851,43 @@ public final class IntermediateRepresentationAnalyzer {
       return opcode.substring("DCONST_".length());
     if (!instruction.operands().isEmpty()) {
       String value = instruction.operands().get(0);
+      if ("LDC".equals(opcode) && value.startsWith("Type(") && value.endsWith(")")) {
+        String descriptor = value.substring(5, value.length() - 1);
+        if (!descriptor.startsWith("(")) {
+          String className = classNameFromDescriptor(descriptor);
+          return "GoldClientRuntime.classLiteral(\"" + className + "\")";
+        }
+        return "GoldClientRuntime.methodType(\"" + descriptor + "\")";
+      }
       if ("LDC".equals(opcode) && !isNumericLiteral(value)
           && !"true".equals(value) && !"false".equals(value)
           && !"null".equals(value) && !isQuoted(value)) {
-        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"")
+            .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\"";
       }
       return value;
     }
     return "unknown";
+  }
+
+  private static String classNameFromDescriptor(String descriptor) {
+    if (descriptor == null || descriptor.isEmpty()) return "java.lang.Object";
+    int dimensions = 0;
+    while (dimensions < descriptor.length() && descriptor.charAt(dimensions) == '[') dimensions++;
+    String base = descriptor.substring(dimensions);
+    String name = switch (base) {
+      case "Z" -> "boolean";
+      case "B" -> "byte";
+      case "C" -> "char";
+      case "S" -> "short";
+      case "I" -> "int";
+      case "J" -> "long";
+      case "F" -> "float";
+      case "D" -> "double";
+      default -> base.startsWith("L") && base.endsWith(";")
+          ? base.substring(1, base.length() - 1).replace('/', '.') : base.replace('/', '.');
+    };
+    return name + "[]".repeat(dimensions);
   }
 
   private static boolean isNumericLiteral(String value) {
