@@ -365,12 +365,12 @@ class JavaTranslatorTest {
 
   @Test
   void rendersArrayStoreStatements() {
-    IrMethodModel method = new IrMethodModel("write", "([II)V", List.of(
+    IrMethodModel method = new IrMethodModel("write", "([III)V", List.of(
         new IrOperationModel("ARRAY_WRITE", List.of("array", "index", "value"), 0),
         new IrOperationModel("RETURN", List.of(), 1)));
     TranslationResult result = new JavaTranslator().translate(method);
     assertTrue(result.complete(), result.source());
-    assertTrue(result.source().contains("array[index] = value;"), result.source());
+    assertTrue(result.source().contains("GoldClientRuntime.arraySet(array, index, value);"), result.source());
   }
 
   @Test
