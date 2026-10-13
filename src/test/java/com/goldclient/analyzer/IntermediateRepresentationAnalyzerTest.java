@@ -272,14 +272,14 @@ class IntermediateRepresentationAnalyzerTest {
     IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(
         method("arrays", "([III)I", instructions));
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("ARITHMETIC") && o.operands().get(0).equals("(local1 & local2)")));
+        o.kind().equals("ARITHMETIC") && o.operands().get(0).equals("GoldClientRuntime.toInt32((local1 & local2))")));
     assertTrue(ir.operations().stream().anyMatch(o ->
         o.kind().equals("ARRAY_WRITE") && o.operands().equals(
             List.of("local0", "local1", "(local1 & local2)"))));
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("ARRAY_READ") && o.operands().get(0).equals("local0[local1]")));
+        o.kind().equals("ARRAY_READ") && o.operands().get(0).equals("GoldClientRuntime.arrayGet(local0, local1)")));
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("ARRAY_LENGTH") && o.operands().get(0).equals("local0.length")));
+        o.kind().equals("ARRAY_LENGTH") && o.operands().get(0).equals("GoldClientRuntime.arrayLength(local0)")));
   }
 
   @Test
@@ -297,9 +297,9 @@ class IntermediateRepresentationAnalyzerTest {
     IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(
         method("shifts", "(II)V", instructions));
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("LOCAL_WRITE") && o.operands().get(1).equals("(local1 << local2)")));
+        o.kind().equals("LOCAL_WRITE") && o.operands().get(1).equals("GoldClientRuntime.toInt32((local1 << local2))")));
     assertTrue(ir.operations().stream().anyMatch(o ->
-        o.kind().equals("LOCAL_WRITE") && o.operands().get(1).equals("(local3 >>> local2)")));
+        o.kind().equals("LOCAL_WRITE") && o.operands().get(1).equals("GoldClientRuntime.toInt32((local3 >>> local2))")));
   }
 
   @Test
