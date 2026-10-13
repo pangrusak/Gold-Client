@@ -1124,6 +1124,24 @@ public final class JavaScriptModTranslationExporter {
             return Array(size).fill(Object.prototype.hasOwnProperty.call(defaults, kind)
               ? defaults[kind] : null);
           },
+          newMultiArray(kind, dimensions, totalDimensions = dimensions.length) {
+            const sizes = dimensions.map(Number);
+            for (const size of sizes) {
+              if (!Number.isInteger(size) || size < 0) throw new RangeError("invalid array length");
+            }
+            const defaults = { boolean: false, byte: 0, char: "\0", short: 0,
+              int: 0, long: 0, float: 0, double: 0, Object: null };
+            const leafDefault = Object.prototype.hasOwnProperty.call(defaults, kind)
+              ? defaults[kind] : null;
+            const allocate = depth => {
+              const size = sizes[depth];
+              if (depth === sizes.length - 1) {
+                return Array(size).fill(totalDimensions > sizes.length ? null : leafDefault);
+              }
+              return Array.from({ length: size }, () => allocate(depth + 1));
+            };
+            return sizes.length === 0 ? [] : allocate(0);
+          },
           unmodifiable(collection) {
             const mutators = new Set([
               "add", "addAt", "addAll", "addAllAt", "remove", "removeAt", "removeAll",
