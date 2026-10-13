@@ -703,7 +703,7 @@ public final class IntermediateRepresentationAnalyzer {
   private static boolean isCategory2(String value) {
     if (value == null) return false;
     String expression = value.trim();
-    return expression.matches(".*(?:[0-9]+[lL]|[0-9]+(?:\\\\.[0-9]+)?[dD])$")
+    return expression.matches(".*(?:[0-9]+[lL]|[0-9]+(?:\\.[0-9]+)?[dD])$")
         || expression.startsWith("long ") || expression.startsWith("double ")
         || expression.contains("Long.valueOf(") || expression.contains("Double.valueOf(");
   }
