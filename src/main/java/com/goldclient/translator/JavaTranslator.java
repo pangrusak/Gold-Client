@@ -160,12 +160,15 @@ public final class JavaTranslator {
         if (isExpressionOnly(operation))
           continue;
 
+        // Keep emitting syntactically valid JavaScript even when this opcode
+        // is not implemented yet. The runtime failure is explicit and retains
+        // the operation details for debugging; completeness stays false.
         source.append(indent(indent))
-            .append("// TODO: ")
-            .append(operation.kind())
-            .append(" ")
-            .append(operation.operands())
-            .append("\n");
+            .append("GoldClientRuntime.unsupported(\"")
+            .append(escapeJava(operation.kind()))
+            .append("\", \"")
+            .append(escapeJava(String.join(" | ", operation.operands())))
+            .append("\");\n");
         complete = false;
       } else if (!line.isBlank()) {
         source.append(indent(indent)).append(line).append("\n");
