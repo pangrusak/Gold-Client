@@ -1166,7 +1166,16 @@ public final class JavaScriptModTranslationExporter {
           javaString(value) {
             if (value === null || value === undefined) return "null";
             if (typeof value === "boolean") return value ? "true" : "false";
+            if (typeof value === "object") {
+              const method = value.toString;
+              if (typeof method === "function" && method !== Object.prototype.toString) {
+                return String(method.call(value));
+              }
+            }
             return String(value);
+          },
+          concat(values) {
+            return values.map(value => this.javaString(value)).join("");
           },
           javaHashCode(value) {
             if (value === null || value === undefined) return 0;
