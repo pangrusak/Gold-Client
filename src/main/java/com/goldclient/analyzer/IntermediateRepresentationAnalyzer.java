@@ -510,6 +510,13 @@ public final class IntermediateRepresentationAnalyzer {
     List<String> captured = new ArrayList<>();
     for (int i = 0; i < capturedCount; i++) captured.add(0, pop(stack));
 
+    if (bootstrap.contains("java/lang/invoke/StringConcatFactory")) {
+      String concat = translateStringConcat(name, operands, captured);
+      stack.push(concat);
+      operations.add(op("CALL_VALUE", List.of(concat), sourceInstruction));
+      return;
+    }
+
     boolean lambdaMetafactory = bootstrap.contains("java/lang/invoke/LambdaMetafactory")
         && (bootstrap.contains(",metafactory,") || bootstrap.contains(",altMetafactory,"));
     java.util.regex.Matcher handle = java.util.regex.Pattern
@@ -582,6 +589,49 @@ public final class IntermediateRepresentationAnalyzer {
     }
     stack.push(lambda);
     operations.add(op("CALL_VALUE", List.of(lambda), sourceInstruction));
+  }
+
+  private static String translateStringConcat(
+      String name, List<String> operands, List<String> captured) {
+    if (name.equals("makeConcat") || operands.size() < 4) {
+      return "GoldClientRuntime.concat([" + String.join(", ", captured) + "])";
+    }
+
+    String recipe = operands.get(3);
+    List<String> constants = operands.size() > 4
+        ? operands.subList(4, operands.size()) : List.of();
+    List<String> pieces = new ArrayList<>();
+    StringBuilder literal = new StringBuilder();
+    int dynamicIndex = 0;
+    int constantIndex = 0;
+    for (int i = 0; i < recipe.length(); i++) {
+      char token = recipe.charAt(i);
+      if (token == '\u0001' || token == '\u0002') {
+        if (!literal.isEmpty()) {
+          pieces.add(quoteJs(literal.toString()));
+          literal.setLength(0);
+        }
+        if (token == '\u0001') {
+          pieces.add(dynamicIndex < captured.size()
+              ? "GoldClientRuntime.javaString(" + captured.get(dynamicIndex++) + ")"
+              : "GoldClientRuntime.javaString(undefined)");
+        } else {
+          String constant = constantIndex < constants.size()
+              ? constants.get(constantIndex++) : "";
+          pieces.add(quoteJs(constant));
+        }
+      } else {
+        literal.append(token);
+      }
+    }
+    if (!literal.isEmpty()) pieces.add(quoteJs(literal.toString()));
+    if (pieces.isEmpty()) return quoteJs("");
+    return "(" + String.join(" + ", pieces) + ")";
+  }
+
+  private static String quoteJs(String value) {
+    return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"")
+        .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\"";
   }
 
   private static String descriptorFromType(String value) {
