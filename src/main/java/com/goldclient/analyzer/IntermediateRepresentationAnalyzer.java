@@ -847,6 +847,14 @@ public final class IntermediateRepresentationAnalyzer {
       return opcode.substring("DCONST_".length());
     if (!instruction.operands().isEmpty()) {
       String value = instruction.operands().get(0);
+      if ("LDC".equals(opcode) && value.startsWith("Type(") && value.endsWith(")")) {
+        String descriptor = value.substring(5, value.length() - 1);
+        if (!descriptor.startsWith("(")) {
+          String className = classNameFromDescriptor(descriptor);
+          return "GoldClientRuntime.classLiteral(\\"" + className + "\\")";
+        }
+        return "GoldClientRuntime.methodType(\\"" + descriptor + "\\")";
+      }
       if ("LDC".equals(opcode) && !isNumericLiteral(value)
           && !"true".equals(value) && !"false".equals(value)
           && !"null".equals(value) && !isQuoted(value)) {
@@ -856,6 +864,26 @@ public final class IntermediateRepresentationAnalyzer {
       return value;
     }
     return "unknown";
+  }
+
+  private static String classNameFromDescriptor(String descriptor) {
+    if (descriptor == null || descriptor.isEmpty()) return "java.lang.Object";
+    int dimensions = 0;
+    while (dimensions < descriptor.length() && descriptor.charAt(dimensions) == '[') dimensions++;
+    String base = descriptor.substring(dimensions);
+    String name = switch (base) {
+      case "Z" -> "boolean";
+      case "B" -> "byte";
+      case "C" -> "char";
+      case "S" -> "short";
+      case "I" -> "int";
+      case "J" -> "long";
+      case "F" -> "float";
+      case "D" -> "double";
+      default -> base.startsWith("L") && base.endsWith(";")
+          ? base.substring(1, base.length() - 1).replace('/', '.') : base.replace('/', '.');
+    };
+    return name + "[]".repeat(dimensions);
   }
 
   private static boolean isNumericLiteral(String value) {
