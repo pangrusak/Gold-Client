@@ -51,7 +51,7 @@ class ModTranslationExporterTest {
     assertTrue(Files.isRegularFile(firstOutput));
     assertTrue(Files.isRegularFile(secondOutput));
     assertTrue(Files.readString(firstOutput).contains("return true;"));
-    assertTrue(Files.readString(firstOutput).contains("TODO: UNSUPPORTED"));
+    assertTrue(Files.readString(firstOutput).contains("GoldClientRuntime.unsupported(\"UNSUPPORTED\", \"unknown-op\");"));
     assertTrue(Files.readString(firstOutput).contains("SKIPPED (abstract/native)"));
     assertTrue(Files.isRegularFile(output.resolve("translation-report.json")));
     assertTrue(Files.isRegularFile(output.resolve("translation-report.txt")));
