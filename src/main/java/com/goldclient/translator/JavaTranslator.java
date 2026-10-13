@@ -189,6 +189,19 @@ public final class JavaTranslator {
     String joinLabel = null;
     for (int i = catchBegin + 1; i < end; i++) {
       IrOperationModel operation = operations.get(i);
+
+      // Do not mistake a branch leaving a nested try/catch for the end of
+      // this handler. This is common in compiler-generated try-with-resources
+      // code, where close() has its own exception table inside the outer catch.
+      if ("TRY_BEGIN".equals(operation.kind())) {
+        ConditionalRender nested = renderTryCatch(
+            operations, i, end, indent, context, labels);
+        if (nested != null) {
+          i = nested.lastIndex();
+          continue;
+        }
+      }
+
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
         String target = operation.operands().get(0);
         Integer targetIndex = labels.get(target);
