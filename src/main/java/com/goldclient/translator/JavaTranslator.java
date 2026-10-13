@@ -145,7 +145,7 @@ public final class JavaTranslator {
 
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
         String target = operation.operands().get(0);
-        Integer targetIndex = labels.get(target);
+        Integer targetIndex = labels.get(labelKey(target));
 
         if (targetIndex != null && targetIndex == end)
           continue;
@@ -321,11 +321,11 @@ public final class JavaTranslator {
       return null;
     }
 
-    Integer defaultIndex = labels.get(defaultLabel);
+    Integer defaultIndex = labels.get(labelKey(defaultLabel));
     if (defaultIndex == null || defaultIndex <= switchIndex || defaultIndex >= end) return null;
     Map<String, Integer> targetIndices = new HashMap<>();
     for (SwitchArm arm : arms) {
-      Integer target = labels.get(arm.label());
+      Integer target = labels.get(labelKey(arm.label()));
       if (target == null || target <= switchIndex || target >= end) return null;
       targetIndices.put(arm.label(), target);
     }
@@ -339,7 +339,7 @@ public final class JavaTranslator {
       IrOperationModel candidate = operations.get(index);
       if (!"JUMP".equals(candidate.kind()) || candidate.operands().isEmpty()) continue;
       String targetLabel = candidate.operands().get(0);
-      Integer targetIndex = labels.get(targetLabel);
+      Integer targetIndex = labels.get(labelKey(targetLabel));
       if (targetIndex != null && targetIndex > lastTarget && targetIndex < joinIndex) {
         joinIndex = targetIndex;
         joinLabel = targetLabel;
@@ -436,7 +436,7 @@ public final class JavaTranslator {
     if (jumpIndex >= 0) {
       IrOperationModel jump = operations.get(jumpIndex);
       if (!jump.operands().isEmpty()) {
-        Integer endIndex = labels.get(jump.operands().get(0));
+        Integer endIndex = labels.get(labelKey(jump.operands().get(0)));
         if (endIndex != null && endIndex > targetIndex && endIndex <= end) {
           RenderResult fallthroughBody = renderRange(
               operations, branchIndex + 1, jumpIndex, indent + 1, context, labels);
@@ -508,7 +508,7 @@ public final class JavaTranslator {
       IrOperationModel operation = operations.get(i);
       if ("CONDITIONAL_BRANCH".equals(operation.kind())
           && operation.operands().size() >= 2
-          && label.equals(operation.operands().get(1)))
+          && labelKey(label).equals(labelKey(operation.operands().get(1))))
         return i;
     }
     return -1;
@@ -525,6 +525,16 @@ public final class JavaTranslator {
     return -1;
   }
 
+  /** Normalizes label references from bytecode dumps (for example "[L12]") to label IDs. */
+  private static String labelKey(String label) {
+    if (label == null) return "";
+    String normalized = label.trim();
+    while (normalized.length() >= 2 && normalized.startsWith("[") && normalized.endsWith("]"))
+      normalized = normalized.substring(1, normalized.length() - 1).trim();
+    if (normalized.endsWith(":")) normalized = normalized.substring(0, normalized.length() - 1).trim();
+    return normalized;
+  }
+
   private static Map<String, Integer> findLabels(
       List<IrOperationModel> operations,
       int start,
@@ -533,7 +543,7 @@ public final class JavaTranslator {
     for (int i = start; i < end; i++) {
       IrOperationModel operation = operations.get(i);
       if ("LABEL".equals(operation.kind()) && !operation.operands().isEmpty())
-        labels.put(operation.operands().get(0), i);
+        labels.put(labelKey(operation.operands().get(0)), i);
     }
     return labels;
   }
