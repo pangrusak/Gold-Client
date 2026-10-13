@@ -205,6 +205,66 @@ class IntermediateRepresentationAnalyzerTest {
     assertTrue(catchBegin < handlerLabel, ir.operations().toString());
   }
 
+  @Test
+  void dupX1PreservesOperandOrderForTheNextStaticCall() {
+    MethodModel method = method("stack", "()V", List.of(
+        instruction(4, "ICONST_1"),
+        instruction(5, "ICONST_2"),
+        instruction(90, "DUP_X1"),
+        instruction(184, "INVOKESTATIC", "example/Owner", "consume", "(II)V", "false"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "METHOD_CALL".equals(operation.kind())
+            && operation.operands().contains("example.Owner.consume(1, 2)")),
+        ir.operations().toString());
+  }
+
+  @Test
+  void dup2AndPop2TreatLongAsOneCategoryTwoValue() {
+    MethodModel method = method("wideStack", "()V", List.of(
+        instruction(9, "LCONST_0"),
+        instruction(92, "DUP2"),
+        instruction(88, "POP2"),
+        instruction(88, "POP2"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().filter(operation ->
+        "DROP".equals(operation.kind())).count() == 2, ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        operation.operands().stream().anyMatch(value -> value.contains("<unknown>"))),
+        ir.operations().toString());
+  }
+
+  @Test
+  void longCompareProducesAnExpressionForConditionalBranch() {
+    MethodModel method = method("compare", "()V", List.of(
+        instruction(9, "LCONST_0"),
+        instruction(10, "LCONST_1"),
+        instruction(148, "LCMP"),
+        instruction(153, "IFEQ", "L0"),
+        instruction(177, "RETURN"),
+        instruction(-1, "LABEL", "L0"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARITHMETIC".equals(operation.kind())
+            && operation.operands().get(0).contains("0L")
+            && operation.operands().get(0).contains("1L")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONDITIONAL_BRANCH".equals(operation.kind())
+            && operation.operands().get(0).contains("== 0")),
+        ir.operations().toString());
+  }
+
   private static int indexOfKind(IrMethodModel method, String kind) {
     for (int i = 0; i < method.operations().size(); i++) {
       if (kind.equals(method.operations().get(i).kind())) return i;
