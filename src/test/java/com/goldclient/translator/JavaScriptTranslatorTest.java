@@ -99,6 +99,7 @@ class JavaScriptTranslatorTest {
           float scale = 1.5F;
           int index = (int) local0;
           int[] values = new int[local1];
+          java.lang.String[] names = new java.lang.String[local2];
           boolean same = local2.equals(local3);
           System.arraycopy(values, 0, values, 1, 2);
         }
@@ -108,10 +109,23 @@ class JavaScriptTranslatorTest {
     assertTrue(lowered.contains("1.5;"), lowered);
     assertTrue(lowered.contains("GoldClientRuntime.toInt32(local0)"), lowered);
     assertTrue(lowered.contains("GoldClientRuntime.newArray(") && lowered.contains("local1)"), lowered);
+    assertTrue(lowered.contains("GoldClientRuntime.newArray(\"java.lang.String\", local2)"), lowered);
     assertTrue(lowered.contains("GoldClientRuntime.javaEquals(local2, local3)"), lowered);
     assertTrue(lowered.contains("GoldClientRuntime.arraycopy(values, 0, values, 1, 2)"), lowered);
     assertFalse(lowered.contains("12L"), lowered);
     assertFalse(lowered.contains("1.5F"), lowered);
+  }
+
+  @Test
+  void keepsMultidimensionalArrayAllocationAsExecutableRuntimeCode() {
+    var method = new IrMethodModel("matrix", "()V", List.of(
+        op("LOCAL_WRITE", "local1", "GoldClientRuntime.newMultiArray(\"int\", [2, 3], 2)"),
+        op("RETURN")));
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "GoldClientRuntime.newMultiArray(\"int\", [2, 3], 2)"), result.source());
   }
 
   @Test
