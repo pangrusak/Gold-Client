@@ -135,6 +135,13 @@ public final class IntermediateRepresentationAnalyzer {
     return -1;
   }
 
+  private static int multiArrayDepth(String descriptor) {
+    if (descriptor == null) return 1;
+    int depth = 0;
+    while (depth < descriptor.length() && descriptor.charAt(depth) == '[') depth++;
+    return Math.max(1, depth);
+  }
+
   private static String multiArrayElementKind(String descriptor) {
     if (descriptor == null || descriptor.isBlank()) return "Object";
     int element = 0;
@@ -278,7 +285,7 @@ public final class IntermediateRepresentationAnalyzer {
         dimensionsValues.add(0, pop(stack));
       String kind = multiArrayElementKind(descriptor);
       String array = "GoldClientRuntime.newMultiArray(\"" + kind + "\", ["
-          + String.join(", ", dimensionsValues) + "])";
+          + String.join(", ", dimensionsValues) + "], " + multiArrayDepth(descriptor) + ")";
       stack.push(array);
       operations.add(op("ARRAY_CREATE", List.of(array), sourceInstruction));
       return;
