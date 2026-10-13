@@ -1113,8 +1113,26 @@ public final class JavaScriptModTranslationExporter {
             return value;
           },
           arrayLength(value) {
-            if (value === null || value === undefined) throw new TypeError("null array");
+            if (value === null || value === undefined) throw new TypeError("NullPointerException: arraylength");
+            if (!Array.isArray(value) && typeof value.length !== "number") {
+              return this.unsupported("arraylength", "value is not an array");
+            }
             return value.length;
+          },
+          arrayIndex(value, index) {
+            if (value === null || value === undefined) throw new TypeError("NullPointerException: array access");
+            const i = Number(index);
+            if (!Number.isInteger(i) || i < 0 || i >= value.length) {
+              throw new RangeError("ArrayIndexOutOfBoundsException: " + index);
+            }
+            return i;
+          },
+          arrayGet(value, index) {
+            return value[this.arrayIndex(value, index)];
+          },
+          arraySet(value, index, element) {
+            value[this.arrayIndex(value, index)] = element;
+            return element;
           },
           newArray(kind, length) {
             const size = Number(length);
