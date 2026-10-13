@@ -277,7 +277,7 @@ public final class IntermediateRepresentationAnalyzer {
       for (int i = 0; i < dimensions; i++)
         dimensionsValues.add(0, pop(stack));
       String kind = multiArrayElementKind(descriptor);
-      String array = "GoldClientRuntime.newMultiArray(\\\"" + kind + "\\\", ["
+      String array = "GoldClientRuntime.newMultiArray(\"" + kind + "\", ["
           + String.join(", ", dimensionsValues) + "])";
       stack.push(array);
       operations.add(op("ARRAY_CREATE", List.of(array), sourceInstruction));
