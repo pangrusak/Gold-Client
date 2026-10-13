@@ -606,12 +606,12 @@ public final class IntermediateRepresentationAnalyzer {
     int constantIndex = 0;
     for (int i = 0; i < recipe.length(); i++) {
       char token = recipe.charAt(i);
-      if (token == '\u0001' || token == '\u0002') {
+      if (token == 1 || token == 2) {
         if (!literal.isEmpty()) {
           pieces.add(quoteJs(literal.toString()));
           literal.setLength(0);
         }
-        if (token == '\u0001') {
+        if (token == 1) {
           pieces.add(dynamicIndex < captured.size()
               ? "GoldClientRuntime.javaString(" + captured.get(dynamicIndex++) + ")"
               : "GoldClientRuntime.javaString(undefined)");
