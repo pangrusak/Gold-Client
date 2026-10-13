@@ -11,6 +11,25 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class IntermediateRepresentationAnalyzerTest {
   @Test
+  void translatesAconstNullAsARealNullConstant() {
+    MethodModel method = method("nullValue", "()V", List.of(
+        instruction(1, "ACONST_NULL"),
+        instruction(58, "ASTORE", "0"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONSTANT".equals(operation.kind())
+            && operation.operands().equals(List.of("null"))),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_OPCODE".equals(operation.kind())
+            && operation.operands().contains("ACONST_NULL")),
+        ir.operations().toString());
+  }
+
+  @Test
   void translatesClassAndMethodTypeConstants() {
     MethodModel method = method("reflection", "()V", List.of(
         instruction(18, "LDC", "Type(Ljava/lang/String;)"),
