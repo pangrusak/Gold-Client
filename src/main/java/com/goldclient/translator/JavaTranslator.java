@@ -444,8 +444,26 @@ public final class JavaTranslator {
     // A branch to the exclusive end of a nested render range is a normal
     // structured exit. Render the fall-through path under the inverse
     // condition instead of leaking an unsupported branch marker.
-    if (targetIndex == null || targetIndex > end)
+    if (targetIndex == null)
       return null;
+
+    // A nested render range can end before a valid branch destination (for
+    // example, an inner if that exits an outer block). In that range, only
+    // the fall-through path belongs to the current body, so guard that path
+    // with the inverse condition and let the enclosing renderer handle the
+    // destination. Do not leak a raw CONDITIONAL_BRANCH marker for this shape.
+    if (targetIndex > end) {
+      RenderResult body = renderRange(
+          operations, branchIndex + 1, end, indent + 1, context, labels);
+      StringBuilder source = new StringBuilder();
+      source.append(indent(indent))
+          .append("if (")
+          .append(negateCondition(condition))
+          .append(") {\n");
+      source.append(body.source());
+      source.append(indent(indent)).append("}\n");
+      return new ConditionalRender(source.toString(), body.complete(), end - 1);
+    }
 
     if (targetIndex <= branchIndex) {
       return renderBackwardLoop(
