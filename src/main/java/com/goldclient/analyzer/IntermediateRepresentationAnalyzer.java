@@ -398,7 +398,13 @@ public final class IntermediateRepresentationAnalyzer {
       return;
     }
 
-    operations.add(op(kindOf(instruction), instruction.operands(), sourceInstruction));
+    // Never discard the actual opcode when it falls outside the current
+    // semantic lowering table. The exporter can now emit a useful runtime
+    // diagnostic naming the bytecode instruction rather than a generic OTHER.
+    List<String> unsupportedOperands = new ArrayList<>();
+    unsupportedOperands.add(opcode);
+    unsupportedOperands.addAll(instruction.operands());
+    operations.add(op("UNSUPPORTED_OPCODE", unsupportedOperands, sourceInstruction));
   }
 
   private static void translateMethodCall(
