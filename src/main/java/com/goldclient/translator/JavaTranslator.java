@@ -147,8 +147,13 @@ public final class JavaTranslator {
         String target = operation.operands().get(0);
         Integer targetIndex = labels.get(labelKey(target));
 
-        if (targetIndex != null && targetIndex == end)
+        if (targetIndex != null
+            && (targetIndex == end || isFallthroughJump(operations, i, targetIndex))) {
+          // A goto whose destination is the next executable instruction does
+          // not change control flow. Bytecode often keeps this jump after
+          // compiler-generated labels, so don't report it as unsupported.
           continue;
+        }
 
         source.append(indent(indent))
             .append("GoldClientRuntime.unsupported(\"JUMP\", \"")
@@ -404,6 +409,19 @@ public final class JavaTranslator {
     source.append(indent(indent)).append("}\n");
     int lastIndex = joinIndex < end ? joinIndex - 1 : end - 1;
     return new ConditionalRender(source.toString(), complete, lastIndex);
+  }
+
+  /**
+   * Returns true when an unconditional jump skips only labels before reaching
+   * its destination. Such a jump is equivalent to ordinary fall-through.
+   */
+  private static boolean isFallthroughJump(
+      List<IrOperationModel> operations, int jumpIndex, int targetIndex) {
+    if (targetIndex <= jumpIndex) return false;
+    for (int i = jumpIndex + 1; i < targetIndex; i++) {
+      if (!"LABEL".equals(operations.get(i).kind())) return false;
+    }
+    return true;
   }
 
   private static boolean isTerminal(IrOperationModel operation) {
