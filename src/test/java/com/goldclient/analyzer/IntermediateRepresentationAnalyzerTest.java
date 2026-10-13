@@ -275,7 +275,7 @@ class IntermediateRepresentationAnalyzerTest {
         o.kind().equals("ARITHMETIC") && o.operands().get(0).equals("GoldClientRuntime.toInt32((local1 & local2))")));
     assertTrue(ir.operations().stream().anyMatch(o ->
         o.kind().equals("ARRAY_WRITE") && o.operands().equals(
-            List.of("local0", "local1", "(local1 & local2)"))));
+            List.of("local0", "local1", "GoldClientRuntime.toInt32((local1 & local2))"))));
     assertTrue(ir.operations().stream().anyMatch(o ->
         o.kind().equals("ARRAY_READ") && o.operands().get(0).equals("GoldClientRuntime.arrayGet(local0, local1)")));
     assertTrue(ir.operations().stream().anyMatch(o ->
