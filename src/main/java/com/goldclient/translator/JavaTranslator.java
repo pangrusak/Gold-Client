@@ -228,8 +228,8 @@ public final class JavaTranslator {
 
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
         String target = operation.operands().get(0);
-        Integer targetIndex = labels.get(target);
-        Integer protectedEnd = labels.get(endLabel);
+        Integer targetIndex = labels.get(labelKey(target));
+        Integer protectedEnd = labels.get(labelKey(endLabel));
         if (targetIndex != null && protectedEnd != null && targetIndex > protectedEnd) {
           handlerEnd = i;
           joinLabel = target;
@@ -421,7 +421,7 @@ public final class JavaTranslator {
     IrOperationModel branch = operations.get(branchIndex);
     String condition = branch.operands().get(0);
     String target = branch.operands().get(1);
-    Integer targetIndex = labels.get(target);
+    Integer targetIndex = labels.get(labelKey(target));
 
     if (targetIndex == null || targetIndex >= end)
       return null;
