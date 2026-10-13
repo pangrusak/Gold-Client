@@ -387,7 +387,7 @@ public final class IntermediateRepresentationAnalyzer {
       String value = pop(stack);
       String type = instruction.operands().isEmpty() ? "java.lang.Object"
           : instruction.operands().get(0).replace('/', '.');
-      String converted = "GoldClientRuntime.checkCast(" + value + ", \\"" + type + "\\")";
+      String converted = "GoldClientRuntime.checkCast(" + value + ", \"" + type + "\")";
       stack.push(converted);
       operations.add(op("TYPE_CHECK", List.of(value, converted), sourceInstruction));
       return;
@@ -397,7 +397,7 @@ public final class IntermediateRepresentationAnalyzer {
       String value = pop(stack);
       String type = instruction.operands().isEmpty() ? "java.lang.Object"
           : instruction.operands().get(0).replace('/', '.');
-      String expression = "GoldClientRuntime.instanceOf(" + value + ", \\"" + type + "\\")";
+      String expression = "GoldClientRuntime.instanceOf(" + value + ", \"" + type + "\")";
       stack.push(expression);
       operations.add(op("TYPE_CHECK", List.of(expression), sourceInstruction));
       return;
