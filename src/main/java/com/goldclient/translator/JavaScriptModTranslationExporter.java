@@ -1256,6 +1256,33 @@ public final class JavaScriptModTranslationExporter {
             const constructor = this.classes.get(className);
             return constructor ? value instanceof constructor : false;
           },
+          classLiteral(className) {
+            const runtime = this;
+            return Object.freeze({
+              __goldClassName: className,
+              getName() { return className; },
+              getSimpleName() { return className.split(/[.$]/).pop(); },
+              isInstance(value) { return runtime.instanceOf(value, className); },
+              isAssignableFrom(other) {
+                const otherName = other?.__goldClassName ?? other?.name;
+                if (otherName === className || className === "java.lang.Object") return true;
+                const target = runtime.classes.get(className);
+                const source = runtime.classes.get(otherName);
+                return Boolean(target && source && source.prototype instanceof target);
+              },
+              toString() { return (className.endsWith("[]") ? "class " : "class ") + className; }
+            });
+          },
+          methodType(descriptor) {
+            return Object.freeze({
+              descriptor,
+              toString() { return descriptor; },
+              parameterCount() {
+                const args = descriptor.slice(1, descriptor.indexOf(")"));
+                return (args.match(/L[^;]+;|\\[+[^\\[;]+;?|[ZBCSIJFD]/g) ?? []).length;
+              }
+            });
+          },
           classes: new Map(),
           registerClass(name, constructor, staticInitializer = null) {
             constructor.__goldStaticInitializer = staticInitializer;
