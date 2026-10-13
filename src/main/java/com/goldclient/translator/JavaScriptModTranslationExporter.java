@@ -1186,6 +1186,49 @@ public final class JavaScriptModTranslationExporter {
           toInt32(value) {
             return Number(value) | 0;
           },
+          toByte(value) {
+            const number = Number(value) | 0;
+            return (number << 24) >> 24;
+          },
+          toShort(value) {
+            const number = Number(value) | 0;
+            return (number << 16) >> 16;
+          },
+          toChar(value) {
+            return (Number(value) | 0) & 0xffff;
+          },
+          floatToInt(value) {
+            const number = Number(value);
+            if (Number.isNaN(number)) return 0;
+            if (number >= 2147483647) return 2147483647;
+            if (number <= -2147483648) return -2147483648;
+            return Math.trunc(number);
+          },
+          floatToLong(value) {
+            const number = Number(value);
+            if (Number.isNaN(number)) return 0;
+            if (number >= 9223372036854775807) return 9223372036854775807;
+            if (number <= -9223372036854775808) return -9223372036854775808;
+            return Math.trunc(number);
+          },
+          checkCast(value, className) {
+            if (value === null || value === undefined) return value;
+            const constructor = this.classes.get(className);
+            if (constructor && !(value instanceof constructor)) {
+              throw new TypeError("ClassCastException: " + className);
+            }
+            return value;
+          },
+          instanceOf(value, className) {
+            if (value === null || value === undefined) return false;
+            if (className === "java.lang.String") {
+              return typeof value === "string" || value instanceof String;
+            }
+            if (className === "java.lang.Number") return typeof value === "number";
+            if (className === "java.lang.Boolean") return typeof value === "boolean";
+            const constructor = this.classes.get(className);
+            return constructor ? value instanceof constructor : false;
+          },
           classes: new Map(),
           registerClass(name, constructor, staticInitializer = null) {
             constructor.__goldStaticInitializer = staticInitializer;
