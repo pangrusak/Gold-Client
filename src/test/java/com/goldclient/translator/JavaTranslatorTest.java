@@ -153,6 +153,27 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void structuresConditionalBranchesThatExitNestedRanges() {
+    IrMethodModel method = new IrMethodModel(
+        "nestedExit",
+        "()V",
+        List.of(
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("outer == 0", "Louter"), 0),
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("inner == 0", "Lafter"), 1),
+            new IrOperationModel("METHOD_CALL", List.of("nested()"), 2),
+            new IrOperationModel("LABEL", List.of("Louter"), 3),
+            new IrOperationModel("LABEL", List.of("Lafter"), 4),
+            new IrOperationModel("RETURN", List.of(), 5)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (inner != 0) {"), result.source());
+    assertTrue(result.source().contains("nested();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"CONDITIONAL_BRANCH\""), result.source());
+  }
+
+  @Test
   void translatesIfElse() {
     IrMethodModel method = new IrMethodModel(
         "test",
