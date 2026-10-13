@@ -294,7 +294,7 @@ public final class IntermediateRepresentationAnalyzer {
     if (isArrayLoad(opcode)) {
       String index = pop(stack);
       String array = pop(stack);
-      String expression = array + "[" + index + "]";
+      String expression = "GoldClientRuntime.arrayGet(" + array + ", " + index + ")";
       stack.push(expression);
       operations.add(op("ARRAY_READ", List.of(expression), sourceInstruction));
       return;
@@ -310,7 +310,7 @@ public final class IntermediateRepresentationAnalyzer {
 
     if ("ARRAYLENGTH".equals(opcode)) {
       String array = pop(stack);
-      String expression = array + ".length";
+      String expression = "GoldClientRuntime.arrayLength(" + array + ")";
       stack.push(expression);
       operations.add(op("ARRAY_LENGTH", List.of(expression), sourceInstruction));
       return;
