@@ -11,6 +11,29 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class IntermediateRepresentationAnalyzerTest {
   @Test
+  void translatesClassAndMethodTypeConstants() {
+    MethodModel method = method("reflection", "()V", List.of(
+        instruction(18, "LDC", "Type(Ljava/lang/String;)"),
+        instruction(87, "POP"),
+        instruction(18, "LDC", "Type((Ljava/lang/String;)I)"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONSTANT".equals(operation.kind())
+            && operation.operands().get(0).contains(
+                "GoldClientRuntime.classLiteral(\"java.lang.String\")")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONSTANT".equals(operation.kind())
+            && operation.operands().get(0).contains(
+                "GoldClientRuntime.methodType(\"(Ljava/lang/String;)I\")")),
+        ir.operations().toString());
+  }
+
+  @Test
   void routesArrayLoadsStoresAndLengthsThroughRuntimeChecks() {
     MethodModel method = method("arrays", "([II)V", List.of(
         instruction(25, "ALOAD", "0"),
