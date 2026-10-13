@@ -82,6 +82,7 @@ public final class JavaScriptModTranslationExporter {
       filesWritten++;
     }
 
+    ClassCoverageReport classCoverage = writeClassCoverage(inputJar, classes, root);
     int resourceCount = copyResources(inputJar, root);
     Files.writeString(root.resolve("gold-client-runtime.js"), runtimeSource(), StandardCharsets.UTF_8);
     writeModuleIndex(classes, root);
@@ -280,6 +281,83 @@ public final class JavaScriptModTranslationExporter {
           new GsonBuilder().setPrettyPrinting().create().toJson(copied) + System.lineSeparator(),
           StandardCharsets.UTF_8);
       return copied.size();
+    }
+  }
+
+  /**
+   * Audits class coverage independently from method completeness. Every class
+   * in the input JAR must have a ClassModel and a generated module; unsupported
+   * methods are still represented explicitly inside that module.
+   */
+  private static ClassCoverageReport writeClassCoverage(
+      Path inputJar, List<ClassModel> classes, Path root) throws IOException {
+    java.util.Set<String> modeled = new java.util.TreeSet<>();
+    for (ClassModel clazz : classes) {
+      modeled.add(clazz.name().replace('.', '/'));
+    }
+
+    java.util.Set<String> jarClasses = new java.util.TreeSet<>();
+    int jarClassEntries = 0;
+    if (inputJar != null) {
+      try (ZipFile zip = new ZipFile(inputJar.toFile())) {
+        for (ZipEntry entry : Collections.list(zip.entries())) {
+          if (entry.isDirectory() || !entry.getName().endsWith(".class")) continue;
+          jarClassEntries++;
+          try (var stream = zip.getInputStream(entry)) {
+            jarClasses.add(new org.objectweb.asm.ClassReader(stream).getClassName());
+          } catch (IllegalArgumentException invalidClass) {
+            throw new IOException("Could not read class entry for coverage audit: "
+                + entry.getName(), invalidClass);
+          }
+        }
+      }
+    } else {
+      jarClasses.addAll(modeled);
+      jarClassEntries = modeled.size();
+    }
+
+    java.util.Set<String> unmodeledJarClasses = new java.util.TreeSet<>(jarClasses);
+    unmodeledJarClasses.removeAll(modeled);
+    java.util.Set<String> modeledClassesAbsentFromJar = new java.util.TreeSet<>(modeled);
+    modeledClassesAbsentFromJar.removeAll(jarClasses);
+    java.util.Set<String> missingModules = new java.util.TreeSet<>();
+    int translatedModules = 0;
+    for (String className : modeled) {
+      if (Files.isRegularFile(outputPath(root, className))) {
+        translatedModules++;
+      } else {
+        missingModules.add(className);
+      }
+    }
+
+    ClassCoverageReport report = new ClassCoverageReport(
+        "gold-client-class-coverage-v1",
+        inputJar == null ? null : inputJar.toAbsolutePath().normalize().toString(),
+        jarClassEntries, jarClasses.size(), modeled.size(), translatedModules,
+        unmodeledJarClasses, modeledClassesAbsentFromJar, missingModules,
+        unmodeledJarClasses.isEmpty() && modeledClassesAbsentFromJar.isEmpty()
+            && missingModules.isEmpty());
+    Files.writeString(root.resolve("class-coverage.json"),
+        new GsonBuilder().setPrettyPrinting().create().toJson(report)
+            + System.lineSeparator(), StandardCharsets.UTF_8);
+    return report;
+  }
+
+  public record ClassCoverageReport(
+      String formatVersion,
+      String inputJar,
+      int jarClassEntries,
+      int uniqueJarClasses,
+      int modeledClasses,
+      int translatedModules,
+      java.util.Set<String> unmodeledJarClasses,
+      java.util.Set<String> modeledClassesAbsentFromJar,
+      java.util.Set<String> missingModules,
+      boolean complete) {
+    public ClassCoverageReport {
+      unmodeledJarClasses = java.util.Set.copyOf(unmodeledJarClasses);
+      modeledClassesAbsentFromJar = java.util.Set.copyOf(modeledClassesAbsentFromJar);
+      missingModules = java.util.Set.copyOf(missingModules);
     }
   }
 
