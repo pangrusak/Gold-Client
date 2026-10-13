@@ -49,7 +49,7 @@ class IntermediateRepresentationAnalyzerTest {
     assertTrue(ir.operations().stream().anyMatch(operation ->
         "TYPE_CHECK".equals(operation.kind())
             && operation.operands().stream().anyMatch(value ->
-                value.contains("GoldClientRuntime.checkCast(local0, \\"java.lang.String\\")"))),
+                value.contains("GoldClientRuntime.checkCast(local0, \"java.lang.String\")"))),
         ir.operations().toString());
     assertTrue(ir.operations().stream().anyMatch(operation ->
         "TYPE_CONVERSION".equals(operation.kind())
@@ -58,7 +58,7 @@ class IntermediateRepresentationAnalyzerTest {
     assertTrue(ir.operations().stream().anyMatch(operation ->
         "TYPE_CHECK".equals(operation.kind())
             && operation.operands().stream().anyMatch(value ->
-                value.contains("GoldClientRuntime.instanceOf(local0, \\"java.lang.String\\")"))),
+                value.contains("GoldClientRuntime.instanceOf(local0, \"java.lang.String\")"))),
         ir.operations().toString());
   }
 
