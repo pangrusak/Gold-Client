@@ -297,6 +297,7 @@ public final class JavaScriptModTranslationExporter {
     }
 
     java.util.Set<String> jarClasses = new java.util.TreeSet<>();
+    java.util.Set<String> unreadableClassEntries = new java.util.TreeSet<>();
     int jarClassEntries = 0;
     if (inputJar != null) {
       try (ZipFile zip = new ZipFile(inputJar.toFile())) {
@@ -305,9 +306,10 @@ public final class JavaScriptModTranslationExporter {
           jarClassEntries++;
           try (var stream = zip.getInputStream(entry)) {
             jarClasses.add(new org.objectweb.asm.ClassReader(stream).getClassName());
-          } catch (IllegalArgumentException invalidClass) {
-            throw new IOException("Could not read class entry for coverage audit: "
-                + entry.getName(), invalidClass);
+          } catch (RuntimeException invalidClass) {
+            // Keep export resilient for malformed .class payloads, but never report
+            // complete coverage when an input class entry could not be inspected.
+            unreadableClassEntries.add(entry.getName());
           }
         }
       }
@@ -334,9 +336,9 @@ public final class JavaScriptModTranslationExporter {
         "gold-client-class-coverage-v1",
         inputJar == null ? null : inputJar.toAbsolutePath().normalize().toString(),
         jarClassEntries, jarClasses.size(), modeled.size(), translatedModules,
-        unmodeledJarClasses, modeledClassesAbsentFromJar, missingModules,
+        unmodeledJarClasses, modeledClassesAbsentFromJar, missingModules, unreadableClassEntries,
         unmodeledJarClasses.isEmpty() && modeledClassesAbsentFromJar.isEmpty()
-            && missingModules.isEmpty());
+            && missingModules.isEmpty() && unreadableClassEntries.isEmpty());
     Files.writeString(root.resolve("class-coverage.json"),
         new GsonBuilder().setPrettyPrinting().create().toJson(report)
             + System.lineSeparator(), StandardCharsets.UTF_8);
@@ -353,11 +355,13 @@ public final class JavaScriptModTranslationExporter {
       java.util.Set<String> unmodeledJarClasses,
       java.util.Set<String> modeledClassesAbsentFromJar,
       java.util.Set<String> missingModules,
+      java.util.Set<String> unreadableClassEntries,
       boolean complete) {
     public ClassCoverageReport {
       unmodeledJarClasses = java.util.Set.copyOf(unmodeledJarClasses);
       modeledClassesAbsentFromJar = java.util.Set.copyOf(modeledClassesAbsentFromJar);
       missingModules = java.util.Set.copyOf(missingModules);
+      unreadableClassEntries = java.util.Set.copyOf(unreadableClassEntries);
     }
   }
 
