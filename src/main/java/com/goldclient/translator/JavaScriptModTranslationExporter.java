@@ -1434,6 +1434,40 @@ public final class JavaScriptModTranslationExporter {
             }
           },
           invokeJavaStatic(owner, method, ...args) {
+            if (owner === "java.lang.reflect.Array") {
+              if (method === "getLength") return this.arrayLength(args[0]);
+              if (method === "get") return this.arrayGet(args[0], args[1]);
+              if (method === "set") return this.arraySet(args[0], args[1], args[2]);
+              if (method === "getBoolean" || method === "getByte" || method === "getChar"
+                  || method === "getShort" || method === "getInt" || method === "getLong"
+                  || method === "getFloat" || method === "getDouble") {
+                return this.arrayGet(args[0], args[1]);
+              }
+              if (method === "setBoolean" || method === "setByte" || method === "setChar"
+                  || method === "setShort" || method === "setInt" || method === "setLong"
+                  || method === "setFloat" || method === "setDouble") {
+                return this.arraySet(args[0], args[1], args[2]);
+              }
+              if (method === "newInstance") {
+                const type = args[0]?.__goldClassName ?? "java.lang.Object";
+                const kind = ({ boolean: "boolean", byte: "byte", char: "char", short: "short",
+                  int: "int", long: "long", float: "float", double: "double" })[type] ?? "Object";
+                const dimensions = Array.isArray(args[1]) ? args[1] : [args[1]];
+                if (dimensions.length === 1) return this.newArray(kind, dimensions[0]);
+                return this.newMultiArray(kind, dimensions, dimensions.length);
+              }
+            }
+            if (owner === "java.lang.System") {
+              if (method === "identityHashCode") return this.javaHashCode(args[0]);
+              if (method === "currentTimeMillis") return Date.now();
+              if (method === "nanoTime") return Date.now() * 1000000;
+              if (method === "lineSeparator") return "\\n";
+              if (method === "getProperty") {
+                const properties = { "line.separator": "\\n", "file.separator": "/", "path.separator": ":" };
+                return properties[args[0]] ?? args[1] ?? null;
+              }
+              if (method === "gc") return;
+            }
             if (owner === "java.util.Objects") {
               if (method === "equals") return this.javaEquals(args[0], args[1]);
               if (method === "deepEquals") {
