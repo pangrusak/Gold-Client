@@ -586,12 +586,27 @@ public final class IntermediateRepresentationAnalyzer {
       int sourceInstruction) {
     String value;
     if (opcode.endsWith("NEG")) {
-      value = "-" + pop(stack);
+      String operand = pop(stack);
+      value = opcode.startsWith("I")
+          ? "GoldClientRuntime.toInt32(-(" + operand + "))"
+          : "(-" + operand + ")";
     } else {
       String right = pop(stack);
       String left = pop(stack);
-      String operator = arithmeticOperator(opcode);
-      value = "(" + left + " " + operator + " " + right + ")";
+      if ("IDIV".equals(opcode)) {
+        value = "GoldClientRuntime.intDiv(" + left + ", " + right + ")";
+      } else if ("IREM".equals(opcode)) {
+        value = "GoldClientRuntime.intMod(" + left + ", " + right + ")";
+      } else {
+        String operator = arithmeticOperator(opcode);
+        String expression = "(" + left + " " + operator + " " + right + ")";
+        // Java int arithmetic wraps to signed 32 bits. JavaScript's +, -, and *
+        // do not, so lower those operations through the runtime's JVM helper.
+        value = opcode.startsWith("I")
+            && Set.of("IADD", "ISUB", "IMUL").contains(opcode)
+            ? "GoldClientRuntime.toInt32(" + expression + ")"
+            : expression;
+      }
     }
     stack.push(value);
     operations.add(op("ARITHMETIC", List.of(value), sourceInstruction));
