@@ -851,9 +851,9 @@ public final class IntermediateRepresentationAnalyzer {
         String descriptor = value.substring(5, value.length() - 1);
         if (!descriptor.startsWith("(")) {
           String className = classNameFromDescriptor(descriptor);
-          return "GoldClientRuntime.classLiteral(\\"" + className + "\\")";
+          return "GoldClientRuntime.classLiteral(\"" + className + "\")";
         }
-        return "GoldClientRuntime.methodType(\\"" + descriptor + "\\")";
+        return "GoldClientRuntime.methodType(\"" + descriptor + "\")";
       }
       if ("LDC".equals(opcode) && !isNumericLiteral(value)
           && !"true".equals(value) && !"false".equals(value)
