@@ -552,9 +552,10 @@ public final class JavaTranslator {
           "ARRAY_READ", "ARRAY_LENGTH", "DUP", "SWAP", "ARITHMETIC",
           "TYPE_CONVERSION", "TYPE_CHECK" -> null;
       case "ARRAY_WRITE" -> operands.size() >= 3
-          ? normalizeExpression(operands.get(0)) + "["
-              + normalizeExpression(operands.get(1)) + "] = "
-              + normalizeExpression(operands.get(2)) + ";"
+          ? "GoldClientRuntime.arraySet("
+              + normalizeExpression(operands.get(0)) + ", "
+              + normalizeExpression(operands.get(1)) + ", "
+              + normalizeExpression(operands.get(2)) + ");"
           : null;
       case "LOCAL_WRITE" -> translateLocalWrite(operands, context);
       case "FIELD_WRITE" -> translateFieldWrite(operands);
