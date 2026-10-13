@@ -1429,6 +1429,86 @@ public final class JavaScriptModTranslationExporter {
             }
           },
           invokeJavaStatic(owner, method, ...args) {
+            if (owner === "java.util.Objects") {
+              if (method === "equals") return this.javaEquals(args[0], args[1]);
+              if (method === "deepEquals") {
+                const a = args[0], b = args[1];
+                return Array.isArray(a) && Array.isArray(b)
+                  ? a.length === b.length && a.every((value, index) => this.javaEquals(value, b[index]))
+                  : this.javaEquals(a, b);
+              }
+              if (method === "hashCode") return this.javaHashCode(args[0]);
+              if (method === "hash") return args.reduce((hash, value) =>
+                (Math.imul(hash, 31) + this.javaHashCode(value)) | 0, 1);
+              if (method === "toString") return args[0] == null ? args[1] : this.javaString(args[0]);
+              if (method === "isNull") return args[0] == null;
+              if (method === "nonNull") return args[0] != null;
+              if (method === "requireNonNull") {
+                return this.requireNonNull(args[0], args[1] ?? "null");
+              }
+              if (method === "compare") {
+                const a = args[0], b = args[1];
+                return a < b ? -1 : a > b ? 1 : 0;
+              }
+            }
+            if (owner === "java.lang.Class" && method === "forName") {
+              return this.classLiteral(String(args[0]).replace(/\\//g, "."));
+            }
+            if (owner === "java.lang.String") {
+              if (method === "valueOf") return args[0] == null ? "null" : this.javaString(args[0]);
+              if (method === "join") {
+                const delimiter = String(args[0]);
+                const values = args.length > 2 ? args.slice(1) : Array.from(args[1] ?? []);
+                return values.map(value => value == null ? "" : this.javaString(value)).join(delimiter);
+              }
+              if (method === "format") {
+                let index = 1;
+                return String(args[0]).replace(/%([sdif%])/g, (match, specifier) => {
+                  if (specifier === "%") return "%";
+                  const value = args[index++];
+                  if (specifier === "d" || specifier === "i") return String(Number(value) | 0);
+                  if (specifier === "f") return String(Number(value));
+                  return this.javaString(value);
+                });
+              }
+            }
+            if (owner === "java.lang.Integer" || owner === "java.lang.Short"
+                || owner === "java.lang.Byte") {
+              if (method === "parseInt" || method === "parseShort" || method === "parseByte") {
+                const radix = args[1] == null ? 10 : Number(args[1]);
+                const value = Number.parseInt(String(args[0]), radix);
+                if (!Number.isInteger(value)) throw new TypeError("NumberFormatException: " + args[0]);
+                if (method === "parseShort" && (value < -32768 || value > 32767)) throw new RangeError("NumberFormatException");
+                if (method === "parseByte" && (value < -128 || value > 127)) throw new RangeError("NumberFormatException");
+                return value | 0;
+              }
+              if (method === "valueOf") return Number(args[0]) | 0;
+              if (method === "toString") return String(Number(args[0]) | 0);
+              if (method === "compare") return Math.sign((Number(args[0]) | 0) - (Number(args[1]) | 0));
+              if (method === "sum") return (Number(args[0]) + Number(args[1])) | 0;
+              if (method === "max") return Math.max(Number(args[0]) | 0, Number(args[1]) | 0);
+              if (method === "min") return Math.min(Number(args[0]) | 0, Number(args[1]) | 0);
+              if (method === "bitCount") {
+                let value = Number(args[0]) | 0, count = 0;
+                while (value) { count += value & 1; value >>>= 1; }
+                return count;
+              }
+              if (method === "numberOfLeadingZeros") {
+                const value = Number(args[0]) | 0;
+                return value === 0 ? 32 : Math.clz32(value);
+              }
+              if (method === "numberOfTrailingZeros") {
+                const value = Number(args[0]) | 0;
+                return value === 0 ? 32 : 31 - Math.clz32(value & -value);
+              }
+            }
+            if (owner === "java.lang.Boolean") {
+              if (method === "parseBoolean") return String(args[0]).toLowerCase() === "true";
+              if (method === "valueOf") return typeof args[0] === "boolean"
+                ? args[0] : String(args[0]).toLowerCase() === "true";
+              if (method === "toString") return args[0] ? "true" : "false";
+              if (method === "compare") return args[0] === args[1] ? 0 : args[0] ? 1 : -1;
+            }
             if (owner === "java.lang.Math") {
               if (method === "floorDiv") return this.floorDiv(args[0], args[1]);
               if (method === "floorMod") return this.floorMod(args[0], args[1]);
