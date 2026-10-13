@@ -456,4 +456,55 @@ class JavaTranslatorTest {
     }
     return count;
   }
+
+  @Test
+  void modelsJVMStackPermutationsWithoutEmittingPseudoInstructions() {
+    IrMethodModel method = new IrMethodModel(
+        "stackOps",
+        "()V",
+        List.of(
+            new IrOperationModel("STACK_OPERATION", List.of("DUP_X1", "local0", "local1"), 0),
+            new IrOperationModel("METHOD_CALL", List.of("consume(local0, local1)"), 1),
+            new IrOperationModel("RETURN", List.of(), 2)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.source().contains("consume(local0, local1);"), result.source());
+    assertTrue(!result.source().contains("TODO: STACK_OPERATION"), result.source());
+  }
+
+  @Test
+  void keepsMonitorOperationsExplicitAndMarksMethodIncomplete() {
+    IrMethodModel method = new IrMethodModel(
+        "synchronizedBlock",
+        "()V",
+        List.of(
+            new IrOperationModel("MONITOR", List.of("MONITORENTER", "local0"), 0),
+            new IrOperationModel("RETURN", List.of(), 1)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(!result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "GoldClientRuntime.unsupported(\\\"monitor\\\", \\\"MONITORENTER on local0\\\");"),
+        result.source());
+    assertTrue(!result.source().contains("TODO: MONITOR"), result.source());
+  }
+
+  @Test
+  void unsupportedDynamicCallIsVisibleButDoesNotBreakSourceStructure() {
+    IrMethodModel method = new IrMethodModel(
+        "dynamic",
+        "()V",
+        List.of(
+            new IrOperationModel("UNSUPPORTED_DYNAMIC", List.of("run", "()V"), 0),
+            new IrOperationModel("RETURN", List.of(), 1)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(!result.complete(), result.source());
+    assertTrue(result.source().contains("unsupported invokedynamic"), result.source());
+    assertTrue(result.source().contains("return;"), result.source());
+  }
+
 }
