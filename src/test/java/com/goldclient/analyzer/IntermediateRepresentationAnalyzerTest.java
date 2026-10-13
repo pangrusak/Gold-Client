@@ -206,6 +206,31 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void integerArithmeticUsesJavaOverflowAndDivisionHelpers() {
+    MethodModel method = method("integerMath", "()V", List.of(
+        instruction(4, "ICONST_1"),
+        instruction(5, "ICONST_2"),
+        instruction(96, "IADD"),
+        instruction(87, "POP"),
+        instruction(4, "ICONST_1"),
+        instruction(5, "ICONST_2"),
+        instruction(108, "IDIV"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARITHMETIC".equals(operation.kind())
+            && operation.operands().contains("GoldClientRuntime.toInt32((1 + 2))")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARITHMETIC".equals(operation.kind())
+            && operation.operands().contains("GoldClientRuntime.intDiv(1, 2)")),
+        ir.operations().toString());
+  }
+
+  @Test
   void unsupportedOpcodesKeepTheirOriginalNamesInSemanticIr() {
     MethodModel method = method("unsupported", "()V", List.of(
         instruction(202, "BREAKPOINT"),
