@@ -401,6 +401,52 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("TODO"), result.source());
   }
 
+  @Test
+  void rendersNestedTryCatchWithoutTruncatingOuterHandler() {
+    List<String> outer = List.of(
+        "Ltry", "LafterTry", "Lhandler", "java.lang.IllegalArgumentException");
+    List<String> inner = List.of(
+        "Linner", "LinnerEnd", "LinnerHandler", "java.lang.IllegalStateException");
+    IrMethodModel method = new IrMethodModel("nestedGuard", "()V", List.of(
+        new IrOperationModel("TRY_BEGIN", outer, 0),
+        new IrOperationModel("LABEL", List.of("Ltry"), 0),
+        new IrOperationModel("METHOD_CALL", List.of("mightFail()"), 1),
+        new IrOperationModel("TRY_END", outer, 2),
+        new IrOperationModel("LABEL", List.of("LafterTry"), 2),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 3),
+        new IrOperationModel("CATCH_BEGIN", outer, 4),
+        new IrOperationModel("LABEL", List.of("Lhandler"), 4),
+        new IrOperationModel("LOCAL_WRITE", List.of("local0", "<exception>"), 5),
+        new IrOperationModel("TRY_BEGIN", inner, 6),
+        new IrOperationModel("LABEL", List.of("Linner"), 6),
+        new IrOperationModel("METHOD_CALL", List.of("closeResource()"), 7),
+        new IrOperationModel("TRY_END", inner, 8),
+        new IrOperationModel("LABEL", List.of("LinnerEnd"), 8),
+        new IrOperationModel("JUMP", List.of("LinnerJoin"), 9),
+        new IrOperationModel("CATCH_BEGIN", inner, 10),
+        new IrOperationModel("LABEL", List.of("LinnerHandler"), 10),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 11),
+        new IrOperationModel("METHOD_CALL", List.of("handleClose(local1)"), 12),
+        new IrOperationModel("JUMP", List.of("LinnerJoin"), 13),
+        new IrOperationModel("LABEL", List.of("LinnerJoin"), 14),
+        new IrOperationModel("METHOD_CALL", List.of("recover(local0)"), 15),
+        new IrOperationModel("RETURN", List.of(), 16),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 17),
+        new IrOperationModel("RETURN", List.of(), 18)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("catch (java.lang.IllegalArgumentException local0)"),
+        result.source());
+    assertTrue(result.source().contains("catch (java.lang.IllegalStateException local1)"),
+        result.source());
+    assertTrue(result.source().contains("closeResource();"), result.source());
+    assertTrue(result.source().contains("handleClose(local1);"), result.source());
+    assertTrue(result.source().contains("recover(local0);"), result.source());
+    assertTrue(!result.source().contains("TODO"), result.source());
+  }
+
   private static int occurrences(String text, String needle) {
     int count = 0;
     int offset = 0;

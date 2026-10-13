@@ -189,6 +189,19 @@ public final class JavaTranslator {
     String joinLabel = null;
     for (int i = catchBegin + 1; i < end; i++) {
       IrOperationModel operation = operations.get(i);
+
+      // Do not mistake a branch leaving a nested try/catch for the end of
+      // this handler. This is common in compiler-generated try-with-resources
+      // code, where close() has its own exception table inside the outer catch.
+      if ("TRY_BEGIN".equals(operation.kind())) {
+        ConditionalRender nested = renderTryCatch(
+            operations, i, end, indent, context, labels);
+        if (nested != null) {
+          i = nested.lastIndex();
+          continue;
+        }
+      }
+
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
         String target = operation.operands().get(0);
         Integer targetIndex = labels.get(target);
@@ -238,7 +251,11 @@ public final class JavaTranslator {
         .append(catchBody.source());
     source.append(indent(indent)).append("}\n");
     boolean complete = tryBody.complete() && catchBody.complete();
-    if (joinLabel == null && handlerEnd < end) complete = false;
+    // A handler may legitimately terminate with return/throw instead of
+    // jumping to a shared continuation. That is structured control flow, not
+    // evidence that the exception region was only partially rendered.
+    if (joinLabel == null && handlerEnd < end
+        && !isTerminal(operations.get(handlerEnd - 1))) complete = false;
     int last = joinLabel == null ? handlerEnd - 1 : handlerEnd;
     return new ConditionalRender(source.toString(), complete, last);
   }
