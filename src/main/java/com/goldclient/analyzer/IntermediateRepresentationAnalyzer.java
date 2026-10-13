@@ -603,7 +603,6 @@ public final class IntermediateRepresentationAnalyzer {
         // Java int arithmetic wraps to signed 32 bits. JavaScript's +, -, and *
         // do not, so lower those operations through the runtime's JVM helper.
         value = opcode.startsWith("I")
-            && Set.of("IADD", "ISUB", "IMUL").contains(opcode)
             ? "GoldClientRuntime.toInt32(" + expression + ")"
             : expression;
       }
