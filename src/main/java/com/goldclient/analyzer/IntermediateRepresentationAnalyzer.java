@@ -362,7 +362,7 @@ public final class IntermediateRepresentationAnalyzer {
     if ("IINC".equals(opcode)) {
       String local = instruction.operands().isEmpty() ? "local?" : "local" + instruction.operands().get(0);
       String amount = instruction.operands().size() > 1 ? instruction.operands().get(1) : "1";
-      String expression = local + " + " + amount;
+      String expression = "GoldClientRuntime.toInt32(" + local + " + (" + amount + "))";
       operations.add(op("LOCAL_WRITE", List.of(local, expression), sourceInstruction));
       return;
     }
@@ -850,7 +850,8 @@ public final class IntermediateRepresentationAnalyzer {
       if ("LDC".equals(opcode) && !isNumericLiteral(value)
           && !"true".equals(value) && !"false".equals(value)
           && !"null".equals(value) && !isQuoted(value)) {
-        return "\"" + value.replace("\\", "\\").replace("\"", "\\\"") + "\"";
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"")
+            .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\"";
       }
       return value;
     }
