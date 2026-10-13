@@ -1248,11 +1248,16 @@ public final class JavaScriptModTranslationExporter {
           },
           instanceOf(value, className) {
             if (value === null || value === undefined) return false;
+            if (className === "java.lang.Object") return true;
+            if (className.endsWith("[]")) return Array.isArray(value);
             if (className === "java.lang.String") {
               return typeof value === "string" || value instanceof String;
             }
             if (className === "java.lang.Number") return typeof value === "number";
             if (className === "java.lang.Boolean") return typeof value === "boolean";
+            if (className === "java.lang.CharSequence") {
+              return typeof value === "string" || value instanceof String;
+            }
             const constructor = this.classes.get(className);
             return constructor ? value instanceof constructor : false;
           },
