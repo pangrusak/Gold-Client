@@ -335,6 +335,23 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void floatArithmeticRoundsAtEachJvmOperation() {
+    MethodModel method = method("floatMath", "()V", List.of(
+        instruction(11, "FCONST_0"),
+        instruction(12, "FCONST_1"),
+        instruction(98, "FADD"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARITHMETIC".equals(operation.kind())
+            && operation.operands().get(0).contains("Math.fround((0F + 1F))")),
+        ir.operations().toString());
+  }
+
+  @Test
   void integerArithmeticUsesJavaOverflowAndDivisionHelpers() {
     MethodModel method = method("integerMath", "()V", List.of(
         instruction(4, "ICONST_1"),
