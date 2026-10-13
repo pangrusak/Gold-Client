@@ -206,6 +206,20 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void unsupportedOpcodesKeepTheirOriginalNamesInSemanticIr() {
+    MethodModel method = method("unsupported", "()V", List.of(
+        instruction(202, "BREAKPOINT"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_OPCODE".equals(operation.kind())
+            && operation.operands().contains("BREAKPOINT")),
+        ir.operations().toString());
+  }
+
+  @Test
   void dupX1PreservesOperandOrderForTheNextStaticCall() {
     MethodModel method = method("stack", "()V", List.of(
         instruction(4, "ICONST_1"),
