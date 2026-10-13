@@ -290,7 +290,7 @@ class JavaTranslatorTest {
     TranslationResult result = new JavaTranslator().translate(method);
 
     assertTrue(!result.complete());
-    assertTrue(result.source().contains("TODO: UNSUPPORTED"));
+    assertTrue(result.source().contains("GoldClientRuntime.unsupported(\"UNSUPPORTED\", \"x\");"), result.source());
   }
 
   @Test
@@ -486,7 +486,7 @@ class JavaTranslatorTest {
 
     assertTrue(!result.complete(), result.source());
     assertTrue(result.source().contains(
-        "GoldClientRuntime.unsupported(\\\"monitor\\\", \\\"MONITORENTER on local0\\\");"),
+        "GoldClientRuntime.unsupported(\"monitor\", \"MONITORENTER on local0\");"),
         result.source());
     assertTrue(!result.source().contains("TODO: MONITOR"), result.source());
   }
