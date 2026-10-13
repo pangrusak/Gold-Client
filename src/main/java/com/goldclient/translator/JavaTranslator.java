@@ -112,7 +112,8 @@ public final class JavaTranslator {
       if ("MONITOR".equals(operation.kind())) {
         String opcode = operation.operands().isEmpty() ? "monitor" : operation.operands().get(0);
         String value = operation.operands().size() > 1 ? operation.operands().get(1) : "undefined";
-        source.append(indent(indent)).append("GoldClientRuntime.unsupported(\\\"monitor\\\", \\")
+        source.append(indent(indent))
+            .append("GoldClientRuntime.unsupported(\\\"monitor\\\", \\\"")
             .append(escapeJava(opcode + " on " + value))
             .append("\\\");\\n");
         complete = false;
