@@ -113,16 +113,16 @@ public final class JavaTranslator {
         String opcode = operation.operands().isEmpty() ? "monitor" : operation.operands().get(0);
         String value = operation.operands().size() > 1 ? operation.operands().get(1) : "undefined";
         source.append(indent(indent))
-            .append("GoldClientRuntime.unsupported(\\\"monitor\\\", \\\"")
+            .append("GoldClientRuntime.unsupported(\"monitor\", \"")
             .append(escapeJava(opcode + " on " + value))
-            .append("\\\");\\n");
+            .append("\");\n");
         complete = false;
         continue;
       }
 
       if ("UNSUPPORTED_DYNAMIC".equals(operation.kind())) {
         source.append(indent(indent)).append("// unsupported invokedynamic: ")
-            .append(operation.operands()).append("\\n");
+            .append(operation.operands()).append("\n");
         complete = false;
         continue;
       }
