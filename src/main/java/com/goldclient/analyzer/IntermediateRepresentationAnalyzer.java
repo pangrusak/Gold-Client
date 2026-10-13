@@ -369,7 +369,15 @@ public final class IntermediateRepresentationAnalyzer {
 
     if (isTypeConversion(opcode)) {
       String value = pop(stack);
-      String converted = "(" + conversionType(opcode) + ")" + value;
+      String converted = switch (opcode) {
+        case "I2B" -> "GoldClientRuntime.toByte(" + value + ")";
+        case "I2S" -> "GoldClientRuntime.toShort(" + value + ")";
+        case "I2C" -> "GoldClientRuntime.toChar(" + value + ")";
+        case "L2I" -> "GoldClientRuntime.toInt32(" + value + ")";
+        case "F2I", "D2I" -> "GoldClientRuntime.floatToInt(" + value + ")";
+        case "F2L", "D2L" -> "GoldClientRuntime.floatToLong(" + value + ")";
+        default -> value;
+      };
       stack.push(converted);
       operations.add(op("TYPE_CONVERSION", List.of(value, converted), sourceInstruction));
       return;
@@ -377,8 +385,9 @@ public final class IntermediateRepresentationAnalyzer {
 
     if ("CHECKCAST".equals(opcode)) {
       String value = pop(stack);
-      String type = instruction.operands().isEmpty() ? "unknown" : instruction.operands().get(0).replace('/', '.');
-      String converted = "(" + type + ")" + value;
+      String type = instruction.operands().isEmpty() ? "java.lang.Object"
+          : instruction.operands().get(0).replace('/', '.');
+      String converted = "GoldClientRuntime.checkCast(" + value + ", \\"" + type + "\\")";
       stack.push(converted);
       operations.add(op("TYPE_CHECK", List.of(value, converted), sourceInstruction));
       return;
@@ -386,8 +395,9 @@ public final class IntermediateRepresentationAnalyzer {
 
     if ("INSTANCEOF".equals(opcode)) {
       String value = pop(stack);
-      String type = instruction.operands().isEmpty() ? "unknown" : instruction.operands().get(0).replace('/', '.');
-      String expression = value + " instanceof " + type;
+      String type = instruction.operands().isEmpty() ? "java.lang.Object"
+          : instruction.operands().get(0).replace('/', '.');
+      String expression = "GoldClientRuntime.instanceOf(" + value + ", \\"" + type + "\\")";
       stack.push(expression);
       operations.add(op("TYPE_CHECK", List.of(expression), sourceInstruction));
       return;
