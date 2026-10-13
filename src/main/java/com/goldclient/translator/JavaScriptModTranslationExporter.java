@@ -1880,7 +1880,15 @@ public final class JavaScriptModTranslationExporter {
             if (methodName === "equals") return this.javaEquals(receiver, args[0]);
             if (methodName === "hashCode") return this.javaHashCode(receiver);
             if (methodName === "toString") return this.javaString(receiver);
-            if (methodName === "compareTo") return String(receiver).localeCompare(String(args[0]));
+            if (methodName === "getClass") {
+              if (Array.isArray(receiver)) return this.classLiteral("java.lang.Object[]");
+              return this.classLiteral(receiver?.constructor?.__goldClassName ?? "java.lang.Object");
+            }
+            if (Array.isArray(receiver) && methodName === "clone") return receiver.slice();
+            if (methodName === "compareTo") {
+              const a = String(receiver), b = String(args[0]);
+              return a < b ? -1 : a > b ? 1 : 0;
+            }
             if (typeof receiver === "string" || receiver instanceof String) {
               const value = String(receiver);
               switch (methodName) {
@@ -1889,11 +1897,22 @@ public final class JavaScriptModTranslationExporter {
                 case "charAt":
                   if (args[0] < 0 || args[0] >= value.length) throw new RangeError("StringIndexOutOfBoundsException");
                   return value.charAt(args[0]);
-                case "substring":
-                  if (args.length === 1) return value.substring(args[0]);
-                  if (args[0] > args[1]) throw new RangeError("StringIndexOutOfBoundsException");
-                  return value.substring(args[0], args[1]);
-                case "subSequence": return value.substring(args[0], args[1]);
+                case "substring": {
+                  const start = Number(args[0]);
+                  const end = args.length === 1 ? value.length : Number(args[1]);
+                  if (!Number.isInteger(start) || !Number.isInteger(end)
+                      || start < 0 || end < start || end > value.length) {
+                    throw new RangeError("StringIndexOutOfBoundsException");
+                  }
+                  return value.substring(start, end);
+                }
+                case "subSequence": {
+                  const start = Number(args[0]), end = Number(args[1]);
+                  if (start < 0 || end < start || end > value.length) {
+                    throw new RangeError("StringIndexOutOfBoundsException");
+                  }
+                  return value.substring(start, end);
+                }
                 case "contains": return value.includes(String(args[0]));
                 case "startsWith": return value.startsWith(String(args[0]), args[1] ?? 0);
                 case "endsWith": return value.endsWith(String(args[0]));
@@ -1906,7 +1925,10 @@ public final class JavaScriptModTranslationExporter {
                 case "stripLeading": return value.trimStart();
                 case "stripTrailing": return value.trimEnd();
                 case "equalsIgnoreCase": return value.toLowerCase() === String(args[0]).toLowerCase();
-                case "compareToIgnoreCase": return value.toLowerCase().localeCompare(String(args[0]).toLowerCase());
+                case "compareToIgnoreCase": {
+                  const a = value.toLowerCase(), b = String(args[0]).toLowerCase();
+                  return a < b ? -1 : a > b ? 1 : 0;
+                }
                 case "matches": return new RegExp("^(?:" + args[0] + ")$").test(value);
                 case "replace": return value.split(String(args[0])).join(String(args[1]));
                 case "replaceAll": return value.replace(new RegExp(args[0], "g"), String(args[1]));
@@ -1914,7 +1936,11 @@ public final class JavaScriptModTranslationExporter {
                 case "split": return value.split(new RegExp(args[0]), args[1] === 0 ? undefined : args[1]);
                 case "toCharArray": return Array.from(value);
                 case "getBytes": return Array.from(new TextEncoder().encode(value));
-                case "repeat": return value.repeat(Math.max(0, args[0] | 0));
+                case "repeat": {
+                  const count = Number(args[0]);
+                  if (!Number.isInteger(count) || count < 0) throw new RangeError("IllegalArgumentException");
+                  return value.repeat(count);
+                }
                 case "isBlank": return value.trim().length === 0;
                 case "codePointAt": return value.codePointAt(args[0]);
               }
