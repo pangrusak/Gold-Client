@@ -129,6 +129,30 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void resolvesBracketedBytecodeBranchLabels() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "()V",
+        List.of(
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("local1 == 0", "[Lelse]"), 0),
+            new IrOperationModel("METHOD_CALL", List.of("foo()"), 1),
+            new IrOperationModel("JUMP", List.of("[Lend]"), 2),
+            new IrOperationModel("LABEL", List.of("Lelse"), 3),
+            new IrOperationModel("METHOD_CALL", List.of("bar()"), 4),
+            new IrOperationModel("LABEL", List.of("Lend"), 5),
+            new IrOperationModel("RETURN", List.of(), 6)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (local1 == 0) {"), result.source());
+    assertTrue(result.source().contains("foo();"), result.source());
+    assertTrue(result.source().contains("bar();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+    assertTrue(!result.source().contains("unsupported(\"CONDITIONAL_BRANCH\""), result.source());
+  }
+
+  @Test
   void translatesIfElse() {
     IrMethodModel method = new IrMethodModel(
         "test",
