@@ -205,9 +205,9 @@ public final class JavaTranslator {
     for (int i = begin + 1; i < end; i++) {
       IrOperationModel operation = operations.get(i);
       if (operation.operands().size() >= 3
-          && startLabel.equals(operation.operands().get(0))
-          && endLabel.equals(operation.operands().get(1))
-          && handlerLabel.equals(operation.operands().get(2))) {
+          && labelKey(startLabel).equals(labelKey(operation.operands().get(0)))
+          && labelKey(endLabel).equals(labelKey(operation.operands().get(1)))
+          && labelKey(handlerLabel).equals(labelKey(operation.operands().get(2)))) {
         if ("TRY_END".equals(operation.kind())) tryEnd = i;
         if ("CATCH_BEGIN".equals(operation.kind())) catchBegin = i;
       }
