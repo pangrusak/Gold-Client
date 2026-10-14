@@ -3,8 +3,10 @@ package com.goldclient.translator;
 import com.goldclient.model.IrMethodModel;
 import com.goldclient.model.IrOperationModel;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class JavaTranslator {
   public TranslationResult translate(IrMethodModel method) {
@@ -157,6 +159,15 @@ public final class JavaTranslator {
           // A goto whose destination is the next executable instruction does
           // not change control flow. Bytecode often keeps this jump after
           // compiler-generated labels, so don't report it as unsupported.
+          continue;
+        }
+        if (targetIndex != null && targetIndex > i && targetIndex < end
+            && isIsolatedForwardJump(operations, i, targetIndex)) {
+          // A forward goto can skip a dead bytecode block. Drop that block only
+          // when no instruction outside it branches to any label inside it.
+          // This handles dead compiler-generated blocks without erasing an
+          // alternate branch or guessing at the meaning of a live jump.
+          i = targetIndex - 1;
           continue;
         }
 
@@ -431,6 +442,68 @@ public final class JavaTranslator {
     source.append(indent(indent)).append("}\n");
     int lastIndex = joinIndex < end ? joinIndex - 1 : end - 1;
     return new ConditionalRender(source.toString(), complete, lastIndex);
+  }
+
+  /**
+   * Checks whether the block skipped by a forward goto has any incoming edge
+   * from outside that block. A block with no external entry is unreachable
+   * after the goto and may be omitted from linear source output.
+   */
+  private static boolean isIsolatedForwardJump(
+      List<IrOperationModel> operations, int jumpIndex, int targetIndex) {
+    if (targetIndex <= jumpIndex) return false;
+
+    Set<String> skippedLabels = new HashSet<>();
+    for (int i = jumpIndex + 1; i < targetIndex; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("LABEL".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        skippedLabels.add(labelKey(operation.operands().get(0)));
+      }
+    }
+    if (skippedLabels.isEmpty()) return true;
+
+    // Any incoming edge from before the goto or from the continuation after
+    // the target makes at least part of the skipped block live.
+    for (int i = 0; i < operations.size(); i++) {
+      if (i > jumpIndex && i < targetIndex) continue;
+      if (i == jumpIndex) continue;
+      if (referencesAnyLabel(operations.get(i), skippedLabels)) return false;
+    }
+    return true;
+  }
+
+  private static boolean referencesAnyLabel(
+      IrOperationModel operation, Set<String> labels) {
+    List<String> operands = operation.operands();
+    String kind = operation.kind();
+
+    if ("JUMP".equals(kind)) {
+      return !operands.isEmpty() && labels.contains(labelKey(operands.get(0)));
+    }
+    if ("CONDITIONAL_BRANCH".equals(kind)) {
+      return operands.size() > 1 && labels.contains(labelKey(operands.get(1)));
+    }
+    if ("TABLE_SWITCH".equals(kind)) {
+      for (int i = 3; i < operands.size(); i++) {
+        if (labels.contains(labelKey(operands.get(i)))) return true;
+      }
+      return false;
+    }
+    if ("LOOKUP_SWITCH".equals(kind)) {
+      if (operands.size() > 1 && labels.contains(labelKey(operands.get(1)))) return true;
+      for (int i = 3; i < operands.size(); i += 2) {
+        if (labels.contains(labelKey(operands.get(i)))) return true;
+      }
+      return false;
+    }
+    if ("TRY_BEGIN".equals(kind) || "TRY_END".equals(kind)
+        || "CATCH_BEGIN".equals(kind)) {
+      int limit = Math.min(3, operands.size());
+      for (int i = 0; i < limit; i++) {
+        if (labels.contains(labelKey(operands.get(i)))) return true;
+      }
+    }
+    return false;
   }
 
   /**
