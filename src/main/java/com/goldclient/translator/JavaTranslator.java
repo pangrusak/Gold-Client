@@ -147,6 +147,11 @@ public final class JavaTranslator {
         String target = operation.operands().get(0);
         Integer targetIndex = labels.get(labelKey(target));
 
+        if (context.isActiveLoop(labelKey(target))) {
+          source.append(indent(indent)).append("continue;\n");
+          continue;
+        }
+
         if (targetIndex != null
             && (targetIndex == end || isFallthroughJump(operations, i, targetIndex))) {
           // A goto whose destination is the next executable instruction does
@@ -212,7 +217,22 @@ public final class JavaTranslator {
         if ("CATCH_BEGIN".equals(operation.kind())) catchBegin = i;
       }
     }
-    if (tryEnd <= begin || catchBegin <= tryEnd) return null;
+    if (tryEnd <= begin || catchBegin <= tryEnd) {
+      // Some javac/ASM exception tables carry normalized labels that no
+      // longer match the marker operands after nested-region reconstruction.
+      // If the structural markers are still ordered, preserve the exception
+      // boundary instead of discarding the whole region.
+      tryEnd = -1;
+      catchBegin = -1;
+      for (int i = begin + 1; i < end; i++) {
+        if (tryEnd < 0 && "TRY_END".equals(operations.get(i).kind())) tryEnd = i;
+        if (tryEnd >= 0 && "CATCH_BEGIN".equals(operations.get(i).kind())) {
+          catchBegin = i;
+          break;
+        }
+      }
+      if (tryEnd <= begin || catchBegin <= tryEnd) return null;
+    }
 
     int handlerEnd = end;
     String joinLabel = null;
@@ -246,6 +266,7 @@ public final class JavaTranslator {
         handlerEnd = i + 1;
         break;
       }
+
     }
     if (handlerEnd <= catchBegin + 1) return null;
 
@@ -477,8 +498,14 @@ public final class JavaTranslator {
       String loopTarget = operations.get(backwardJump).operands().get(0);
       Integer loopStart = labels.get(labelKey(loopTarget));
       if (loopStart != null && loopStart <= branchIndex) {
-        RenderResult body = renderRange(
-            operations, branchIndex + 1, backwardJump, indent + 1, context, labels);
+        context.enterLoop(labelKey(loopTarget));
+        RenderResult body;
+        try {
+          body = renderRange(
+              operations, branchIndex + 1, backwardJump, indent + 1, context, labels);
+        } finally {
+          context.exitLoop();
+        }
         StringBuilder source = new StringBuilder();
         source.append(indent(indent)).append("while (")
             .append(normalizeCondition(condition)).append(") {\n")
@@ -540,8 +567,15 @@ public final class JavaTranslator {
       TranslationContext context,
       Map<String, Integer> labels,
       String condition) {
-    RenderResult body = renderRange(
-        operations, targetIndex + 1, branchIndex, indent + 1, context, labels);
+    String loopLabel = labelKey(operations.get(targetIndex).operands().get(0));
+    context.enterLoop(loopLabel);
+    RenderResult body;
+    try {
+      body = renderRange(
+          operations, targetIndex + 1, branchIndex, indent + 1, context, labels);
+    } finally {
+      context.exitLoop();
+    }
 
     StringBuilder source = new StringBuilder();
     source.append(indent(indent))

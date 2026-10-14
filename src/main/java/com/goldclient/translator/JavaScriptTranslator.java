@@ -105,10 +105,10 @@ public final class JavaScriptTranslator {
     String detail = methodName + (descriptor == null ? "" : descriptor) + ": "
         + (reason == null ? "declaration" : reason);
     return new TranslationResult(
-        "// Status: adapter-required; no JVM method body exists.\\n"
-            + "export function " + exportName + "(" + parameters + ") {\\n"
+        "// Status: adapter-required; no JVM method body exists.\n"
+            + "export function " + exportName + "(" + parameters + ") {\n"
             + "  return GoldClientRuntime.invokeDeclaration(" + quote(detail)
-            + ", this, arguments);\\n}\n", true);
+            + ", this, arguments);\n}\n", true);
   }
 
   public TranslationResult translateStub(String methodName, String descriptor, String reason, boolean isStatic) {
