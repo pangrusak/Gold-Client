@@ -472,7 +472,7 @@ class JavaTranslatorTest {
     assertTrue(result.source().contains("try {"), result.source());
     assertTrue(result.source().contains(
         "catch (java.lang.IllegalArgumentException local0)"), result.source());
-    assertTrue(!result.source().contains("unsupported(\\"try-catch-region\\""), result.source());
+    assertTrue(!result.source().contains("try-catch-region"), result.source());
   }
 
   @Test
