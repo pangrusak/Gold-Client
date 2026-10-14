@@ -240,6 +240,23 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void translatesForwardExitWithBackwardGotoAsWhileLoop() {
+    IrMethodModel method = new IrMethodModel("sum", "()I", List.of(
+        new IrOperationModel("LABEL", List.of("L0"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("iterator.hasNext() != 0", "Lexit"), 1),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "local1 + iterator.next()"), 2),
+        new IrOperationModel("JUMP", List.of("L0"), 3),
+        new IrOperationModel("LABEL", List.of("Lexit"), 4),
+        new IrOperationModel("RETURN", List.of("local1"), 5)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (iterator.hasNext() != 0)"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
   void translatesFieldWriteAndReturn() {
     IrMethodModel method = new IrMethodModel(
         "test",

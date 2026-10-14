@@ -472,6 +472,22 @@ public final class JavaTranslator {
           condition);
     }
 
+    int backwardJump = findBackwardJump(operations, branchIndex + 1, targetIndex, labels);
+    if (backwardJump >= 0) {
+      String loopTarget = operations.get(backwardJump).operands().get(0);
+      Integer loopStart = labels.get(labelKey(loopTarget));
+      if (loopStart != null && loopStart <= branchIndex) {
+        RenderResult body = renderRange(
+            operations, branchIndex + 1, backwardJump, indent + 1, context, labels);
+        StringBuilder source = new StringBuilder();
+        source.append(indent(indent)).append("while (")
+            .append(normalizeCondition(condition)).append(") {\n")
+            .append(body.source())
+            .append(indent(indent)).append("}\n");
+        return new ConditionalRender(source.toString(), body.complete(), targetIndex);
+      }
+    }
+
     int jumpIndex = findForwardJoinJump(operations, branchIndex + 1, targetIndex);
     if (jumpIndex >= 0) {
       IrOperationModel jump = operations.get(jumpIndex);
@@ -561,6 +577,18 @@ public final class JavaTranslator {
     for (int i = start; i < targetIndex; i++) {
       if ("JUMP".equals(operations.get(i).kind()))
         return i;
+    }
+    return -1;
+  }
+
+  private static int findBackwardJump(
+      List<IrOperationModel> operations, int start, int end,
+      Map<String, Integer> labels) {
+    for (int i = start; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (!"JUMP".equals(operation.kind()) || operation.operands().isEmpty()) continue;
+      Integer target = labels.get(labelKey(operation.operands().get(0)));
+      if (target != null && target < i) return i;
     }
     return -1;
   }

@@ -142,6 +142,7 @@ public final class Main {
         System.out.println("Incomplete: " + report.incompleteCount());
         System.out.println("Skipped: " + report.skippedCount());
         System.out.println("Stubbed (symbol preserved): " + report.stubbedCount());
+        System.out.println("Adapter-required declarations: " + report.adapterRequiredCount());
         System.out.println("Class modules: " + report.fileCount());
         System.out.println("Entry module: " + Path.of(translateJsDir).resolve("mod-index.js"));
         System.out.println("Class metadata: " + Path.of(translateJsDir).resolve("mod-manifest.json"));

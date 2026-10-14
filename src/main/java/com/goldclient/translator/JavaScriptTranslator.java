@@ -95,6 +95,22 @@ public final class JavaScriptTranslator {
     return translateStub(methodName, descriptor, reason, true);
   }
 
+  public TranslationResult translateAdapter(String methodName, String descriptor, String reason,
+      boolean isStatic) {
+    String signatureSource = structuredTranslator.translate(
+        new IrMethodModel(methodName, descriptor, List.of())).source();
+    Matcher signature = SIGNATURE.matcher(signatureSource);
+    String parameters = signature.find() ? lowerParameters(signature.group(2), isStatic) : "";
+    String exportName = exportedName(methodName, descriptor);
+    String detail = methodName + (descriptor == null ? "" : descriptor) + ": "
+        + (reason == null ? "declaration" : reason);
+    return new TranslationResult(
+        "// Status: adapter-required; no JVM method body exists.\\n"
+            + "export function " + exportName + "(" + parameters + ") {\\n"
+            + "  return GoldClientRuntime.invokeDeclaration(" + quote(detail)
+            + ", this, arguments);\\n}\n", true);
+  }
+
   public TranslationResult translateStub(String methodName, String descriptor, String reason, boolean isStatic) {
     String signatureSource = structuredTranslator.translate(
         new IrMethodModel(methodName, descriptor, List.of())).source();

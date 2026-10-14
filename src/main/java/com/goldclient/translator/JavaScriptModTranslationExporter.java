@@ -64,9 +64,9 @@ public final class JavaScriptModTranslationExporter {
           String why = (method.access() & Opcodes.ACC_NATIVE) != 0 ? "native method"
               : (method.access() & Opcodes.ACC_ABSTRACT) != 0 ? "abstract method"
               : "semantic IR was not recovered";
-          result = translator.translateStub(method.name(), method.descriptor(), why,
+          result = translator.translateAdapter(method.name(), method.descriptor(), why,
               (method.access() & Opcodes.ACC_STATIC) != 0);
-          status = "stubbed";
+          status = "adapter-required";
           reason = why;
         } else {
           result = translator.translate(method.intermediateRepresentation(),
@@ -95,7 +95,8 @@ public final class JavaScriptModTranslationExporter {
     ExportReport report = new ExportReport(
         "gold-client-javascript-export-v1", classes.size(), statuses.size(),
         count(statuses, "complete"), count(statuses, "incomplete"),
-        count(statuses, "skipped"), count(statuses, "stubbed"), filesWritten, resourceCount, statuses);
+        count(statuses, "skipped"), count(statuses, "stubbed"), count(statuses, "adapter-required"),
+        filesWritten, resourceCount, statuses);
     Files.writeString(root.resolve("javascript-report.json"),
         new GsonBuilder().setPrettyPrinting().create().toJson(report) + System.lineSeparator(),
         StandardCharsets.UTF_8);
@@ -479,6 +480,7 @@ public final class JavaScriptModTranslationExporter {
         Incomplete: %d
         Skipped: %d
         Stubbed (symbol preserved): %d
+        Adapter-required declarations: %d
         JavaScript class modules: %d
         Preserved JAR resources: %d
 
@@ -487,7 +489,7 @@ public final class JavaScriptModTranslationExporter {
         require target-side adapters and are not automatically implemented here.
         """.formatted(report.formatVersion(), report.classCount(), report.methodCount(),
             report.completeCount(), report.incompleteCount(), report.skippedCount(),
-            report.stubbedCount(), report.fileCount(), report.resourceCount());
+            report.stubbedCount(), report.adapterRequiredCount(), report.fileCount(), report.resourceCount());
   }
 
   private static String runtimeSource() {
@@ -1973,6 +1975,13 @@ public final class JavaScriptModTranslationExporter {
             if (!target) return this.unsupported("missing-static-method", name + "/" + args.length);
             return target.fn.apply(receiver, args);
           },
+          invokeDeclaration(detail, receiver, argsLike) {
+            const adapter = globalThis.goldClientDeclarationAdapters?.[detail];
+            if (typeof adapter !== "function") {
+              return this.unsupported("missing-declaration-adapter", detail);
+            }
+            return adapter(receiver, ...Array.from(argsLike ?? []));
+          },
           unsupported(operation, detail = "") {
             throw new Error("Unsupported translated JVM operation: " + operation + " " + detail);
           }
@@ -1981,7 +1990,8 @@ public final class JavaScriptModTranslationExporter {
   }
 
   public record ExportReport(String formatVersion, int classCount, int methodCount,
-      int completeCount, int incompleteCount, int skippedCount, int stubbedCount, int fileCount, int resourceCount,
+      int completeCount, int incompleteCount, int skippedCount, int stubbedCount, int adapterRequiredCount,
+      int fileCount, int resourceCount,
       List<MethodStatus> methods) {
     public ExportReport { methods = List.copyOf(methods); }
   }
