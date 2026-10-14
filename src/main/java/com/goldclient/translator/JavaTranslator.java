@@ -385,7 +385,8 @@ public final class JavaTranslator {
       if (bodyEnd > targetIndex + 1) {
         IrOperationModel last = operations.get(bodyEnd - 1);
         if ("JUMP".equals(last.kind()) && !last.operands().isEmpty()
-            && joinLabel != null && joinLabel.equals(last.operands().get(0))) {
+            && joinLabel != null
+            && labelKey(joinLabel).equals(labelKey(last.operands().get(0)))) {
           bodyEnd--;
           jumpsToJoin = true;
         }
