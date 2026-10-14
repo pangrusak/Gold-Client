@@ -556,19 +556,40 @@ class JavaTranslatorTest {
   }
 
   @Test
-  void doesNotDiscardJumpsThatSkipExecutableInstructions() {
+  void skipsIsolatedDeadBlocksAfterForwardJump() {
     IrMethodModel method = new IrMethodModel(
-        "realJump",
+        "deadBlock",
         "()V",
         List.of(
             new IrOperationModel("JUMP", List.of("Lend"), 0),
-            new IrOperationModel("METHOD_CALL", List.of("unreachable()"), 1),
-            new IrOperationModel("LABEL", List.of("Lend"), 2),
-            new IrOperationModel("RETURN", List.of(), 3)));
+            new IrOperationModel("LABEL", List.of("Ldead"), 1),
+            new IrOperationModel("METHOD_CALL", List.of("unreachable()"), 2),
+            new IrOperationModel("LABEL", List.of("Lend"), 3),
+            new IrOperationModel("RETURN", List.of(), 4)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(!result.source().contains("unreachable()"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void preservesForwardJumpWhenSkippedBlockHasAnExternalEntry() {
+    IrMethodModel method = new IrMethodModel(
+        "liveBlock",
+        "()V",
+        List.of(
+            new IrOperationModel("JUMP", List.of("Lend"), 0),
+            new IrOperationModel("LABEL", List.of("Ldead"), 1),
+            new IrOperationModel("METHOD_CALL", List.of("reachableFromBackEdge()"), 2),
+            new IrOperationModel("LABEL", List.of("Lend"), 3),
+            new IrOperationModel("JUMP", List.of("Ldead"), 4)));
 
     TranslationResult result = new JavaTranslator().translate(method);
 
     assertTrue(!result.complete(), result.source());
+    assertTrue(result.source().contains("reachableFromBackEdge();"), result.source());
     assertTrue(result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
