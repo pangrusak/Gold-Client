@@ -235,6 +235,96 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void lowersStaticFieldAssignmentWhenRightHandSideContainsLineBreaks() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          new GoldClientRuntime.getStaticField("mezz.jei.collect.Table", "wrapperMaps") =
+              GoldClientRuntime.createJava("java.util.HashMap", "constructor text");
+        }
+        """);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.setStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\","),
+        lowered);
+    assertFalse(lowered.contains("getStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\") ="),
+        lowered);
+  }
+  @Test
+  void lowersGetterCallUsedAsStaticFieldAssignmentTarget() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax(
+        "void sample() { new GoldClientRuntime.getStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\") = value; }");
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.setStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\", value);"),
+        lowered);
+    assertFalse(lowered.contains("getStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\") ="),
+        lowered);
+  }
+
+  @Test
+  void lowersJavaConstructorsBeforeStaticCallRewriting() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object maps = new java.util.HashMap();
+          Object nested = new java.util.HashMap(new java.util.IdentityHashMap());
+        }
+        """);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.createJava(\"java.util.HashMap\""), lowered);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.createJava(\"java.util.IdentityHashMap\""), lowered);
+    assertFalse(lowered.contains("GoldClientRuntime.invokeJavaStatic(\"java.util.HashMap\""), lowered);
+    assertFalse(lowered.contains("new java.util.HashMap"), lowered);
+  }
+
+  @Test
+  void rewritesWholeNestedConstructorCallsWithoutCallingCreatedObjects() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object maps = new java.util.HashMap(
+              new java.util.IdentityHashMap(),
+              () -> new java.util.HashSet());
+        }
+        """);
+
+    String compact = lowered.replaceAll("\\s+", " ");
+    assertTrue(compact.contains(
+        "GoldClientRuntime.createJava(\"java.util.HashMap\", GoldClientRuntime.createJava(\"java.util.IdentityHashMap\"), () -> GoldClientRuntime.createJava(\"java.util.HashSet\"))"),
+        lowered);
+    assertFalse(lowered.contains("createJava(\"java.util.HashMap\", )("), lowered);
+    assertFalse(lowered.contains("createJava(\"java.util.IdentityHashMap\", )"), lowered);
+  }
+
+  @Test
+  void repairsDuplicatedConstructorReceiverFromBytecodeStackReconstruction() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object maps = new java.util.HashMap()(
+              new java.util.IdentityHashMap(),
+              () -> new java.util.HashSet());
+        }
+        """);
+
+    String compact = lowered.replaceAll("\\s+", " ");
+    assertTrue(compact.contains(
+        "GoldClientRuntime.createJava(\"java.util.HashMap\", GoldClientRuntime.createJava(\"java.util.IdentityHashMap\"), () -> GoldClientRuntime.createJava(\"java.util.HashSet\"))"),
+        lowered);
+    assertFalse(lowered.contains("createJava(\"java.util.HashMap\")(\n"), lowered);
+  }
+
+  @Test
+  void lowersRawStaticFieldAssignmentAfterFieldReadRewriting() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          new mezz.jei.collect.Table.wrapperMaps =
+              new java.util.HashMap(local0, () -> new java.util.IdentityHashMap());
+        }
+        """);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.setStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\","), lowered);
+    assertFalse(lowered.contains("getStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\") ="),
+        lowered);
+  }
+
+  @Test
   void emitsSyntaxAcceptedByNodeWhenAvailable() throws Exception {
     var method = new IrMethodModel("isReady", "()Z", List.of(
         op("CONSTANT", "true"), op("RETURN", "true")));
@@ -265,6 +355,30 @@ class JavaScriptTranslatorTest {
         execution.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
     assertTrue(execution.exitValue() == 0, executionOutput);
     assertTrue(executionOutput.equals("true"), executionOutput);
+  }
+
+  @Test
+  void lowersConstructorsAcrossQuotedArgumentsAndRepairsDelegationSyntax() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object table = new mezz.jei.collect.Table(
+              GoldClientRuntime.createJava("java.util.HashMap"),
+              () -> GoldClientRuntime.createJava("java.util.IdentityHashMap"));
+          this();
+          Object empty = mezz.jei.Internal.getRuntime();
+        }
+        """);
+
+    String compact = lowered.replaceAll("\\s+", " ");
+    assertTrue(compact.contains(
+        "GoldClientRuntime.create(\"mezz.jei.collect.Table\", GoldClientRuntime.createJava(\"java.util.HashMap\"), () -> GoldClientRuntime.createJava(\"java.util.IdentityHashMap\"))"),
+        lowered);
+    assertFalse(lowered.contains("new mezz.jei.collect.Table"), lowered);
+    assertFalse(lowered.contains("this();"), lowered);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.unsupported(\"constructor-delegation\", \"this()\")"),
+        lowered);
+    assertFalse(lowered.contains(", )"), lowered);
   }
 
   private static IrOperationModel op(String kind, String... operands) {

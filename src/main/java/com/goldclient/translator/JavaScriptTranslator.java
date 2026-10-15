@@ -153,6 +153,21 @@ public final class JavaScriptTranslator {
     return audited.toString();
   }
 
+  /** Repairs reconstructed static-field writes before lexical rewriting splits quoted arguments. */
+  private static String rewriteStaticGetterAssignments(String source) {
+    Pattern assignment = Pattern.compile(
+        "(?s)\\bnew\\s+GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*=\\s*(.*?);");
+    Matcher matcher = assignment.matcher(source);
+    StringBuffer rewritten = new StringBuffer();
+    while (matcher.find()) {
+      String replacement = "GoldClientRuntime.setStaticField(" + quote(matcher.group(1))
+          + ", " + quote(matcher.group(2)) + ", " + matcher.group(3) + ");";
+      matcher.appendReplacement(rewritten, Matcher.quoteReplacement(replacement));
+    }
+    matcher.appendTail(rewritten);
+    return rewritten.toString();
+  }
+
   /** Lowers the source-like output while preserving quoted strings and comments. */
   String lowerJavaSyntax(String source) {
     StringBuilder tokens = new StringBuilder(source.length() + 32);
@@ -223,7 +238,26 @@ public final class JavaScriptTranslator {
     typedLocal.appendTail(localBuffer);
     result = localBuffer.toString();
 
-    return lowerMalformedJvmExpressions(replaceCodeTokens(result));
+    String rewritten = rewriteStaticGetterAssignments(result);
+    // Constructors can contain string arguments, so lower complete expressions before
+    // lexical token rewriting splits code around quoted strings.
+    rewritten = rewriteConstructorExpressions(rewritten);
+    rewritten = replaceCodeTokens(rewritten);
+    // Static-field reads are introduced by replaceCodeTokens, so repair assignment
+    // targets again after token rewriting. Otherwise a getter call becomes an invalid LHS.
+    rewritten = rewriteStaticGetterAssignments(rewritten);
+    // Constructor delegation (this(...)) needs class-level constructor dispatch, which
+    // this method-level backend does not implement yet. Emit an explicit runtime marker
+    // instead of invalid JavaScript such as this();.
+    rewritten = rewritten.replaceAll(
+        "(?m)^(\\s*)this\\(\\s*\\);",
+        "$1GoldClientRuntime.unsupported(\"constructor-delegation\", \"this()\");");
+    // Keep zero-argument helper calls genuinely argument-free even when introduced
+    // by later API-rewrite passes (including calls inside lambda expressions).
+    rewritten = rewritten.replaceAll(
+        "(GoldClientRuntime\\.(?:create|createJava|invokeJavaStatic|invokeStaticClass|invokePlatformStatic)\\([^\\n]*?),\\s*\\)",
+        "$1)");
+    return lowerMalformedJvmExpressions(rewritten);
   }
 
   /**
@@ -324,6 +358,130 @@ public final class JavaScriptTranslator {
     return output.toString();
   }
 
+  private static String rewriteConstructorExpressions(String source) {
+    StringBuilder output = new StringBuilder(source.length() + 32);
+    for (int i = 0; i < source.length();) {
+      char current = source.charAt(i);
+      // Skip quoted strings and comments so that "new Type(...)" text is not rewritten.
+      if (current == '"' || current == '\'') {
+        char quoteChar = current;
+        output.append(source.charAt(i++));
+        boolean escaped = false;
+        while (i < source.length()) {
+          char c = source.charAt(i++);
+          output.append(c);
+          if (escaped) escaped = false;
+          else if (c == '\\') escaped = true;
+          else if (c == quoteChar) break;
+        }
+        continue;
+      }
+      if (current == '/' && i + 1 < source.length() && source.charAt(i + 1) == '/') {
+        while (i < source.length()) {
+          char c = source.charAt(i++);
+          output.append(c);
+          if (c == '\n') break;
+        }
+        continue;
+      }
+      if (current == '/' && i + 1 < source.length() && source.charAt(i + 1) == '*') {
+        output.append("/*");
+        i += 2;
+        while (i < source.length()) {
+          char c = source.charAt(i++);
+          output.append(c);
+          if (c == '*' && i < source.length() && source.charAt(i) == '/') {
+            output.append('/');
+            i++;
+            break;
+          }
+        }
+        continue;
+      }
+      if (!source.startsWith("new ", i)
+          || (i > 0 && (Character.isJavaIdentifierPart(source.charAt(i - 1))
+              || source.charAt(i - 1) == '$'))) {
+        output.append(source.charAt(i++));
+        continue;
+      }
+
+      int nameStart = i + 4;
+      int nameEnd = nameStart;
+      while (nameEnd < source.length()) {
+        char c = source.charAt(nameEnd);
+        if (Character.isJavaIdentifierPart(c) || c == '.' || c == '$') nameEnd++;
+        else break;
+      }
+      String className = source.substring(nameStart, nameEnd);
+      if (className.indexOf('.') < 0 || nameEnd >= source.length()
+          || source.charAt(nameEnd) != '('
+          || !Character.isUpperCase(className.charAt(className.lastIndexOf('.') + 1))) {
+        output.append(source.charAt(i++));
+        continue;
+      }
+
+      int close = matchingParenthesis(source, nameEnd);
+      if (close < 0) {
+        output.append(source.charAt(i++));
+        continue;
+      }
+
+      // Exception construction has a dedicated lowering to JavaScript Error in
+      // rewriteCode; preserve it for that pass instead of routing it through createJava.
+      if (className.startsWith("java.lang.")
+          && (className.endsWith("Exception") || className.endsWith("Error")
+              || className.endsWith("Throwable"))) {
+        output.append(source, i, close + 1);
+        i = close + 1;
+        continue;
+      }
+
+      String args = source.substring(nameEnd + 1, close);
+      int expressionEnd = close;
+      // Recover duplicated NEW/DUP receivers represented as new Type()(args).
+      if (args.isBlank() && close + 1 < source.length() && source.charAt(close + 1) == '(') {
+        int chainedClose = matchingParenthesis(source, close + 1);
+        if (chainedClose >= 0) {
+          args = source.substring(close + 2, chainedClose);
+          expressionEnd = chainedClose;
+        }
+      }
+      String runtimeHelper = className.startsWith("java.") || className.startsWith("javax.")
+          ? "createJava" : "create";
+      output.append("GoldClientRuntime.").append(runtimeHelper).append("(")
+          .append(quote(className.replace('/', '.')));
+      if (!args.isBlank()) {
+        output.append(", ").append(rewriteConstructorExpressions(args));
+      }
+      output.append(")");
+      i = expressionEnd + 1;
+    }
+    return output.toString();
+  }
+
+  private static int matchingParenthesis(String source, int open) {
+    int depth = 0;
+    char quote = 0;
+    boolean escaped = false;
+    for (int i = open; i < source.length(); i++) {
+      char c = source.charAt(i);
+      if (quote != 0) {
+        if (escaped) escaped = false;
+        else if (c == '\\') escaped = true;
+        else if (c == quote) quote = 0;
+        continue;
+      }
+      if (c == '"' || c == '\'') {
+        quote = c;
+      } else if (c == '(') {
+        depth++;
+      } else if (c == ')' && --depth == 0) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   private static String rewriteCode(StringBuilder input) {
     String result = input.toString()
         // Analyzer lattice markers are not JavaScript expressions. Keep the
@@ -354,10 +512,15 @@ public final class JavaScriptTranslator {
         .replace("java.lang.System.arraycopy(", "GoldClientRuntime.arraycopy(")
         .replace("System.arraycopy(", "GoldClientRuntime.arraycopy(");
 
+    // Rewrite whole constructor expressions, not just the "new Type(" prefix.
+    // Prefix-only replacement turns new HashMap(arg) into createJava("HashMap", (arg),
+    // effectively calling the newly created map as a function.
+    result = rewriteConstructorExpressions(result);
+
     // Route fully-qualified calls on translated classes through the class registry.
     // Java standard-library calls are handled by dedicated compatibility helpers.
     java.util.regex.Matcher staticCall = java.util.regex.Pattern.compile(
-        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\w$]*\\.)*[A-Z][A-Za-z0-9_$]*)\\.([A-Za-z_$][A-Za-z0-9_$]*)\\(")
+        "(?<!new )(?<![A-Za-z0-9_$])((?:[a-z_$][\\w$]*\\.)*[A-Z][A-Za-z0-9_$]*)\\.([A-Za-z_$][A-Za-z0-9_$]*)\\(")
         .matcher(result);
     StringBuffer staticCalls = new StringBuffer();
     while (staticCall.find()) {
@@ -396,6 +559,21 @@ public final class JavaScriptTranslator {
     result = result.replaceAll(
         "(GoldClientRuntime\\.(?:invokeJavaStatic|invokeStaticClass|invokePlatformStatic)\\([^\\n]*),\\s*\\)",
         "$1)");
+
+    // A malformed reconstructed assignment can place "new" before a static-field
+    // getter call. A getter call is never an assignment target, so recover the owner
+    // and field arguments and lower it to the runtime setter before generic rewriting.
+    java.util.regex.Matcher getterWrite = java.util.regex.Pattern.compile(
+        "(?s)\\bnew\\s+GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*=\\s*(.*?);")
+        .matcher(result);
+    StringBuffer getterWrites = new StringBuffer();
+    while (getterWrite.find()) {
+      String replacement = "GoldClientRuntime.setStaticField(" + quote(getterWrite.group(1))
+          + ", " + quote(getterWrite.group(2)) + ", " + getterWrite.group(3) + ");";
+      getterWrite.appendReplacement(getterWrites, java.util.regex.Matcher.quoteReplacement(replacement));
+    }
+    getterWrite.appendTail(getterWrites);
+    result = getterWrites.toString();
 
     // Static field writes must target the generated class constructor rather than
     // an unresolved Java package global. Rewrite writes before reads.
@@ -438,21 +616,6 @@ public final class JavaScriptTranslator {
     }
     staticField.appendTail(staticFields);
     result = staticFields.toString();
-
-    // Constructor expressions for mod classes resolve through the generated registry.
-    java.util.regex.Matcher allocation = java.util.regex.Pattern.compile(
-        "\\bnew\\s+((?:[a-z_$][\\w$]*\\.)+[A-Z][A-Za-z0-9_$]*)\\s*\\(")
-        .matcher(result);
-    StringBuffer allocations = new StringBuffer();
-    while (allocation.find()) {
-      String className = allocation.group(1).replace('/', '.');
-      String helper = className.startsWith("java.") || className.startsWith("javax.")
-          ? "createJava" : "create";
-      String replacement = "GoldClientRuntime." + helper + "(" + quote(className) + ", ";
-      allocation.appendReplacement(allocations, java.util.regex.Matcher.quoteReplacement(replacement));
-    }
-    allocation.appendTail(allocations);
-    result = allocations.toString();
 
     // java.util convenience APIs are common in mod code and have small direct adapters.
     java.util.regex.Matcher simpleJavaCall = java.util.regex.Pattern.compile(
@@ -519,7 +682,6 @@ public final class JavaScriptTranslator {
     equals.appendTail(equalCalls);
     return equalCalls.toString();
   }
-
   private static String lowerParameters(String parameters, boolean isStatic) {
     if (parameters == null || parameters.isBlank()) return "";
     List<String> lowered = new ArrayList<>();

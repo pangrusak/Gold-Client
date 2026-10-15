@@ -88,6 +88,26 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void keepsJavaScriptArrowExpressionsAsConstructorArguments() {
+    IrMethodModel method = new IrMethodModel(
+        "test",
+        "()V",
+        List.of(new IrOperationModel(
+            "LOCAL_WRITE",
+            List.of("local1", "new java.util.HashMap(() => GoldClientRuntime.createJava(\"java.util.IdentityHashMap\"))"),
+            0),
+            new IrOperationModel("RETURN", List.of(), 1)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.source().contains(
+        "new java.util.HashMap(() => GoldClientRuntime.createJava(\"java.util.IdentityHashMap\"))"),
+        result.source());
+    assertTrue(!result.source().contains(
+        "new java.util.HashMap(\"() => GoldClientRuntime"), result.source());
+  }
+
+  @Test
   void translatesConstantsAndExpressions() {
     IrMethodModel method = new IrMethodModel(
         "test",
@@ -651,6 +671,26 @@ class JavaTranslatorTest {
     assertTrue(!result.complete(), result.source());
     assertTrue(result.source().contains("unsupported invokedynamic"), result.source());
     assertTrue(result.source().contains("return;"), result.source());
+  }
+
+
+  @Test
+  void preservesLambdaArgumentsAsExecutableConstructorExpressions() {
+    IrMethodModel method = new IrMethodModel(
+        "register",
+        "()V",
+        List.of(new IrOperationModel(
+            "METHOD_CALL",
+            List.of("new java.util.HashMap(new java.util.HashMap(), () -> new java.util.IdentityHashMap())"),
+            0)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "new java.util.HashMap(new java.util.HashMap(), () -> new java.util.IdentityHashMap())"),
+        result.source());
+    assertTrue(!result.source().contains("\\"), result.source());
   }
 
 }

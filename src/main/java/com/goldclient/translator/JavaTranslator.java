@@ -940,6 +940,10 @@ public final class JavaTranslator {
       return false;
 
     return trimmed.matches("local\\d+")
+        || trimmed.contains("->")
+        // Some IR producers already express lambdas in JavaScript arrow syntax.
+        // Treat those as expressions, not as bare constructor text to quote.
+        || trimmed.contains("=>")
         || trimmed.matches("[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)+")
         || trimmed.matches("[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*\\s*\\([^)]*\\)")
         || trimmed.startsWith("new ")

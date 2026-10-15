@@ -30,6 +30,22 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void ignoresNopWithoutMarkingMethodUnsupported() {
+    MethodModel method = method("noOp", "()V", List.of(
+        instruction(0, "NOP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_OPCODE".equals(operation.kind())
+            && operation.operands().contains("NOP")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "RETURN".equals(operation.kind())), ir.operations().toString());
+  }
+
+  @Test
   void translatesClassAndMethodTypeConstants() {
     MethodModel method = method("reflection", "()V", List.of(
         instruction(18, "LDC", "Type(Ljava/lang/String;)"),
@@ -231,6 +247,42 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void omitsNoOpObjectConstructorInsteadOfEmittingThisCall() {
+    MethodModel method = method("init", "()V", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(183, "INVOKESPECIAL", "java/lang/Object", "<init>", "()V", "false"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "METHOD_CALL".equals(operation.kind())
+            && operation.operands().stream().anyMatch(value -> value.contains("local0()"))),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "RETURN".equals(operation.kind())), ir.operations().toString());
+  }
+
+  @Test
+  void constructorDupLeavesExactlyOneInitializedValueForPutField() {
+    MethodModel method = method("init", "()V", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(187, "NEW", "java/util/HashSet"),
+        instruction(89, "DUP"),
+        instruction(183, "INVOKESPECIAL", "java/util/HashSet", "<init>", "()V", "false"),
+        instruction(181, "PUTFIELD", "example/Registry", "values", "Ljava/util/Set;"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "FIELD_WRITE".equals(operation.kind())
+            && operation.operands().equals(List.of(
+                "local0", "example.Registry.values", "new java.util.HashSet()"))),
+        ir.operations().toString());
+  }
+
+  @Test
   void carriesOperandValuesAcrossControlFlowJoin() {
     List<InstructionModel> instructions = List.of(
         instruction(25, "ALOAD", "0"),
@@ -251,6 +303,35 @@ class IntermediateRepresentationAnalyzerTest {
         o.kind().equals("LOCAL_WRITE")
             && o.operands().get(0).equals("local1")
             && o.operands().get(1).equals("local0")));
+  }
+
+  @Test
+  void preservesBranchConditionAndJoinedValueInOneDiamond() {
+    MethodModel method = method("diamond", "(Ljava/lang/Object;)Ljava/lang/Object;", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(198, "IFNULL", "L0"),
+        instruction(25, "ALOAD", "0"),
+        instruction(167, "GOTO", "L1"),
+        instruction(-1, "LABEL", "L0"),
+        instruction(25, "ALOAD", "0"),
+        instruction(-1, "LABEL", "L1"),
+        instruction(58, "ASTORE", "1"),
+        instruction(25, "ALOAD", "1"),
+        instruction(176, "ARETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONDITIONAL_BRANCH".equals(operation.kind())
+            && operation.operands().equals(List.of("local0 == null", "L0"))),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "LOCAL_WRITE".equals(operation.kind())
+            && operation.operands().equals(List.of("local1", "local0"))),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        operation.operands().stream().anyMatch(value -> value.contains("<unknown>"))),
+        ir.operations().toString());
   }
 
   @Test

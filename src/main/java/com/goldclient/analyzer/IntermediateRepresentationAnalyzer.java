@@ -21,12 +21,6 @@ public final class IntermediateRepresentationAnalyzer {
     // exception handlers begin with the thrown exception on the stack.
     // Also, mergeValue() uses a bounded lattice so loops always converge.
     Map<Integer, List<String>> incomingStacks = new HashMap<>();
-    Map<Integer, List<com.goldclient.model.ControlFlowEdgeModel>> incomingEdges =
-        new HashMap<>();
-
-    for (com.goldclient.model.ControlFlowEdgeModel edge : method.controlFlow().edges())
-      incomingEdges.computeIfAbsent(edge.toBlock(), ignored -> new ArrayList<>()).add(edge);
-
     if (!blocks.isEmpty()) {
       incomingStacks.put(method.controlFlow().entryBlock(), List.of());
 
@@ -40,6 +34,10 @@ public final class IntermediateRepresentationAnalyzer {
         List<String> outgoing = simulateBlock(block, incoming, instructions);
 
         for (int successor : block.successors()) {
+          // The method entry has no JVM predecessor. A back edge to it is a
+          // malformed CFG artifact, and merging it would poison the real
+          // entry stack with an unrelated loop state.
+          if (successor == method.controlFlow().entryBlock()) continue;
           List<String> propagated = isExceptionEdge(
               blockId, successor, method.controlFlow().edges())
                   ? List.of("<exception>")
@@ -202,6 +200,10 @@ public final class IntermediateRepresentationAnalyzer {
       Deque<String> stack,
       List<IrOperationModel> operations) {
     String opcode = instruction.opcodeName();
+
+    // NOP has no operand-stack or program-state effect. Treating it as an
+    // unsupported opcode incorrectly marks otherwise translatable methods incomplete.
+    if ("NOP".equals(opcode)) return;
 
     if ("LABEL".equals(opcode)) {
       operations.add(op("LABEL", instruction.operands(), sourceInstruction));
@@ -474,12 +476,22 @@ public final class IntermediateRepresentationAnalyzer {
     if (!"INVOKESTATIC".equals(opcode) && !"INVOKEDYNAMIC".equals(opcode))
       receiver = pop(stack);
 
+    // java.lang.Object.<init>() has no JavaScript behavior. Emitting it as
+    // receiver() turns a normal constructor prologue into invalid code such as
+    // this();. The receiver has already been consumed from the symbolic stack.
+    if ("<init>".equals(name) && "java/lang/Object".equals(owner)) return;
+
     String call;
+    boolean retainedConstructorReference = false;
     if ("<init>".equals(name) && receiver != null) {
       call = receiver + "(" + String.join(", ", args) + ")";
+      // NEW/DUP leaves one reference beneath the constructor receiver. Replace
+      // that surviving reference with the initialized object exactly once.
+      // Do not push it again below: doing so corrupts the stack for PUTFIELD.
       if (!stack.isEmpty() && stack.peek().equals(receiver)) {
         stack.pop();
         stack.push(call);
+        retainedConstructorReference = true;
       }
     } else if (receiver != null) {
       call = receiver + "." + name + "(" + String.join(", ", args) + ")";
@@ -488,9 +500,11 @@ public final class IntermediateRepresentationAnalyzer {
     }
 
     boolean constructorValue = "<init>".equals(name) && receiver != null
-        && receiver.trim().startsWith("new ");
+        && receiver.trim().startsWith("new ") && retainedConstructorReference;
     if (!returnsVoid(descriptor) || constructorValue) {
-      stack.push(call);
+      // Constructor calls return void at the JVM level; their value exists on
+      // the stack only when NEW/DUP retained a reference for a later consumer.
+      if (!constructorValue) stack.push(call);
       operations.add(op("CALL_VALUE", List.of(call), sourceInstruction));
     } else {
       operations.add(op("METHOD_CALL", List.of(call), sourceInstruction));
