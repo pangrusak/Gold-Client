@@ -475,11 +475,16 @@ public final class IntermediateRepresentationAnalyzer {
       receiver = pop(stack);
 
     String call;
+    boolean retainedConstructorReference = false;
     if ("<init>".equals(name) && receiver != null) {
       call = receiver + "(" + String.join(", ", args) + ")";
+      // NEW/DUP leaves one reference beneath the constructor receiver. Replace
+      // that surviving reference with the initialized object exactly once.
+      // Do not push it again below: doing so corrupts the stack for PUTFIELD.
       if (!stack.isEmpty() && stack.peek().equals(receiver)) {
         stack.pop();
         stack.push(call);
+        retainedConstructorReference = true;
       }
     } else if (receiver != null) {
       call = receiver + "." + name + "(" + String.join(", ", args) + ")";
@@ -488,9 +493,11 @@ public final class IntermediateRepresentationAnalyzer {
     }
 
     boolean constructorValue = "<init>".equals(name) && receiver != null
-        && receiver.trim().startsWith("new ");
+        && receiver.trim().startsWith("new ") && retainedConstructorReference;
     if (!returnsVoid(descriptor) || constructorValue) {
-      stack.push(call);
+      // Constructor calls return void at the JVM level; their value exists on
+      // the stack only when NEW/DUP retained a reference for a later consumer.
+      if (!constructorValue) stack.push(call);
       operations.add(op("CALL_VALUE", List.of(call), sourceInstruction));
     } else {
       operations.add(op("METHOD_CALL", List.of(call), sourceInstruction));
