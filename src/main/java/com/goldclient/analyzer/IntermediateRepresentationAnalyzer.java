@@ -203,6 +203,10 @@ public final class IntermediateRepresentationAnalyzer {
       List<IrOperationModel> operations) {
     String opcode = instruction.opcodeName();
 
+    // NOP has no operand-stack or program-state effect. Treating it as an
+    // unsupported opcode incorrectly marks otherwise translatable methods incomplete.
+    if ("NOP".equals(opcode)) return;
+
     if ("LABEL".equals(opcode)) {
       operations.add(op("LABEL", instruction.operands(), sourceInstruction));
       return;
