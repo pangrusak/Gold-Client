@@ -121,7 +121,7 @@ class JavaTranslatorTest {
     assertTrue(result.source().contains("Approximation: ignored JVM MONITORENTER"), result.source());
     assertTrue(result.source().contains("Approximation: ignored JVM MONITOREXIT"), result.source());
     assertTrue(result.source().contains("work();"), result.source());
-    assertTrue(!result.source().contains("unsupported(\\"monitor\\""), result.source());
+    assertTrue(!result.source().contains("unsupported(\"monitor\""), result.source());
   }
 
   @Test
