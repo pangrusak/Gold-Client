@@ -357,6 +357,30 @@ class JavaScriptTranslatorTest {
     assertTrue(executionOutput.equals("true"), executionOutput);
   }
 
+  @Test
+  void lowersConstructorsAcrossQuotedArgumentsAndRepairsDelegationSyntax() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object table = new mezz.jei.collect.Table(
+              GoldClientRuntime.createJava("java.util.HashMap"),
+              () -> GoldClientRuntime.createJava("java.util.IdentityHashMap"));
+          this();
+          Object empty = mezz.jei.Internal.getRuntime();
+        }
+        """);
+
+    String compact = lowered.replaceAll("\\s+", " ");
+    assertTrue(compact.contains(
+        "GoldClientRuntime.create(\\"mezz.jei.collect.Table\\", GoldClientRuntime.createJava(\\"java.util.HashMap\\"), () -> GoldClientRuntime.createJava(\\"java.util.IdentityHashMap\\"))"),
+        lowered);
+    assertFalse(lowered.contains("new mezz.jei.collect.Table"), lowered);
+    assertFalse(lowered.contains("this();"), lowered);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.unsupported(\\"constructor-delegation\\", \\"this()\\")"),
+        lowered);
+    assertFalse(lowered.contains(", )"), lowered);
+  }
+
   private static IrOperationModel op(String kind, String... operands) {
     return new IrOperationModel(kind, List.of(operands), 0);
   }
