@@ -397,6 +397,21 @@ public final class JavaScriptTranslator {
         "(GoldClientRuntime\\.(?:invokeJavaStatic|invokeStaticClass|invokePlatformStatic)\\([^\\n]*),\\s*\\)",
         "$1)");
 
+    // A malformed reconstructed assignment can place "new" before a static-field
+    // getter call. A getter call is never an assignment target, so recover the owner
+    // and field arguments and lower it to the runtime setter before generic rewriting.
+    java.util.regex.Matcher getterWrite = java.util.regex.Pattern.compile(
+        "\\bnew\\s+GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*=\\s*([^;\\n]+);")
+        .matcher(result);
+    StringBuffer getterWrites = new StringBuffer();
+    while (getterWrite.find()) {
+      String replacement = "GoldClientRuntime.setStaticField(" + quote(getterWrite.group(1))
+          + ", " + quote(getterWrite.group(2)) + ", " + getterWrite.group(3) + ");";
+      getterWrite.appendReplacement(getterWrites, java.util.regex.Matcher.quoteReplacement(replacement));
+    }
+    getterWrite.appendTail(getterWrites);
+    result = getterWrites.toString();
+
     // Static field writes must target the generated class constructor rather than
     // an unresolved Java package global. Rewrite writes before reads.
     java.util.regex.Matcher staticWrite = java.util.regex.Pattern.compile(
