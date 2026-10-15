@@ -123,7 +123,7 @@ public final class JavaTranslator {
         // Keep the semantic gap visible while treating the operation as a no-op.
         source.append(indent(indent))
             .append("// Approximation: ignored JVM ").append(opcode)
-            .append(" on ").append(escapeJava(value)).append(".\\n");
+            .append(" on ").append(escapeJava(value)).append(".\n");
         continue;
       }
 
