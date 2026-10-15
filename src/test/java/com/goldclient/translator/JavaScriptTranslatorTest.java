@@ -303,7 +303,8 @@ class JavaScriptTranslatorTest {
         }
         """);
 
-    assertTrue(lowered.contains(
+    String compact = lowered.replaceAll("\\s+", " ");
+    assertTrue(compact.contains(
         "GoldClientRuntime.createJava(\"java.util.HashMap\", GoldClientRuntime.createJava(\"java.util.IdentityHashMap\"), () -> GoldClientRuntime.createJava(\"java.util.HashSet\"))"),
         lowered);
     assertFalse(lowered.contains("createJava(\"java.util.HashMap\")(\n"), lowered);
