@@ -362,19 +362,17 @@ public final class JavaScriptTranslator {
     StringBuilder output = new StringBuilder(source.length() + 32);
     for (int i = 0; i < source.length();) {
       char current = source.charAt(i);
-      // Preserve literals and comments when scanning the full method body. A
-      // constructor expression itself may span a quoted argument, which is why
-      // the outer constructor parser handles those literals in matchingParenthesis.
-      if (current == '"' || current == '\\'') {
-        char quote = current;
+      // Skip quoted strings and comments so that "new Type(...)" text is not rewritten.
+      if (current == '"' || current == '\'') {
+        char quoteChar = current;
         output.append(source.charAt(i++));
         boolean escaped = false;
         while (i < source.length()) {
           char c = source.charAt(i++);
           output.append(c);
           if (escaped) escaped = false;
-          else if (c == '\\\\') escaped = true;
-          else if (c == quote) break;
+          else if (c == '\\') escaped = true;
+          else if (c == quoteChar) break;
         }
         continue;
       }
@@ -382,7 +380,7 @@ public final class JavaScriptTranslator {
         while (i < source.length()) {
           char c = source.charAt(i++);
           output.append(c);
-          if (c == '\\n') break;
+          if (c == '\n') break;
         }
         continue;
       }
@@ -402,7 +400,10 @@ public final class JavaScriptTranslator {
       }
       if (!source.startsWith("new ", i)
           || (i > 0 && (Character.isJavaIdentifierPart(source.charAt(i - 1))
-              || source.charAt(i - 1) == '
+              || source.charAt(i - 1) == '$'))) {
+        output.append(source.charAt(i++));
+        continue;
+      }
 
       int nameStart = i + 4;
       int nameEnd = nameStart;
