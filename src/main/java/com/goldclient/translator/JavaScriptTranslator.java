@@ -426,6 +426,16 @@ public final class JavaScriptTranslator {
         continue;
       }
 
+      // Exception construction has a dedicated lowering to JavaScript Error in
+      // rewriteCode; preserve it for that pass instead of routing it through createJava.
+      if (className.startsWith("java.lang.")
+          && (className.endsWith("Exception") || className.endsWith("Error")
+              || className.endsWith("Throwable"))) {
+        output.append(source, i, close + 1);
+        i = close + 1;
+        continue;
+      }
+
       String args = source.substring(nameEnd + 1, close);
       int expressionEnd = close;
       // Recover duplicated NEW/DUP receivers represented as new Type()(args).
