@@ -205,6 +205,36 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void lowersRawJvmPrimitiveArrayAllocationDescriptors() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax(
+        "void sample() { var values = new [I[local9](); }");
+    assertTrue(lowered.contains("GoldClientRuntime.newArray(\"int\", local9)"), lowered);
+    assertFalse(lowered.contains("new [I["), lowered);
+  }
+
+  @Test
+  void invalidNumericMethodReceiversBecomeExplicitIncompleteOperations() {
+    var method = new IrMethodModel("badReceiver", "()V", List.of(
+        op("METHOD_CALL", "0.set(value)"), op("RETURN")));
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+    assertFalse(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "GoldClientRuntime.unsupported(\"invalid-call-receiver\", \"0.set(value)\")"),
+        result.source());
+  }
+
+  @Test
+  void staticFieldAssignmentsWithSpuriousNewPrefixUseRuntimeSetter() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax(
+        "void sample() { new mezz.jei.collect.Table.wrapperMaps = value; }");
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.setStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\", value);"),
+        lowered);
+    assertFalse(lowered.contains("getStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\") ="),
+        lowered);
+  }
+
+  @Test
   void emitsSyntaxAcceptedByNodeWhenAvailable() throws Exception {
     var method = new IrMethodModel("isReady", "()Z", List.of(
         op("CONSTANT", "true"), op("RETURN", "true")));
