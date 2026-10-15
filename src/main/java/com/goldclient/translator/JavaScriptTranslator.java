@@ -255,7 +255,7 @@ public final class JavaScriptTranslator {
     // Keep zero-argument helper calls genuinely argument-free even when introduced
     // by later API-rewrite passes (including calls inside lambda expressions).
     rewritten = rewritten.replaceAll(
-        "(GoldClientRuntime\\.(?:invokeJavaStatic|invokeStaticClass|invokePlatformStatic)\\([^\\n]*?),\\s*\\)",
+        "(GoldClientRuntime\\.(?:create|createJava|invokeJavaStatic|invokeStaticClass|invokePlatformStatic)\\([^\\n]*?),\\s*\\)",
         "$1)");
     return lowerMalformedJvmExpressions(rewritten);
   }
