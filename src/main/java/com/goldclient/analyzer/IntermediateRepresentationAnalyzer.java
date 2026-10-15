@@ -21,12 +21,6 @@ public final class IntermediateRepresentationAnalyzer {
     // exception handlers begin with the thrown exception on the stack.
     // Also, mergeValue() uses a bounded lattice so loops always converge.
     Map<Integer, List<String>> incomingStacks = new HashMap<>();
-    Map<Integer, List<com.goldclient.model.ControlFlowEdgeModel>> incomingEdges =
-        new HashMap<>();
-
-    for (com.goldclient.model.ControlFlowEdgeModel edge : method.controlFlow().edges())
-      incomingEdges.computeIfAbsent(edge.toBlock(), ignored -> new ArrayList<>()).add(edge);
-
     if (!blocks.isEmpty()) {
       incomingStacks.put(method.controlFlow().entryBlock(), List.of());
 
@@ -40,6 +34,10 @@ public final class IntermediateRepresentationAnalyzer {
         List<String> outgoing = simulateBlock(block, incoming, instructions);
 
         for (int successor : block.successors()) {
+          // The method entry has no JVM predecessor. A back edge to it is a
+          // malformed CFG artifact, and merging it would poison the real
+          // entry stack with an unrelated loop state.
+          if (successor == method.controlFlow().entryBlock()) continue;
           List<String> propagated = isExceptionEdge(
               blockId, successor, method.controlFlow().edges())
                   ? List.of("<exception>")

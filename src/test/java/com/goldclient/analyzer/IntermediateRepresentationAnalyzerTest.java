@@ -306,6 +306,35 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void preservesBranchConditionAndJoinedValueInOneDiamond() {
+    MethodModel method = method("diamond", "(Ljava/lang/Object;)Ljava/lang/Object;", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(198, "IFNULL", "L0"),
+        instruction(25, "ALOAD", "0"),
+        instruction(167, "GOTO", "L1"),
+        instruction(-1, "LABEL", "L0"),
+        instruction(25, "ALOAD", "0"),
+        instruction(-1, "LABEL", "L1"),
+        instruction(58, "ASTORE", "1"),
+        instruction(25, "ALOAD", "1"),
+        instruction(176, "ARETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CONDITIONAL_BRANCH".equals(operation.kind())
+            && operation.operands().equals(List.of("local0 == null", "L0"))),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "LOCAL_WRITE".equals(operation.kind())
+            && operation.operands().equals(List.of("local1", "local0"))),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        operation.operands().stream().anyMatch(value -> value.contains("<unknown>"))),
+        ir.operations().toString());
+  }
+
+  @Test
   void reconstructsIntegerComparison() {
     List<InstructionModel> instructions = List.of(
         instruction(21, "ILOAD", "1"),
