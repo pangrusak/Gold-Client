@@ -235,6 +235,17 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void lowersGetterCallUsedAsStaticFieldAssignmentTarget() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax(
+        "void sample() { new GoldClientRuntime.getStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\") = value; }");
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.setStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\", value);"),
+        lowered);
+    assertFalse(lowered.contains("getStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\") ="),
+        lowered);
+  }
+
+  @Test
   void emitsSyntaxAcceptedByNodeWhenAvailable() throws Exception {
     var method = new IrMethodModel("isReady", "()Z", List.of(
         op("CONSTANT", "true"), op("RETURN", "true")));
