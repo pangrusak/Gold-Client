@@ -276,6 +276,23 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void rewritesWholeNestedConstructorCallsWithoutCallingCreatedObjects() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object maps = new java.util.HashMap(
+              new java.util.IdentityHashMap(),
+              () -> new java.util.HashSet());
+        }
+        """);
+
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.createJava(\"java.util.HashMap\", GoldClientRuntime.createJava(\"java.util.IdentityHashMap\"), () -> GoldClientRuntime.createJava(\"java.util.HashSet\"))"),
+        lowered);
+    assertFalse(lowered.contains("createJava(\"java.util.HashMap\", )("), lowered);
+    assertFalse(lowered.contains("createJava(\"java.util.IdentityHashMap\", )"), lowered);
+  }
+
+  @Test
   void lowersRawStaticFieldAssignmentAfterFieldReadRewriting() {
     String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
         void sample() {
