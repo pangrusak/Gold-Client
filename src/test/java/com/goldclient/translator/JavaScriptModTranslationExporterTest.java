@@ -50,7 +50,7 @@ class JavaScriptModTranslationExporterTest {
     assertTrue(Files.readString(output.resolve("incomplete-diagnostics.txt"))
         .contains("example.Feature#unknown()V"));
     assertTrue(Files.readString(output.resolve("incomplete-diagnostics.txt"))
-        .contains("diagnostics\\nIncomplete methods:"));
+        .contains("diagnostics\nIncomplete methods:"));
     assertTrue(Files.isRegularFile(output.resolve("incomplete-method-details.json")));
     String incompleteDetails = Files.readString(output.resolve("incomplete-method-details.json"));
     assertTrue(incompleteDetails.contains("example.Feature"));
