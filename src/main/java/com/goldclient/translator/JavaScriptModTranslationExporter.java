@@ -506,10 +506,27 @@ public final class JavaScriptModTranslationExporter {
         new GsonBuilder().setPrettyPrinting().create().toJson(details) + System.lineSeparator(),
         StandardCharsets.UTF_8);
 
+    java.util.Map<String, Integer> categoryCounts = new java.util.TreeMap<>();
+    java.util.regex.Pattern categoryPattern = java.util.regex.Pattern.compile("\\\\[([A-Z_]+)\\\\]");
+    for (IncompleteMethodDetail detail : details) {
+      java.util.regex.Matcher matcher = categoryPattern.matcher(detail.reason());
+      java.util.Set<String> methodCategories = new java.util.TreeSet<>();
+      while (matcher.find()) methodCategories.add(matcher.group(1));
+      for (String category : methodCategories) categoryCounts.merge(category, 1, Integer::sum);
+    }
+
     StringBuilder report = new StringBuilder("Gold Client incomplete-method diagnostics\\n")
         .append("Incomplete methods: ").append(details.size())
         .append("\\nDistinct reasons: ").append(grouped.size())
-        .append("\\nPer-method IR evidence: incomplete-method-details.json\\n\\n");
+        .append("\\nPer-method IR evidence: incomplete-method-details.json\\n");
+    if (!categoryCounts.isEmpty()) {
+      report.append("\\nFailure categories (methods may have multiple categories):\\n");
+      for (var category : categoryCounts.entrySet()) {
+        report.append("  - ").append(category.getKey()).append(": ")
+            .append(category.getValue()).append("\\n");
+      }
+    }
+    report.append("\\n");
     for (var entry : grouped.entrySet()) {
       report.append("[").append(entry.getValue().size()).append(" methods] ")
           .append(entry.getKey()).append("\\n");
