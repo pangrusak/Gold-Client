@@ -374,6 +374,21 @@ public final class JavaScriptTranslator {
         .replace("java.lang.System.arraycopy(", "GoldClientRuntime.arraycopy(")
         .replace("System.arraycopy(", "GoldClientRuntime.arraycopy(");
 
+    // Constructor expressions for mod classes resolve through the generated registry.
+    java.util.regex.Matcher allocation = java.util.regex.Pattern.compile(
+        "\\bnew\\s+((?:[a-z_$][\\w$]*\\.)+[A-Z][A-Za-z0-9_$]*)\\s*\\(")
+        .matcher(result);
+    StringBuffer allocations = new StringBuffer();
+    while (allocation.find()) {
+      String className = allocation.group(1).replace('/', '.');
+      String helper = className.startsWith("java.") || className.startsWith("javax.")
+          ? "createJava" : "create";
+      String replacement = "GoldClientRuntime." + helper + "(" + quote(className) + ", ";
+      allocation.appendReplacement(allocations, java.util.regex.Matcher.quoteReplacement(replacement));
+    }
+    allocation.appendTail(allocations);
+    result = allocations.toString();
+
     // Route fully-qualified calls on translated classes through the class registry.
     // Java standard-library calls are handled by dedicated compatibility helpers.
     java.util.regex.Matcher staticCall = java.util.regex.Pattern.compile(
@@ -473,21 +488,6 @@ public final class JavaScriptTranslator {
     }
     staticField.appendTail(staticFields);
     result = staticFields.toString();
-
-    // Constructor expressions for mod classes resolve through the generated registry.
-    java.util.regex.Matcher allocation = java.util.regex.Pattern.compile(
-        "\\bnew\\s+((?:[a-z_$][\\w$]*\\.)+[A-Z][A-Za-z0-9_$]*)\\s*\\(")
-        .matcher(result);
-    StringBuffer allocations = new StringBuffer();
-    while (allocation.find()) {
-      String className = allocation.group(1).replace('/', '.');
-      String helper = className.startsWith("java.") || className.startsWith("javax.")
-          ? "createJava" : "create";
-      String replacement = "GoldClientRuntime." + helper + "(" + quote(className) + ", ";
-      allocation.appendReplacement(allocations, java.util.regex.Matcher.quoteReplacement(replacement));
-    }
-    allocation.appendTail(allocations);
-    result = allocations.toString();
 
     // java.util convenience APIs are common in mod code and have small direct adapters.
     java.util.regex.Matcher simpleJavaCall = java.util.regex.Pattern.compile(
