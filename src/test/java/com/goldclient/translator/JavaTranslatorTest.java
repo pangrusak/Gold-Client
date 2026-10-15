@@ -657,7 +657,7 @@ class JavaTranslatorTest {
   }
 
   @Test
-  void keepsMonitorOperationsExplicitAndMarksMethodIncomplete() {
+  void keepsMonitorOperationsVisibleAsNoOpApproximations() {
     IrMethodModel method = new IrMethodModel(
         "synchronizedBlock",
         "()V",
@@ -667,11 +667,12 @@ class JavaTranslatorTest {
 
     TranslationResult result = new JavaTranslator().translate(method);
 
-    assertTrue(!result.complete(), result.source());
+    assertTrue(result.complete(), result.source());
     assertTrue(result.source().contains(
-        "GoldClientRuntime.unsupported(\"monitor\", \"MONITORENTER on local0\");"),
+        "Approximation: ignored JVM MONITORENTER on local0."),
         result.source());
-    assertTrue(!result.source().contains("TODO: MONITOR"), result.source());
+    assertTrue(!result.source().contains("GoldClientRuntime.unsupported(\"monitor\""),
+        result.source());
   }
 
   @Test
