@@ -108,6 +108,23 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void emitsSynchronizedMonitorOperationsAsExplicitNoOpApproximations() {
+    IrMethodModel method = new IrMethodModel("guarded", "()V", List.of(
+        new IrOperationModel("MONITOR", List.of("MONITORENTER", "local0"), 0),
+        new IrOperationModel("METHOD_CALL", List.of("work()"), 1),
+        new IrOperationModel("MONITOR", List.of("MONITOREXIT", "local0"), 2),
+        new IrOperationModel("RETURN", List.of(), 3)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("Approximation: ignored JVM MONITORENTER"), result.source());
+    assertTrue(result.source().contains("Approximation: ignored JVM MONITOREXIT"), result.source());
+    assertTrue(result.source().contains("work();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"monitor\""), result.source());
+  }
+
+  @Test
   void translatesConstantsAndExpressions() {
     IrMethodModel method = new IrMethodModel(
         "test",
@@ -640,7 +657,7 @@ class JavaTranslatorTest {
   }
 
   @Test
-  void keepsMonitorOperationsExplicitAndMarksMethodIncomplete() {
+  void keepsMonitorOperationsVisibleAsNoOpApproximations() {
     IrMethodModel method = new IrMethodModel(
         "synchronizedBlock",
         "()V",
@@ -650,11 +667,12 @@ class JavaTranslatorTest {
 
     TranslationResult result = new JavaTranslator().translate(method);
 
-    assertTrue(!result.complete(), result.source());
+    assertTrue(result.complete(), result.source());
     assertTrue(result.source().contains(
-        "GoldClientRuntime.unsupported(\"monitor\", \"MONITORENTER on local0\");"),
+        "Approximation: ignored JVM MONITORENTER on local0."),
         result.source());
-    assertTrue(!result.source().contains("TODO: MONITOR"), result.source());
+    assertTrue(!result.source().contains("GoldClientRuntime.unsupported(\"monitor\""),
+        result.source());
   }
 
   @Test

@@ -45,6 +45,34 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void keepsMethodsEmittableWhenOnlyStackValuesNeedAnExplicitFallback() {
+    var method = new IrMethodModel("approximate", "()Ljava/lang/Object;", List.of(
+        op("RETURN", "<unknown>")));
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "Approximation: unresolved JVM stack/exception values were emitted as undefined."),
+        result.source());
+    assertTrue(result.source().contains("return undefined;"), result.source());
+    assertFalse(result.source().contains("<unknown>"), result.source());
+  }
+
+  @Test
+  void emitsExplicitFallbackForAnUnresolvedExceptionStackValue() {
+    var method = new IrMethodModel("exceptionFallback", "()Ljava/lang/Object;", List.of(
+        op("RETURN", "<exception>")));
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("return undefined;"), result.source());
+    assertTrue(result.source().contains(
+        "Approximation: unresolved JVM stack/exception values were emitted as undefined."),
+        result.source());
+    assertFalse(result.source().contains("<exception>"), result.source());
+  }
+
+  @Test
   void unsupportedOperationsBecomeExplicitRuntimeFailures() {
     var method = new IrMethodModel("unknown", "()V", List.of(
         op("UNKNOWN", "mystery-op"), op("RETURN")));
