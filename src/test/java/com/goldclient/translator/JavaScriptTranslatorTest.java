@@ -293,6 +293,22 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void repairsDuplicatedConstructorReceiverFromBytecodeStackReconstruction() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object maps = new java.util.HashMap()(
+              new java.util.IdentityHashMap(),
+              () -> new java.util.HashSet());
+        }
+        """);
+
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.createJava(\"java.util.HashMap\", GoldClientRuntime.createJava(\"java.util.IdentityHashMap\"), () -> GoldClientRuntime.createJava(\"java.util.HashSet\"))"),
+        lowered);
+    assertFalse(lowered.contains("createJava(\"java.util.HashMap\")(\n"), lowered);
+  }
+
+  @Test
   void lowersRawStaticFieldAssignmentAfterFieldReadRewriting() {
     String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
         void sample() {
