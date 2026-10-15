@@ -76,13 +76,19 @@ public final class JavaTranslator {
         if (!operation.operands().isEmpty()) {
           int loopBranch = findBackwardConditional(
               operations, i, end, operation.operands().get(0));
+          boolean unconditionalBackEdge = false;
+          if (loopBranch < 0) {
+            loopBranch = findUnconditionalBackEdgeConditional(
+                operations, i, end, operation.operands().get(0), labels);
+            unconditionalBackEdge = loopBranch > i;
+          }
           if (loopBranch > i) {
             ConditionalRender loop = renderBackwardLoop(
                 operations, loopBranch, i, end, indent, context, labels,
                 operations.get(loopBranch).operands().get(0));
             source.append(loop.source());
             complete &= loop.complete();
-            i = loop.lastIndex();
+            i = unconditionalBackEdge ? loopBranch + 1 : loop.lastIndex();
             continue;
           }
         }
@@ -675,6 +681,35 @@ public final class JavaTranslator {
           && operation.operands().size() >= 2
           && labelKey(label).equals(labelKey(operation.operands().get(1))))
         return i;
+    }
+    return -1;
+  }
+
+  /**
+   * Finds the conventional JVM loop shape where the exit test branches out
+   * and the fall-through path ends in an unconditional jump back to the loop
+   * header. The conditional is returned only when the back edge is immediate;
+   * more ambiguous graphs remain explicitly incomplete.
+   */
+  private static int findUnconditionalBackEdgeConditional(
+      List<IrOperationModel> operations,
+      int labelIndex,
+      int end,
+      String loopLabel,
+      Map<String, Integer> labels) {
+    for (int i = labelIndex + 1; i + 1 < end; i++) {
+      IrOperationModel conditional = operations.get(i);
+      if (!"CONDITIONAL_BRANCH".equals(conditional.kind())
+          || conditional.operands().size() < 2) continue;
+
+      Integer exitIndex = labels.get(labelKey(conditional.operands().get(1)));
+      if (exitIndex == null || exitIndex <= i) continue;
+
+      IrOperationModel backEdge = operations.get(i + 1);
+      if ("JUMP".equals(backEdge.kind()) && !backEdge.operands().isEmpty()
+          && labelKey(loopLabel).equals(labelKey(backEdge.operands().get(0)))) {
+        return i;
+      }
     }
     return -1;
   }
