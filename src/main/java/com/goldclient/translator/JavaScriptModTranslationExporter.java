@@ -101,6 +101,7 @@ public final class JavaScriptModTranslationExporter {
         new GsonBuilder().setPrettyPrinting().create().toJson(report) + System.lineSeparator(),
         StandardCharsets.UTF_8);
     Files.writeString(root.resolve("javascript-report.txt"), summary(report), StandardCharsets.UTF_8);
+    writeIncompleteDiagnostics(root, statuses);
     return report;
   }
 
@@ -404,14 +405,14 @@ public final class JavaScriptModTranslationExporter {
         .compile("(?m)^\\s*// TODO: ([^\\n]+)")
         .matcher(source);
     while (todo.find()) {
-      reasons.add("Unlowered operation: " + todo.group(1).trim());
+      reasons.add("[UNLOWERED_OPERATION] " + todo.group(1).trim());
     }
 
     java.util.regex.Matcher audit = java.util.regex.Pattern
         .compile("(?m)^\\s*// CONTROL-FLOW ERROR at operation ([^\\n]+)")
         .matcher(source);
     while (audit.find()) {
-      reasons.add("Control-flow audit: operation " + audit.group(1).trim());
+      reasons.add("[CONTROL_FLOW_AUDIT] operation " + audit.group(1).trim());
     }
 
     java.util.regex.Matcher unsupported = java.util.regex.Pattern
@@ -422,33 +423,75 @@ public final class JavaScriptModTranslationExporter {
       String detail = unsupported.group(2).trim();
       String evidence = detail.isEmpty() ? kind : kind + " (" + detail + ")";
       switch (kind) {
-        case "JUMP" -> reasons.add("Control flow: unresolved jump " + evidence);
-        case "try-catch-region" -> reasons.add("Exception handling: try/catch region could not be structured " + evidence);
-        case "monitor" -> reasons.add("Concurrency/monitor semantics unsupported: " + evidence);
-        default -> reasons.add("Unsupported IR operation: " + evidence);
+        case "JUMP" -> reasons.add("[CONTROL_FLOW] Unresolved jump: " + evidence);
+        case "control-flow-audit" -> reasons.add("[CONTROL_FLOW_AUDIT] " + detail);
+        case "try-catch-region" -> reasons.add("[EXCEPTION_REGION] Could not structure try/catch region: " + evidence);
+        case "monitor" -> reasons.add("[MONITOR_SEMANTICS] JVM monitor operation is unsupported: " + evidence);
+        case "UNSUPPORTED_DYNAMIC" -> reasons.add("[DYNAMIC_CALL] invokedynamic has no supported lowering: " + evidence);
+        case "untranslated-method" -> reasons.add("[MISSING_BODY] Explicit stub emitted: " + evidence);
+        case "missing-declaration-adapter" -> reasons.add("[MISSING_ADAPTER] No declaration adapter is registered: " + evidence);
+        case "missing-instance-method" -> reasons.add("[RUNTIME_METHOD_LOOKUP] Instance method binding is missing: " + evidence);
+        case "missing-static-method" -> reasons.add("[RUNTIME_METHOD_LOOKUP] Static method binding is missing: " + evidence);
+        default -> reasons.add("[UNSUPPORTED_IR] Operation cannot be lowered: " + evidence);
       }
     }
 
     if (source.contains("unsupported invokedynamic")) {
-      reasons.add("Dynamic invocation: invokedynamic call site has no supported lowering");
+      reasons.add("[DYNAMIC_CALL] invokedynamic call site has no supported lowering");
     }
     if (source.contains("<exception>")) {
-      reasons.add("Exception handling: exception stack value was not lowered");
+      reasons.add("[EXCEPTION_STACK] Exception stack value was not lowered");
     }
     if (source.contains("<unknown-stack>")) {
-      reasons.add("Operand stack: unknown stack value remains");
+      reasons.add("[UNKNOWN_STACK_VALUE] Operand stack value could not be reconstructed");
     }
     if (source.contains("<unknown>")) {
-      reasons.add("Value reconstruction: unknown value remains");
+      reasons.add("[UNKNOWN_VALUE] Value reconstruction left an unknown value");
     }
     if (source.contains("Unsupported JVM IR")) {
-      reasons.add("Unsupported JVM IR operation remains");
+      reasons.add("[UNSUPPORTED_JVM_IR] Unsupported JVM IR operation remains");
     }
 
     if (reasons.isEmpty()) {
       return "Unclassified translation failure: translator marked this method incomplete but emitted no recognized diagnostic marker.";
     }
     return String.join("; ", reasons);
+  }
+
+  /**
+   * Writes a triage view grouped by the actual failure reason, with concrete
+   * method signatures. This is an index over the existing honest statuses,
+   * not a second completeness calculation.
+   */
+  private static void writeIncompleteDiagnostics(Path root, List<MethodStatus> statuses)
+      throws IOException {
+    java.util.Map<String, List<MethodStatus>> grouped = new java.util.TreeMap<>();
+    for (MethodStatus method : statuses) {
+      if (!"incomplete".equals(method.status())) continue;
+      String reason = method.reason() == null ? "[NO_REASON] No reason recorded" : method.reason();
+      grouped.computeIfAbsent(reason, ignored -> new ArrayList<>()).add(method);
+    }
+
+    StringBuilder report = new StringBuilder("Gold Client incomplete-method diagnostics\n")
+        .append("Incomplete methods: ").append(grouped.values().stream().mapToInt(List::size).sum())
+        .append("\nDistinct reasons: ").append(grouped.size()).append("\n\n");
+    for (var entry : grouped.entrySet()) {
+      report.append("[").append(entry.getValue().size()).append(" methods] ")
+          .append(entry.getKey()).append("\n");
+      entry.getValue().stream()
+          .sorted(Comparator.comparing(MethodStatus::className)
+              .thenComparing(MethodStatus::methodName).thenComparing(MethodStatus::descriptor))
+          .limit(8)
+          .forEach(method -> report.append("  - ")
+              .append(method.className()).append("#")
+              .append(method.methodName()).append(method.descriptor()).append("\n"));
+      if (entry.getValue().size() > 8) {
+        report.append("  ... and ").append(entry.getValue().size() - 8).append(" more; see javascript-report.json\n");
+      }
+      report.append("\n");
+    }
+    if (grouped.isEmpty()) report.append("No incomplete methods were reported.\n");
+    Files.writeString(root.resolve("incomplete-diagnostics.txt"), report, StandardCharsets.UTF_8);
   }
 
   private static int count(List<MethodStatus> statuses, String status) {
