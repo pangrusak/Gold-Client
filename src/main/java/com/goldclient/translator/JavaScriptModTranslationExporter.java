@@ -507,7 +507,7 @@ public final class JavaScriptModTranslationExporter {
         StandardCharsets.UTF_8);
 
     java.util.Map<String, Integer> categoryCounts = new java.util.TreeMap<>();
-    java.util.regex.Pattern categoryPattern = java.util.regex.Pattern.compile("\\\\[([A-Z_]+)\\\\]");
+    java.util.regex.Pattern categoryPattern = java.util.regex.Pattern.compile("\\[([A-Z_]+)\\]");
     for (IncompleteMethodDetail detail : details) {
       java.util.regex.Matcher matcher = categoryPattern.matcher(detail.reason());
       java.util.Set<String> methodCategories = new java.util.TreeSet<>();
