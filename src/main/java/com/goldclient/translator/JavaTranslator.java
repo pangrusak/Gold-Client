@@ -940,6 +940,7 @@ public final class JavaTranslator {
       return false;
 
     return trimmed.matches("local\\d+")
+        || trimmed.contains("->")
         || trimmed.matches("[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)+")
         || trimmed.matches("[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*\\s*\\([^)]*\\)")
         || trimmed.startsWith("new ")
