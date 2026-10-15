@@ -630,6 +630,27 @@ class JavaTranslatorTest {
     assertTrue(result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
+  @Test
+  void structuresConditionalExitWithUnconditionalBackwardLoopEdge() {
+    IrMethodModel method = new IrMethodModel(
+        "backwardLoop",
+        "()V",
+        List.of(
+            new IrOperationModel("LABEL", List.of("L0"), 0),
+            new IrOperationModel("METHOD_CALL", List.of("step()"), 1),
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("keepGoing", "Lend"), 2),
+            new IrOperationModel("JUMP", List.of("L0"), 3),
+            new IrOperationModel("LABEL", List.of("Lend"), 4),
+            new IrOperationModel("RETURN", List.of(), 5)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (keepGoing)"), result.source());
+    assertTrue(result.source().contains("do {\n    step();\n  } while (keepGoing);"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
   private static int occurrences(String text, String needle) {
     int count = 0;
     int offset = 0;
