@@ -882,6 +882,18 @@ public final class JavaScriptTranslator {
       }
 
       String args = source.substring(nameEnd + 1, close);
+      int expressionEnd = close;
+      // The bytecode analyzer can leave the duplicated NEW/DUP receiver as
+      // "new Type()" and then append the real constructor arguments as a
+      // second call: new Type()(arg1, arg2). Recover that pattern as one
+      // constructor expression instead of trying to call the created object.
+      if (args.isBlank() && close + 1 < source.length() && source.charAt(close + 1) == '(') {
+        int chainedClose = matchingParenthesis(source, close + 1);
+        if (chainedClose >= 0) {
+          args = source.substring(close + 2, chainedClose);
+          expressionEnd = chainedClose;
+        }
+      }
       String helper = className.startsWith("java.") || className.startsWith("javax.")
           ? "createJava" : "create";
       output.append("GoldClientRuntime.").append(helper).append("(")
@@ -890,7 +902,7 @@ public final class JavaScriptTranslator {
         output.append(", ").append(rewriteConstructorExpressions(args));
       }
       output.append(")");
-      i = close + 1;
+      i = expressionEnd + 1;
     }
     return output.toString();
   }
