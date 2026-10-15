@@ -68,10 +68,9 @@ public final class JavaScriptTranslator {
     // lowerJavaSyntax(): `undefined`. Keep these methods available when that is
     // the only gap, but disclose the approximation in the generated source.
     boolean approximatedUnknownValue = body.contains("<unknown>")
-        || body.contains("<unknown-stack>");
+        || body.contains("<unknown-stack>") || body.contains("<exception>");
     boolean hasUnsupportedMarkers = body.contains("TODO:")
         || body.contains("CONTROL-FLOW ERROR")
-        || body.contains("<exception>")
         || body.contains("Unsupported JVM IR");
     body = lowerJavaSyntax(body);
     body = makeUnsupportedOperationsExplicit(body);
@@ -84,7 +83,7 @@ public final class JavaScriptTranslator {
         .append("\n")
         .append("// Host APIs such as Minecraft/Forge must be supplied by an adapter.\n");
     if (approximatedUnknownValue) {
-      output.append("// Approximation: unresolved JVM stack values were emitted as undefined.\n");
+      output.append("// Approximation: unresolved JVM stack/exception values were emitted as undefined.\n");
     }
     output.append("export function ").append(exportName).append("(")
         .append(parameters).append(") {\n")
