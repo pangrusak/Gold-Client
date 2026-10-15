@@ -72,6 +72,7 @@ public final class JavaScriptTranslator {
         || body.contains("Unsupported JVM IR");
     body = lowerJavaSyntax(body);
     body = makeUnsupportedOperationsExplicit(body);
+    hasUnsupportedMarkers |= body.contains("GoldClientRuntime.unsupported(\"invalid-call-receiver\"");
     boolean complete = structured.complete() && !hasUnsupportedMarkers;
 
     StringBuilder output = new StringBuilder();
@@ -222,7 +223,52 @@ public final class JavaScriptTranslator {
     typedLocal.appendTail(localBuffer);
     result = localBuffer.toString();
 
-    return replaceCodeTokens(result);
+    return lowerMalformedJvmExpressions(replaceCodeTokens(result));
+  }
+
+  /**
+   * The analyzer can retain raw JVM array descriptors in allocation expressions
+   * and can occasionally reconstruct a numeric stack value as a method receiver.
+   * Lower the array descriptors and turn impossible call receivers into explicit
+   * runtime failures rather than emitting JavaScript that cannot parse.
+   */
+  private static String lowerMalformedJvmExpressions(String source) {
+    java.util.regex.Matcher array = java.util.regex.Pattern.compile(
+        "\\bnew\\s+\\[([ZBCSIJFD]|L[^;\\s]+;)\\[([^\\[\\]]+)\\]\\(\\)")
+        .matcher(source);
+    StringBuffer arrays = new StringBuffer();
+    while (array.find()) {
+      String descriptor = array.group(1);
+      String type = switch (descriptor.charAt(0)) {
+        case 'Z' -> "boolean";
+        case 'B' -> "byte";
+        case 'C' -> "char";
+        case 'S' -> "short";
+        case 'I' -> "int";
+        case 'J' -> "long";
+        case 'F' -> "float";
+        case 'D' -> "double";
+        case 'L' -> descriptor.substring(1, descriptor.length() - 1).replace('/', '.');
+        default -> "Object";
+      };
+      String replacement = "GoldClientRuntime.newArray(" + quote(type) + ", " + array.group(2) + ")";
+      array.appendReplacement(arrays, java.util.regex.Matcher.quoteReplacement(replacement));
+    }
+    array.appendTail(arrays);
+
+    java.util.regex.Matcher invalidReceiver = java.util.regex.Pattern.compile(
+        "(?m)^(\\s*)(\\d+)\\.([A-Za-z_$][\\w$]*)\\(([^;\\n]*)\\);")
+        .matcher(arrays.toString());
+    StringBuffer calls = new StringBuffer();
+    while (invalidReceiver.find()) {
+      String detail = invalidReceiver.group(2) + "." + invalidReceiver.group(3)
+          + "(" + invalidReceiver.group(4) + ")";
+      String replacement = invalidReceiver.group(1) + "GoldClientRuntime.unsupported("
+          + quote("invalid-call-receiver") + ", " + quote(detail) + ");";
+      invalidReceiver.appendReplacement(calls, java.util.regex.Matcher.quoteReplacement(replacement));
+    }
+    invalidReceiver.appendTail(calls);
+    return calls.toString();
   }
 
   /**
@@ -354,7 +400,7 @@ public final class JavaScriptTranslator {
     // Static field writes must target the generated class constructor rather than
     // an unresolved Java package global. Rewrite writes before reads.
     java.util.regex.Matcher staticWrite = java.util.regex.Pattern.compile(
-        "(?<![A-Za-z0-9_$])((?:[a-z_$][\\w$]*\\.)*[A-Z][A-Za-z0-9_$]*)\\.([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*([^;\\n]+);")
+        "(?<![A-Za-z0-9_$])(?:new\\s+)?((?:[a-z_$][\\w$]*\\.)*[A-Z][A-Za-z0-9_$]*)\\.([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*([^;\\n]+);")
         .matcher(result);
     StringBuffer staticWrites = new StringBuffer();
     while (staticWrite.find()) {
