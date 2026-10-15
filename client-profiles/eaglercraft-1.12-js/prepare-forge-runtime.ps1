@@ -29,6 +29,23 @@ function Get-VerifiedArchive([string] $Path, [string] $Url, [string] $ExpectedHa
     }
 }
 
+function Test-JdkHome([string] $Path, [string[]] $RequiredMarkers) {
+    foreach ($required in @(
+        (Join-Path $Path "bin\java.exe"),
+        (Join-Path $Path "release")
+    )) {
+        if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+            return $false
+        }
+    }
+    foreach ($marker in $RequiredMarkers) {
+        if (-not (Test-Path -LiteralPath (Join-Path $Path $marker) -PathType Leaf)) {
+            return $false
+        }
+    }
+    return $true
+}
+
 $mdkArchive = Join-Path $root $mdkName
 $jdkArchive = Join-Path $root $jdkName
 $teaVmJdkArchive = Join-Path $root $teaVmJdkName
@@ -37,12 +54,19 @@ Get-VerifiedArchive $jdkArchive $jdkUrl $jdkHash
 Get-VerifiedArchive $teaVmJdkArchive $teaVmJdkUrl $teaVmJdkHash
 
 $jdkHome = Join-Path $root "jdk8u504-b01"
-if (-not (Test-Path -LiteralPath (Join-Path $jdkHome "bin\java.exe"))) {
+if (-not (Test-JdkHome $jdkHome @("bin\javac.exe", "lib\tools.jar"))) {
     Expand-Archive -LiteralPath $jdkArchive -DestinationPath $root -Force
 }
 $teaVmJdkHome = Join-Path $root "jdk-17.0.15+6"
-if (-not (Test-Path -LiteralPath (Join-Path $teaVmJdkHome "bin\java.exe"))) {
+if (-not (Test-JdkHome $teaVmJdkHome @("bin\javac.exe", "lib\modules"))) {
     Expand-Archive -LiteralPath $teaVmJdkArchive -DestinationPath $root -Force
+}
+
+if (-not (Test-JdkHome $jdkHome @("bin\javac.exe", "lib\tools.jar"))) {
+    throw "Extracted Java 8 JDK is incomplete: $jdkHome"
+}
+if (-not (Test-JdkHome $teaVmJdkHome @("bin\javac.exe", "lib\modules"))) {
+    throw "Extracted Java 17 JDK is incomplete: $teaVmJdkHome"
 }
 
 $mdk = Join-Path $root "mdk"
