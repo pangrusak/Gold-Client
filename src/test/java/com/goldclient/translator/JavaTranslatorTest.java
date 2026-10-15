@@ -646,7 +646,6 @@ class JavaTranslatorTest {
     TranslationResult result = new JavaTranslator().translate(method);
 
     assertTrue(result.complete(), result.source());
-    assertTrue(result.source().contains("while (keepGoing)"), result.source());
     assertTrue(result.source().contains("do {\n    step();\n  } while (keepGoing);"), result.source());
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
