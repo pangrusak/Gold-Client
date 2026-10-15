@@ -153,6 +153,21 @@ public final class JavaScriptTranslator {
     return audited.toString();
   }
 
+  /** Repairs reconstructed static-field writes before lexical rewriting splits quoted arguments. */
+  private static String rewriteStaticGetterAssignments(String source) {
+    Pattern assignment = Pattern.compile(
+        "(?s)\\bnew\\s+GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*=\\s*(.*?);");
+    Matcher matcher = assignment.matcher(source);
+    StringBuffer rewritten = new StringBuffer();
+    while (matcher.find()) {
+      String replacement = "GoldClientRuntime.setStaticField(" + quote(matcher.group(1))
+          + ", " + quote(matcher.group(2)) + ", " + matcher.group(3) + ");";
+      matcher.appendReplacement(rewritten, Matcher.quoteReplacement(replacement));
+    }
+    matcher.appendTail(rewritten);
+    return rewritten.toString();
+  }
+
   /** Lowers the source-like output while preserving quoted strings and comments. */
   String lowerJavaSyntax(String source) {
     StringBuilder tokens = new StringBuilder(source.length() + 32);
@@ -223,7 +238,7 @@ public final class JavaScriptTranslator {
     typedLocal.appendTail(localBuffer);
     result = localBuffer.toString();
 
-    return lowerMalformedJvmExpressions(replaceCodeTokens(result));
+    return lowerMalformedJvmExpressions(replaceCodeTokens(rewriteStaticGetterAssignments(result)));
   }
 
   /**
