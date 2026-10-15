@@ -49,6 +49,12 @@ class JavaScriptModTranslationExporterTest {
     assertTrue(Files.isRegularFile(output.resolve("incomplete-diagnostics.txt")));
     assertTrue(Files.readString(output.resolve("incomplete-diagnostics.txt"))
         .contains("example.Feature#unknown()V"));
+    assertTrue(Files.isRegularFile(output.resolve("incomplete-method-details.json")));
+    String incompleteDetails = Files.readString(output.resolve("incomplete-method-details.json"));
+    assertTrue(incompleteDetails.contains("example.Feature"));
+    assertTrue(incompleteDetails.contains("UNKNOWN"));
+    assertTrue(incompleteDetails.contains("opcode"));
+    assertTrue(incompleteDetails.contains("irOperationCount"));
     assertTrue(Files.isRegularFile(output.resolve("mod-index.js")));
     assertTrue(Files.isRegularFile(output.resolve("mod-manifest.json")));
     assertTrue(Files.readString(output.resolve("mod-index.js")).contains("export function getClass"));
