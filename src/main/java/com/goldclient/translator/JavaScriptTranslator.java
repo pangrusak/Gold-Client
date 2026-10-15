@@ -239,10 +239,24 @@ public final class JavaScriptTranslator {
     result = localBuffer.toString();
 
     String rewritten = rewriteStaticGetterAssignments(result);
+    // Constructors can contain string arguments, so lower complete expressions before
+    // lexical token rewriting splits code around quoted strings.
+    rewritten = rewriteConstructorExpressions(rewritten);
     rewritten = replaceCodeTokens(rewritten);
     // Static-field reads are introduced by replaceCodeTokens, so repair assignment
     // targets again after token rewriting. Otherwise a getter call becomes an invalid LHS.
     rewritten = rewriteStaticGetterAssignments(rewritten);
+    // Constructor delegation (this(...)) needs class-level constructor dispatch, which
+    // this method-level backend does not implement yet. Emit an explicit runtime marker
+    // instead of invalid JavaScript such as this();.
+    rewritten = rewritten.replaceAll(
+        "(?m)^(\\\\s*)this\\\\(\\\\s*\\\\);",
+        "$1GoldClientRuntime.unsupported(\\\"constructor-delegation\\\", \\\"this()\\\");");
+    // Keep zero-argument helper calls genuinely argument-free even when introduced
+    // by later API-rewrite passes (including calls inside lambda expressions).
+    rewritten = rewritten.replaceAll(
+        "(GoldClientRuntime\\\\.(?:invokeJavaStatic|invokeStaticClass|invokePlatformStatic)\\\\([^\\\\n]*?),\\\\s*\\\\)",
+        "$1)");
     return lowerMalformedJvmExpressions(rewritten);
   }
 
