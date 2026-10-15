@@ -401,8 +401,8 @@ public final class JavaScriptTranslator {
     // getter call. A getter call is never an assignment target, so recover the owner
     // and field arguments and lower it to the runtime setter before generic rewriting.
     java.util.regex.Matcher getterWrite = java.util.regex.Pattern.compile(
-        "\\bnew\\s+GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*=\\s*([^;\\n]+);")
-        .matcher(result);
+        "(?s)\\bnew\\s+GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*=\\s*(.*?);")
+        .matcher(result);result);
     StringBuffer getterWrites = new StringBuffer();
     while (getterWrite.find()) {
       String replacement = "GoldClientRuntime.setStaticField(" + quote(getterWrite.group(1))
