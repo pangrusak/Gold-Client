@@ -260,6 +260,22 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void lowersJavaConstructorsBeforeStaticCallRewriting() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object maps = new java.util.HashMap();
+          Object nested = new java.util.HashMap(new java.util.IdentityHashMap());
+        }
+        """);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.createJava(\\"java.util.HashMap\\""), lowered);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.createJava(\\"java.util.IdentityHashMap\\""), lowered);
+    assertFalse(lowered.contains("GoldClientRuntime.invokeJavaStatic(\\"java.util.HashMap\\""), lowered);
+    assertFalse(lowered.contains("new java.util.HashMap"), lowered);
+  }
+
+  @Test
   void lowersRawStaticFieldAssignmentAfterFieldReadRewriting() {
     String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
         void sample() {
