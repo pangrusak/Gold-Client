@@ -392,18 +392,63 @@ public final class JavaScriptModTranslationExporter {
     return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
   }
 
+  /**
+   * Explains incompleteness using evidence left by the translator. This is
+   * deliberately diagnostic-only: it never changes a method's completeness
+   * status and never treats a classified failure as successful translation.
+   */
   private static String incompleteReason(String source) {
+    java.util.Set<String> reasons = new java.util.LinkedHashSet<>();
+
     java.util.regex.Matcher todo = java.util.regex.Pattern
         .compile("(?m)^\\s*// TODO: ([^\\n]+)")
         .matcher(source);
-    if (todo.find()) return "Untranslated IR/control-flow operation: " + todo.group(1).trim();
+    while (todo.find()) {
+      reasons.add("Unlowered operation: " + todo.group(1).trim());
+    }
+
     java.util.regex.Matcher audit = java.util.regex.Pattern
         .compile("(?m)^\\s*// CONTROL-FLOW ERROR at operation ([^\\n]+)")
         .matcher(source);
-    if (audit.find()) return "Control-flow audit: " + audit.group(1).trim();
-    if (source.contains("Unsupported JVM IR")) return "Unsupported JVM IR operation remains.";
-    if (source.contains("<exception>")) return "Exception stack value was not lowered.";
-    return "Translation emitted, but semantics or host API compatibility remain unverified.";
+    while (audit.find()) {
+      reasons.add("Control-flow audit: operation " + audit.group(1).trim());
+    }
+
+    java.util.regex.Matcher unsupported = java.util.regex.Pattern
+        .compile("GoldClientRuntime\\.unsupported\\(\\\"([^\\\"]+)\\\",\\s*\\\"([^\\\"]*)\\\"\\)")
+        .matcher(source);
+    while (unsupported.find()) {
+      String kind = unsupported.group(1);
+      String detail = unsupported.group(2).trim();
+      String evidence = detail.isEmpty() ? kind : kind + " (" + detail + ")";
+      switch (kind) {
+        case "JUMP" -> reasons.add("Control flow: unresolved jump " + evidence);
+        case "try-catch-region" -> reasons.add("Exception handling: try/catch region could not be structured " + evidence);
+        case "monitor" -> reasons.add("Concurrency/monitor semantics unsupported: " + evidence);
+        default -> reasons.add("Unsupported IR operation: " + evidence);
+      }
+    }
+
+    if (source.contains("unsupported invokedynamic")) {
+      reasons.add("Dynamic invocation: invokedynamic call site has no supported lowering");
+    }
+    if (source.contains("<exception>")) {
+      reasons.add("Exception handling: exception stack value was not lowered");
+    }
+    if (source.contains("<unknown-stack>")) {
+      reasons.add("Operand stack: unknown stack value remains");
+    }
+    if (source.contains("<unknown>")) {
+      reasons.add("Value reconstruction: unknown value remains");
+    }
+    if (source.contains("Unsupported JVM IR")) {
+      reasons.add("Unsupported JVM IR operation remains");
+    }
+
+    if (reasons.isEmpty()) {
+      return "Unclassified translation failure: translator marked this method incomplete but emitted no recognized diagnostic marker.";
+    }
+    return String.join("; ", reasons);
   }
 
   private static int count(List<MethodStatus> statuses, String status) {
