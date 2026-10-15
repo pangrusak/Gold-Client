@@ -238,7 +238,12 @@ public final class JavaScriptTranslator {
     typedLocal.appendTail(localBuffer);
     result = localBuffer.toString();
 
-    return lowerMalformedJvmExpressions(replaceCodeTokens(rewriteStaticGetterAssignments(result)));
+    String rewritten = rewriteStaticGetterAssignments(result);
+    rewritten = replaceCodeTokens(rewritten);
+    // Static-field reads are introduced by replaceCodeTokens, so repair assignment
+    // targets again after token rewriting. Otherwise a getter call becomes an invalid LHS.
+    rewritten = rewriteStaticGetterAssignments(rewritten);
+    return lowerMalformedJvmExpressions(rewritten);
   }
 
   /**
