@@ -231,6 +231,25 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void constructorDupLeavesExactlyOneInitializedValueForPutField() {
+    MethodModel method = method("init", "()V", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(187, "NEW", "java/util/HashSet"),
+        instruction(89, "DUP"),
+        instruction(183, "INVOKESPECIAL", "java/util/HashSet", "<init>", "()V", "false"),
+        instruction(181, "PUTFIELD", "example/Registry", "values", "Ljava/util/Set;"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "FIELD_WRITE".equals(operation.kind())
+            && operation.operands().equals(List.of(
+                "local0", "example.Registry.values", "new java.util.HashSet()"))),
+        ir.operations().toString());
+  }
+
+  @Test
   void carriesOperandValuesAcrossControlFlowJoin() {
     List<InstructionModel> instructions = List.of(
         instruction(25, "ALOAD", "0"),
