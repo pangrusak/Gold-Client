@@ -546,35 +546,35 @@ public final class JavaScriptModTranslationExporter {
       for (String category : methodCategories) categoryCounts.merge(category, 1, Integer::sum);
     }
 
-    StringBuilder report = new StringBuilder("Gold Client incomplete-method diagnostics\\n")
+    StringBuilder report = new StringBuilder("Gold Client incomplete-method diagnostics\n")
         .append("Incomplete methods: ").append(details.size())
-        .append("\\nDistinct reasons: ").append(grouped.size())
-        .append("\\nPer-method IR evidence: incomplete-method-details.json\\n");
+        .append("\nDistinct reasons: ").append(grouped.size())
+        .append("\nPer-method IR evidence: incomplete-method-details.json\n");
     if (!categoryCounts.isEmpty()) {
-      report.append("\\nFailure categories (methods may have multiple categories):\\n");
+      report.append("\nFailure categories (methods may have multiple categories):\n");
       for (var category : categoryCounts.entrySet()) {
         report.append("  - ").append(category.getKey()).append(": ")
-            .append(category.getValue()).append("\\n");
+            .append(category.getValue()).append("\n");
       }
     }
-    report.append("\\n");
+    report.append("\n");
     for (var entry : grouped.entrySet()) {
       report.append("[").append(entry.getValue().size()).append(" methods] ")
-          .append(entry.getKey()).append("\\n");
+          .append(entry.getKey()).append("\n");
       entry.getValue().stream()
           .sorted(Comparator.comparing(MethodStatus::className)
               .thenComparing(MethodStatus::methodName).thenComparing(MethodStatus::descriptor))
           .limit(8)
           .forEach(method -> report.append("  - ")
               .append(method.className().replace('/', '.')).append("#")
-              .append(method.methodName()).append(method.descriptor()).append("\\n"));
+              .append(method.methodName()).append(method.descriptor()).append("\n"));
       if (entry.getValue().size() > 8) {
         report.append("  ... and ").append(entry.getValue().size() - 8)
-            .append(" more; see javascript-report.json\\n");
+            .append(" more; see javascript-report.json\n");
       }
-      report.append("\\n");
+      report.append("\n");
     }
-    if (grouped.isEmpty()) report.append("No incomplete methods were reported.\\n");
+    if (grouped.isEmpty()) report.append("No incomplete methods were reported.\n");
     Files.writeString(root.resolve("incomplete-diagnostics.txt"), report, StandardCharsets.UTF_8);
   }
 
