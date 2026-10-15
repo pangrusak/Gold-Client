@@ -101,7 +101,7 @@ public final class JavaScriptModTranslationExporter {
         new GsonBuilder().setPrettyPrinting().create().toJson(report) + System.lineSeparator(),
         StandardCharsets.UTF_8);
     Files.writeString(root.resolve("javascript-report.txt"), summary(report), StandardCharsets.UTF_8);
-    writeIncompleteDiagnostics(root, statuses);
+    writeIncompleteDiagnostics(root, statuses, classes);
     return report;
   }
 
@@ -452,8 +452,14 @@ public final class JavaScriptModTranslationExporter {
       reasons.add("[UNSUPPORTED_JVM_IR] Unsupported JVM IR operation remains");
     }
 
+    if (source.contains("Unable to lower method signature")) {
+      reasons.add("[SIGNATURE_RECONSTRUCTION] Structured translator did not emit a method signature that the JS backend recognizes");
+    }
+    if (source.contains("Malformed intermediate method body")) {
+      reasons.add("[BODY_EXTRACTION] Could not find valid method-body boundaries in structured output");
+    }
     if (reasons.isEmpty()) {
-      return "Unclassified translation failure: translator marked this method incomplete but emitted no recognized diagnostic marker.";
+      reasons.add("[UNCLASSIFIED] Translator marked the method incomplete but emitted no recognized diagnostic marker");
     }
     return String.join("; ", reasons);
   }
@@ -463,35 +469,89 @@ public final class JavaScriptModTranslationExporter {
    * method signatures. This is an index over the existing honest statuses,
    * not a second completeness calculation.
    */
-  private static void writeIncompleteDiagnostics(Path root, List<MethodStatus> statuses)
-      throws IOException {
+  private static void writeIncompleteDiagnostics(
+      Path root, List<MethodStatus> statuses, List<ClassModel> classes) throws IOException {
     java.util.Map<String, List<MethodStatus>> grouped = new java.util.TreeMap<>();
-    for (MethodStatus method : statuses) {
-      if (!"incomplete".equals(method.status())) continue;
-      String reason = method.reason() == null ? "[NO_REASON] No reason recorded" : method.reason();
-      grouped.computeIfAbsent(reason, ignored -> new ArrayList<>()).add(method);
+    java.util.Map<String, MethodModel> modeledMethods = new java.util.HashMap<>();
+    for (ClassModel clazz : classes) {
+      for (MethodModel method : clazz.methods()) {
+        modeledMethods.put(methodKey(clazz.name(), method.name(), method.descriptor()), method);
+      }
     }
 
-    StringBuilder report = new StringBuilder("Gold Client incomplete-method diagnostics\n")
-        .append("Incomplete methods: ").append(grouped.values().stream().mapToInt(List::size).sum())
-        .append("\nDistinct reasons: ").append(grouped.size()).append("\n\n");
+    List<IncompleteMethodDetail> details = new ArrayList<>();
+    for (MethodStatus status : statuses) {
+      if (!"incomplete".equals(status.status())) continue;
+      String reason = status.reason() == null ? "[NO_REASON] No reason recorded" : status.reason();
+      grouped.computeIfAbsent(reason, ignored -> new ArrayList<>()).add(status);
+      MethodModel method = modeledMethods.get(methodKey(
+          status.className(), status.methodName(), status.descriptor()));
+      List<OperationEvidence> operations = new ArrayList<>();
+      java.util.Map<String, Integer> operationCounts = new java.util.TreeMap<>();
+      if (method != null) {
+        for (var operation : method.intermediateRepresentation().operations()) {
+          operationCounts.merge(operation.kind(), 1, Integer::sum);
+          operations.add(new OperationEvidence(
+              operation.sourceInstruction(), operation.kind(), operation.operands()));
+        }
+      }
+      details.add(new IncompleteMethodDetail(
+          status.className(), status.methodName(), status.descriptor(), reason,
+          operations.size(), operationCounts, operations));
+    }
+    details.sort(Comparator.comparing(IncompleteMethodDetail::className)
+        .thenComparing(IncompleteMethodDetail::methodName)
+        .thenComparing(IncompleteMethodDetail::descriptor));
+    Files.writeString(root.resolve("incomplete-method-details.json"),
+        new GsonBuilder().setPrettyPrinting().create().toJson(details) + System.lineSeparator(),
+        StandardCharsets.UTF_8);
+
+    StringBuilder report = new StringBuilder("Gold Client incomplete-method diagnostics\\n")
+        .append("Incomplete methods: ").append(details.size())
+        .append("\\nDistinct reasons: ").append(grouped.size())
+        .append("\\nPer-method IR evidence: incomplete-method-details.json\\n\\n");
     for (var entry : grouped.entrySet()) {
       report.append("[").append(entry.getValue().size()).append(" methods] ")
-          .append(entry.getKey()).append("\n");
+          .append(entry.getKey()).append("\\n");
       entry.getValue().stream()
           .sorted(Comparator.comparing(MethodStatus::className)
               .thenComparing(MethodStatus::methodName).thenComparing(MethodStatus::descriptor))
           .limit(8)
           .forEach(method -> report.append("  - ")
               .append(method.className()).append("#")
-              .append(method.methodName()).append(method.descriptor()).append("\n"));
+              .append(method.methodName()).append(method.descriptor()).append("\\n"));
       if (entry.getValue().size() > 8) {
-        report.append("  ... and ").append(entry.getValue().size() - 8).append(" more; see javascript-report.json\n");
+        report.append("  ... and ").append(entry.getValue().size() - 8)
+            .append(" more; see javascript-report.json\\n");
       }
-      report.append("\n");
+      report.append("\\n");
     }
-    if (grouped.isEmpty()) report.append("No incomplete methods were reported.\n");
+    if (grouped.isEmpty()) report.append("No incomplete methods were reported.\\n");
     Files.writeString(root.resolve("incomplete-diagnostics.txt"), report, StandardCharsets.UTF_8);
+  }
+
+  private static String methodKey(String className, String methodName, String descriptor) {
+    return className + "#" + methodName + descriptor;
+  }
+
+  public record OperationEvidence(int sourceInstruction, String kind, List<String> operands) {
+    public OperationEvidence {
+      operands = List.copyOf(operands);
+    }
+  }
+
+  public record IncompleteMethodDetail(
+      String className,
+      String methodName,
+      String descriptor,
+      String reason,
+      int irOperationCount,
+      java.util.Map<String, Integer> operationCounts,
+      List<OperationEvidence> operations) {
+    public IncompleteMethodDetail {
+      operationCounts = java.util.Map.copyOf(operationCounts);
+      operations = List.copyOf(operations);
+    }
   }
 
   private static int count(List<MethodStatus> statuses, String status) {
