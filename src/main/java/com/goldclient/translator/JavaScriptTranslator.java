@@ -402,7 +402,7 @@ public final class JavaScriptTranslator {
     // and field arguments and lower it to the runtime setter before generic rewriting.
     java.util.regex.Matcher getterWrite = java.util.regex.Pattern.compile(
         "(?s)\\bnew\\s+GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*=\\s*(.*?);")
-        .matcher(result);result);
+        .matcher(result);
     StringBuffer getterWrites = new StringBuffer();
     while (getterWrite.find()) {
       String replacement = "GoldClientRuntime.setStaticField(" + quote(getterWrite.group(1))
