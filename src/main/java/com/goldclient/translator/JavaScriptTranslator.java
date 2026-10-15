@@ -250,12 +250,12 @@ public final class JavaScriptTranslator {
     // this method-level backend does not implement yet. Emit an explicit runtime marker
     // instead of invalid JavaScript such as this();.
     rewritten = rewritten.replaceAll(
-        "(?m)^(\\\\s*)this\\\\(\\\\s*\\\\);",
-        "$1GoldClientRuntime.unsupported(\\\"constructor-delegation\\\", \\\"this()\\\");");
+        "(?m)^(\\s*)this\\(\\s*\\);",
+        "$1GoldClientRuntime.unsupported(\"constructor-delegation\", \"this()\");");
     // Keep zero-argument helper calls genuinely argument-free even when introduced
     // by later API-rewrite passes (including calls inside lambda expressions).
     rewritten = rewritten.replaceAll(
-        "(GoldClientRuntime\\\\.(?:invokeJavaStatic|invokeStaticClass|invokePlatformStatic)\\\\([^\\\\n]*?),\\\\s*\\\\)",
+        "(GoldClientRuntime\\.(?:invokeJavaStatic|invokeStaticClass|invokePlatformStatic)\\([^\\n]*?),\\s*\\)",
         "$1)");
     return lowerMalformedJvmExpressions(rewritten);
   }
