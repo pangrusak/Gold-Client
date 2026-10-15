@@ -268,10 +268,10 @@ class JavaScriptTranslatorTest {
         }
         """);
     assertTrue(lowered.contains(
-        "GoldClientRuntime.createJava(\\"java.util.HashMap\\""), lowered);
+        "GoldClientRuntime.createJava(\"java.util.HashMap\""), lowered);
     assertTrue(lowered.contains(
-        "GoldClientRuntime.createJava(\\"java.util.IdentityHashMap\\""), lowered);
-    assertFalse(lowered.contains("GoldClientRuntime.invokeJavaStatic(\\"java.util.HashMap\\""), lowered);
+        "GoldClientRuntime.createJava(\"java.util.IdentityHashMap\""), lowered);
+    assertFalse(lowered.contains("GoldClientRuntime.invokeJavaStatic(\"java.util.HashMap\""), lowered);
     assertFalse(lowered.contains("new java.util.HashMap"), lowered);
   }
 
