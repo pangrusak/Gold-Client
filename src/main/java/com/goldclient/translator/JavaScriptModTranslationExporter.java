@@ -496,7 +496,7 @@ public final class JavaScriptModTranslationExporter {
         }
       }
       details.add(new IncompleteMethodDetail(
-          status.className(), status.methodName(), status.descriptor(), reason,
+          status.className().replace('/', '.'), status.methodName(), status.descriptor(), reason,
           operations.size(), operationCounts, operations));
     }
     details.sort(Comparator.comparing(IncompleteMethodDetail::className)
@@ -518,7 +518,7 @@ public final class JavaScriptModTranslationExporter {
               .thenComparing(MethodStatus::methodName).thenComparing(MethodStatus::descriptor))
           .limit(8)
           .forEach(method -> report.append("  - ")
-              .append(method.className()).append("#")
+              .append(method.className().replace('/', '.')).append("#")
               .append(method.methodName()).append(method.descriptor()).append("\\n"));
       if (entry.getValue().size() > 8) {
         report.append("  ... and ").append(entry.getValue().size() - 8)
