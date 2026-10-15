@@ -474,6 +474,11 @@ public final class IntermediateRepresentationAnalyzer {
     if (!"INVOKESTATIC".equals(opcode) && !"INVOKEDYNAMIC".equals(opcode))
       receiver = pop(stack);
 
+    // java.lang.Object.<init>() has no JavaScript behavior. Emitting it as
+    // receiver() turns a normal constructor prologue into invalid code such as
+    // this();. The receiver has already been consumed from the symbolic stack.
+    if ("<init>".equals(name) && "java/lang/Object".equals(owner)) return;
+
     String call;
     boolean retainedConstructorReference = false;
     if ("<init>".equals(name) && receiver != null) {
