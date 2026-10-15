@@ -60,6 +60,12 @@ class JavaScriptModTranslationExporterTest {
     assertEquals(3, report.methodCount());
     assertEquals(1, report.completeCount());
     assertEquals(1, report.incompleteCount());
+    var unknownStatus = report.methods().stream()
+        .filter(item -> item.methodName().equals("unknown"))
+        .findFirst().orElseThrow();
+    assertTrue(unknownStatus.reason().contains("Unsupported IR operation: UNKNOWN"),
+        unknownStatus.reason());
+    assertFalse(unknownStatus.reason().contains("semantics or host API compatibility remain unverified"));
     assertEquals(0, report.skippedCount());
     assertEquals(0, report.stubbedCount());
     assertEquals(1, report.adapterRequiredCount());
