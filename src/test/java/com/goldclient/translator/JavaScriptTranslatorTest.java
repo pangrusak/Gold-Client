@@ -52,10 +52,24 @@ class JavaScriptTranslatorTest {
 
     assertTrue(result.complete(), result.source());
     assertTrue(result.source().contains(
-        "Approximation: unresolved JVM stack values were emitted as undefined."),
+        "Approximation: unresolved JVM stack/exception values were emitted as undefined."),
         result.source());
     assertTrue(result.source().contains("return undefined;"), result.source());
     assertFalse(result.source().contains("<unknown>"), result.source());
+  }
+
+  @Test
+  void emitsExplicitFallbackForAnUnresolvedExceptionStackValue() {
+    var method = new IrMethodModel("exceptionFallback", "()Ljava/lang/Object;", List.of(
+        op("RETURN", "<exception>")));
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("return undefined;"), result.source());
+    assertTrue(result.source().contains(
+        "Approximation: unresolved JVM stack/exception values were emitted as undefined."),
+        result.source());
+    assertFalse(result.source().contains("<exception>"), result.source());
   }
 
   @Test
