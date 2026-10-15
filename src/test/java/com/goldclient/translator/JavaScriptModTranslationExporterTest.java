@@ -46,6 +46,9 @@ class JavaScriptModTranslationExporterTest {
     assertTrue(Files.isRegularFile(output.resolve("gold-client-runtime.js")));
     assertTrue(Files.isRegularFile(output.resolve("javascript-report.json")));
     assertTrue(Files.isRegularFile(output.resolve("javascript-report.txt")));
+    assertTrue(Files.isRegularFile(output.resolve("incomplete-diagnostics.txt")));
+    assertTrue(Files.readString(output.resolve("incomplete-diagnostics.txt"))
+        .contains("example.Feature#unknown()V"));
     assertTrue(Files.isRegularFile(output.resolve("mod-index.js")));
     assertTrue(Files.isRegularFile(output.resolve("mod-manifest.json")));
     assertTrue(Files.readString(output.resolve("mod-index.js")).contains("export function getClass"));
@@ -63,7 +66,7 @@ class JavaScriptModTranslationExporterTest {
     var unknownStatus = report.methods().stream()
         .filter(item -> item.methodName().equals("unknown"))
         .findFirst().orElseThrow();
-    assertTrue(unknownStatus.reason().contains("Unsupported IR operation: UNKNOWN"),
+    assertTrue(unknownStatus.reason().contains("[UNSUPPORTED_IR] Operation cannot be lowered: UNKNOWN"),
         unknownStatus.reason());
     assertFalse(unknownStatus.reason().contains("semantics or host API compatibility remain unverified"));
     assertEquals(0, report.skippedCount());
