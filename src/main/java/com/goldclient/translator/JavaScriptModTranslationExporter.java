@@ -72,7 +72,7 @@ public final class JavaScriptModTranslationExporter {
           result = translator.translate(method.intermediateRepresentation(),
               (method.access() & Opcodes.ACC_STATIC) != 0);
           status = result.complete() ? "complete" : "incomplete";
-          reason = result.complete() ? null : incompleteReason(result.source());
+          reason = result.complete() ? null : incompleteReason(result.source(), method.intermediateRepresentation());
         }
         statuses.add(new MethodStatus(clazz.name(), method.name(), method.descriptor(), status, reason));
         module.append(result.source()).append("\n");
@@ -398,7 +398,7 @@ public final class JavaScriptModTranslationExporter {
    * deliberately diagnostic-only: it never changes a method's completeness
    * status and never treats a classified failure as successful translation.
    */
-  private static String incompleteReason(String source) {
+  private static String incompleteReason(String source, com.goldclient.model.IrMethodModel ir) {
     java.util.Set<String> reasons = new java.util.LinkedHashSet<>();
 
     java.util.regex.Matcher todo = java.util.regex.Pattern
@@ -457,6 +457,37 @@ public final class JavaScriptModTranslationExporter {
     }
     if (source.contains("Malformed intermediate method body")) {
       reasons.add("[BODY_EXTRACTION] Could not find valid method-body boundaries in structured output");
+    }
+
+    int conditionalBranches = 0;
+    int jumps = 0;
+    int exceptionMarkers = 0;
+    java.util.Set<String> irUnknownEvidence = new java.util.LinkedHashSet<>();
+    for (com.goldclient.model.IrOperationModel operation : ir.operations()) {
+      if ("CONDITIONAL_BRANCH".equals(operation.kind())) conditionalBranches++;
+      if ("JUMP".equals(operation.kind())) jumps++;
+      if ("TRY_BEGIN".equals(operation.kind()) || "TRY_END".equals(operation.kind())
+          || "CATCH_BEGIN".equals(operation.kind())) exceptionMarkers++;
+      for (String operand : operation.operands()) {
+        if (operand.contains("<unknown-stack>")) irUnknownEvidence.add("[UNKNOWN_STACK_VALUE] IR operand contains <unknown-stack>");
+        else if (operand.contains("<unknown>")) irUnknownEvidence.add("[UNKNOWN_VALUE] IR operand contains <unknown>");
+        if (operand.contains("<exception>")) irUnknownEvidence.add("[EXCEPTION_STACK] IR operand contains <exception>");
+      }
+    }
+    reasons.addAll(irUnknownEvidence);
+    boolean hasControlFlowReason = reasons.stream().anyMatch(reason ->
+        reason.startsWith("[CONTROL_FLOW]") || reason.startsWith("[CONTROL_FLOW_AUDIT]")
+            || reason.startsWith("[CONTROL_FLOW_STRUCTURING]"));
+    if (!hasControlFlowReason && (conditionalBranches > 0 || jumps > 0)) {
+      reasons.add("[CONTROL_FLOW_STRUCTURING] IR contains " + conditionalBranches
+          + " conditional branch(es) and " + jumps
+          + " jump(s), but emitted JavaScript has no explicit control-flow failure marker");
+    }
+    boolean hasExceptionReason = reasons.stream().anyMatch(reason ->
+        reason.startsWith("[EXCEPTION_REGION]") || reason.startsWith("[EXCEPTION_STACK]"));
+    if (!hasExceptionReason && exceptionMarkers > 0) {
+      reasons.add("[EXCEPTION_STRUCTURING] IR contains " + exceptionMarkers
+          + " exception marker(s), but emitted JavaScript has no explicit exception-region failure marker");
     }
     if (reasons.isEmpty()) {
       reasons.add("[UNCLASSIFIED] Translator marked the method incomplete but emitted no recognized diagnostic marker");
