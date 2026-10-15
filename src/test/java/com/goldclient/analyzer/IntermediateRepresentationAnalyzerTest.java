@@ -30,6 +30,22 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void ignoresNopWithoutMarkingMethodUnsupported() {
+    MethodModel method = method("noOp", "()V", List.of(
+        instruction(0, "NOP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_OPCODE".equals(operation.kind())
+            && operation.operands().contains("NOP")),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "RETURN".equals(operation.kind())), ir.operations().toString());
+  }
+
+  @Test
   void translatesClassAndMethodTypeConstants() {
     MethodModel method = method("reflection", "()V", List.of(
         instruction(18, "LDC", "Type(Ljava/lang/String;)"),
