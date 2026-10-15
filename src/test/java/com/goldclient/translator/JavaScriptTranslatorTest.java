@@ -235,6 +235,20 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void lowersStaticFieldAssignmentWhenRightHandSideContainsLineBreaks() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          new GoldClientRuntime.getStaticField("mezz.jei.collect.Table", "wrapperMaps") =
+              GoldClientRuntime.createJava("java.util.HashMap", "constructor text");
+        }
+        """);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.setStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\","),
+        lowered);
+    assertFalse(lowered.contains("getStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\") ="),
+        lowered);
+  }
+  @Test
   void lowersGetterCallUsedAsStaticFieldAssignmentTarget() {
     String lowered = new JavaScriptTranslator().lowerJavaSyntax(
         "void sample() { new GoldClientRuntime.getStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\") = value; }");
