@@ -231,6 +231,23 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void omitsNoOpObjectConstructorInsteadOfEmittingThisCall() {
+    MethodModel method = method("init", "()V", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(183, "INVOKESPECIAL", "java/lang/Object", "<init>", "()V", "false"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "METHOD_CALL".equals(operation.kind())
+            && operation.operands().stream().anyMatch(value -> value.contains("local0()"))),
+        ir.operations().toString());
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "RETURN".equals(operation.kind())), ir.operations().toString());
+  }
+
+  @Test
   void constructorDupLeavesExactlyOneInitializedValueForPutField() {
     MethodModel method = method("init", "()V", List.of(
         instruction(25, "ALOAD", "0"),
