@@ -371,12 +371,12 @@ class JavaScriptTranslatorTest {
 
     String compact = lowered.replaceAll("\\s+", " ");
     assertTrue(compact.contains(
-        "GoldClientRuntime.create(\\"mezz.jei.collect.Table\\", GoldClientRuntime.createJava(\\"java.util.HashMap\\"), () -> GoldClientRuntime.createJava(\\"java.util.IdentityHashMap\\"))"),
+        "GoldClientRuntime.create(\"mezz.jei.collect.Table\", GoldClientRuntime.createJava(\"java.util.HashMap\"), () -> GoldClientRuntime.createJava(\"java.util.IdentityHashMap\"))"),
         lowered);
     assertFalse(lowered.contains("new mezz.jei.collect.Table"), lowered);
     assertFalse(lowered.contains("this();"), lowered);
     assertTrue(lowered.contains(
-        "GoldClientRuntime.unsupported(\\"constructor-delegation\\", \\"this()\\")"),
+        "GoldClientRuntime.unsupported(\"constructor-delegation\", \"this()\")"),
         lowered);
     assertFalse(lowered.contains(", )"), lowered);
   }
