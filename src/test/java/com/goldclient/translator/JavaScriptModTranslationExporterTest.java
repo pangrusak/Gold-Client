@@ -700,6 +700,11 @@ class JavaScriptModTranslationExporterTest {
         if (north.getZOffset() !== -1 || north.getOpposite().getName() !== "south") {
           throw new Error("EnumFacing direction behavior");
         }
+        const zAxis = r.getStaticField("net.minecraft.util.EnumFacing$Axis", "Z");
+        if (north.getAxis() !== zAxis || !zAxis.isHorizontal()
+            || north.getAxisDirection() !== r.getStaticField("net.minecraft.util.EnumFacing$AxisDirection", "NEGATIVE")) {
+          throw new Error("EnumFacing axis and axis-direction behavior");
+        }
         if (!pos.offset(north, 2).equals(pos.add(0, 0, -2))) throw new Error("BlockPos.offset(EnumFacing)");
         if (r.invokePlatformStatic("net.minecraft.util.EnumFacing", "values").length !== 6) {
           throw new Error("EnumFacing.values should expose six directions");
