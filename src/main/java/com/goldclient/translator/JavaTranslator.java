@@ -744,7 +744,9 @@ public final class JavaTranslator {
     int sinkIndex = findValueMergeSink(operations, joinIndex + 1, end);
     if (sinkIndex < 0) return null;
     IrOperationModel sink = operations.get(sinkIndex);
-    if (sink.operands().stream().noneMatch(value -> value.contains("<unknown>"))) return null;
+    long unknownCount = sink.operands().stream()
+        .mapToLong(value -> occurrences(value, "<unknown>")).sum();
+    if (unknownCount != 1) return null;
 
     String ternary = "(" + normalizeCondition(condition) + " ? "
         + targetValue + " : " + fallthroughValue + ")";
@@ -771,10 +773,23 @@ public final class JavaTranslator {
       List<IrOperationModel> operations, int start, int end) {
     for (int i = start; i < end; i++) {
       IrOperationModel operation = operations.get(i);
-      if (isBranchValueMetadata(operation) || isExpressionOnly(operation)) continue;
+      if (isBranchValueMetadata(operation)) continue;
+      if ("DROP".equals(operation.kind()) || "STACK_OPERATION".equals(operation.kind())
+          || "DUP".equals(operation.kind()) || "SWAP".equals(operation.kind())) return -1;
+      if (isExpressionOnly(operation)) continue;
       return i;
     }
     return -1;
+  }
+
+  private static int occurrences(String value, String token) {
+    int count = 0;
+    int index = 0;
+    while ((index = value.indexOf(token, index)) >= 0) {
+      count++;
+      index += token.length();
+    }
+    return count;
   }
 
   private static String lastExpressionFromRange(
