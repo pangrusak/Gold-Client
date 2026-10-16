@@ -1187,4 +1187,30 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("<exception>"), result.source());
   }
 
+  @Test
+  void processesLoopHeaderAfterConditionalJoin() {
+    IrMethodModel method = new IrMethodModel("chooseThenLoop", "()V", List.of(
+        new IrOperationModel("LABEL", List.of("Lentry"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("useElse", "Lelse"), 1),
+        new IrOperationModel("METHOD_CALL", List.of("thenBranch()"), 2),
+        new IrOperationModel("JUMP", List.of("Lloop"), 3),
+        new IrOperationModel("LABEL", List.of("Lelse"), 4),
+        new IrOperationModel("METHOD_CALL", List.of("elseBranch()"), 5),
+        new IrOperationModel("LABEL", List.of("Lloop"), 6),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("done", "Lend"), 7),
+        new IrOperationModel("METHOD_CALL", List.of("loopStep()"), 8),
+        new IrOperationModel("JUMP", List.of("Lloop"), 9),
+        new IrOperationModel("LABEL", List.of("Lend"), 10),
+        new IrOperationModel("RETURN", List.of(), 11)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("thenBranch();"), result.source());
+    assertTrue(result.source().contains("elseBranch();"), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("loopStep();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
 }
