@@ -731,4 +731,28 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("\\"), result.source());
   }
 
+  @Test
+  void prefersOuterIfJoinOverEarlierNestedGoto() {
+    IrMethodModel method = new IrMethodModel("test", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("outerCondition", "Lelse"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("innerCondition", "LinnerElse"), 1),
+        new IrOperationModel("METHOD_CALL", List.of("early()"), 2),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 3),
+        new IrOperationModel("LABEL", List.of("LinnerElse"), 4),
+        new IrOperationModel("METHOD_CALL", List.of("later()"), 5),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 6),
+        new IrOperationModel("LABEL", List.of("Lelse"), 7),
+        new IrOperationModel("METHOD_CALL", List.of("outerElse()"), 8),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 9),
+        new IrOperationModel("RETURN", List.of(), 10)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("early();"), result.source());
+    assertTrue(result.source().contains("later();"), result.source());
+    assertTrue(result.source().contains("outerElse();"), result.source());
+    assertTrue(result.source().contains("} else {"), result.source());
+  }
+
 }
