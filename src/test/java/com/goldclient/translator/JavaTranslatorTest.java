@@ -789,4 +789,32 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("<exception>"), result.source());
   }
 
+  @Test
+  void structuresForwardExitLoopWithNestedBackwardLoop() {
+    IrMethodModel method = new IrMethodModel("nestedLoops", "()V", List.of(
+        new IrOperationModel("LABEL", List.of("Louter"), 0),
+        new IrOperationModel("CALL_VALUE", List.of("outerHasNext()"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("outerHasNext() == 0", "LouterEnd"), 2),
+        new IrOperationModel("METHOD_CALL", List.of("outerWork()"), 3),
+        new IrOperationModel("LABEL", List.of("Linner"), 4),
+        new IrOperationModel("CALL_VALUE", List.of("innerHasNext()"), 5),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("innerHasNext() == 0", "LinnerEnd"), 6),
+        new IrOperationModel("METHOD_CALL", List.of("innerWork()"), 7),
+        new IrOperationModel("JUMP", List.of("Linner"), 8),
+        new IrOperationModel("LABEL", List.of("LinnerEnd"), 9),
+        new IrOperationModel("JUMP", List.of("Louter"), 10),
+        new IrOperationModel("LABEL", List.of("LouterEnd"), 11),
+        new IrOperationModel("RETURN", List.of(), 12)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("if (outerHasNext() == 0) break;"), result.source());
+    assertTrue(result.source().contains("if (innerHasNext() == 0) break;"), result.source());
+    assertTrue(result.source().contains("outerWork();"), result.source());
+    assertTrue(result.source().contains("innerWork();"), result.source());
+    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
 }
