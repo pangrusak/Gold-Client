@@ -456,6 +456,41 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void hashSetUsesJavaEqualsInsteadOfJavaScriptObjectIdentity() throws Exception {
+    Path output = tempDir.resolve("java-hashset-equality-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("hashset-equality-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const makeValue = value => ({ value, equals(other) { return other != null && other.value === this.value; } });
+        const first = makeValue("same"), equalCopy = makeValue("same"), different = makeValue("other");
+        const set = r.createJava("java.util.HashSet", [first, equalCopy, different]);
+        if (set.size() !== 2) throw new Error("HashSet accepted equal duplicate values");
+        if (!set.contains(equalCopy)) throw new Error("HashSet.contains ignored Java equals");
+        if (!set.remove(equalCopy) || set.size() !== 1 || set.contains(first)) {
+          throw new Error("HashSet.remove did not remove the equal stored value");
+        }
+        const left = r.createJava("java.util.HashSet", [first, different]);
+        const right = r.createJava("java.util.HashSet", [equalCopy]);
+        if (!left.retainAll(right) || left.size() !== 1 || !left.contains(first)) {
+          throw new Error("HashSet.retainAll ignored Java equals");
+        }
+        console.log("java-hashset-equality-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "HashSet equality runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-hashset-equality-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
