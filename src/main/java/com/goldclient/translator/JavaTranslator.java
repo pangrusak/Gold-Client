@@ -1240,10 +1240,14 @@ public final class JavaTranslator {
           if (tryBeginBeforeJoin >= 0 && tryBeginBeforeJoin < structuredEnd) {
             structuredEnd = tryBeginBeforeJoin;
           }
+          int tryBeginBeforeTarget = findTryBeginBeforeTarget(
+              operations, branchIndex + 1, targetIndex, target, labels);
+          int targetBodyStart = tryBeginBeforeTarget >= 0
+              ? tryBeginBeforeTarget : targetIndex + 1;
           RenderResult fallthroughBody = renderRange(
               operations, branchIndex + 1, jumpIndex, indent + 1, context, labels);
           RenderResult targetBody = renderRange(
-              operations, targetIndex + 1, structuredEnd, indent + 1, context, labels);
+              operations, targetBodyStart, structuredEnd, indent + 1, context, labels);
 
           StringBuilder source = new StringBuilder();
           source.append(indent(indent))
