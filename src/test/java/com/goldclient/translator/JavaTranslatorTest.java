@@ -1213,4 +1213,46 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
+  @Test
+  void preservesTryRegionAtSharedConditionalJoin() {
+    List<String> protectedRegion =
+        List.of("Lprotected", "LprotectedEnd", "LprotectedCatch", "java.lang.RuntimeException");
+    List<String> joinRegion =
+        List.of("Ljoin", "LjoinEnd", "LjoinCatch", "java.lang.RuntimeException");
+    IrMethodModel method = new IrMethodModel("branchIntoProtectedWork", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("useProtected != 0", "Lprotected"), 0),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 1),
+        new IrOperationModel("TRY_BEGIN", protectedRegion, 2),
+        new IrOperationModel("LABEL", List.of("Lprotected"), 3),
+        new IrOperationModel("METHOD_CALL", List.of("protectedWork()"), 4),
+        new IrOperationModel("TRY_END", protectedRegion, 5),
+        new IrOperationModel("LABEL", List.of("LprotectedEnd"), 6),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 7),
+        new IrOperationModel("CATCH_BEGIN", protectedRegion, 8),
+        new IrOperationModel("LABEL", List.of("LprotectedCatch"), 9),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 10),
+        new IrOperationModel("METHOD_CALL", List.of("recoverProtected(local1)"), 11),
+        new IrOperationModel("RETURN", List.of(), 12),
+        new IrOperationModel("TRY_BEGIN", joinRegion, 13),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 14),
+        new IrOperationModel("METHOD_CALL", List.of("afterJoin()"), 15),
+        new IrOperationModel("TRY_END", joinRegion, 16),
+        new IrOperationModel("LABEL", List.of("LjoinEnd"), 17),
+        new IrOperationModel("RETURN", List.of(), 18),
+        new IrOperationModel("CATCH_BEGIN", joinRegion, 19),
+        new IrOperationModel("LABEL", List.of("LjoinCatch"), 20),
+        new IrOperationModel("LOCAL_WRITE", List.of("local2", "<exception>"), 21),
+        new IrOperationModel("THROW", List.of("local2"), 22)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (useProtected != 0)"), result.source());
+    assertTrue(result.source().contains("protectedWork();"), result.source());
+    assertTrue(result.source().contains("afterJoin();"), result.source());
+    assertTrue(result.source().contains("catch (java.lang.RuntimeException local1)"), result.source());
+    assertTrue(!result.source().contains("<exception>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
 }
