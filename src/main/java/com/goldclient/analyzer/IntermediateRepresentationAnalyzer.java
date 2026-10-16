@@ -539,7 +539,7 @@ public final class IntermediateRepresentationAnalyzer {
     if (!lambdaMetafactory || operands.size() < 6 || !handle.matches()) {
       String detail = name + " " + callSiteDescriptor + " " + bootstrap;
       String unsupported = "GoldClientRuntime.unsupported(\"invokedynamic\", \"";
-      unsupported += detail.replace("\", "/").replace("\"", "'") + "\")";
+      unsupported += detail.replace("\\", "/").replace("\"", "'") + "\")";
       if (!returnsVoid(callSiteDescriptor)) {
         stack.push(unsupported);
         operations.add(op("CALL_VALUE", List.of(unsupported), sourceInstruction));
@@ -685,7 +685,7 @@ public final class IntermediateRepresentationAnalyzer {
   }
 
   private static String quoteJs(String value) {
-    return "\"" + value.replace("\", "\\\").replace("\"", "\\"")
+    return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"")
         .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\"";
   }
 
@@ -917,7 +917,7 @@ public final class IntermediateRepresentationAnalyzer {
       if ("LDC".equals(opcode) && !isNumericLiteral(value)
           && !"true".equals(value) && !"false".equals(value)
           && !"null".equals(value) && !isQuoted(value)) {
-        return "\"" + value.replace("\", "\\\").replace("\"", "\\"")
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"")
             .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\"";
       }
       return value;
