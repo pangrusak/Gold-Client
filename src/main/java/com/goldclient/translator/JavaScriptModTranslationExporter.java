@@ -889,16 +889,38 @@ public final class JavaScriptModTranslationExporter {
           [Symbol.iterator]() { return this.items[Symbol.iterator](); }
         }
         class GoldClientJavaSet {
-          constructor(initial = []) { this.items = new Set(initial?.items ?? initial ?? []); }
-          add(value) { const before = this.items.size; this.items.add(value); return this.items.size !== before; }
+          constructor(initial = []) {
+            this.items = new Set();
+            for (const value of initial?.items ?? initial ?? []) this.add(value);
+          }
+          add(value) {
+            if (Array.from(this.items).some(item => GoldClientRuntime.javaEquals(item, value))) return false;
+            this.items.add(value);
+            return true;
+          }
           addAll(values) { let changed = false; for (const value of values?.items ?? values ?? []) changed = this.add(value) || changed; return changed; }
-          contains(value) { return this.items.has(value); }
+          contains(value) { return Array.from(this.items).some(item => GoldClientRuntime.javaEquals(item, value)); }
           containsAll(values) { return Array.from(values?.items ?? values ?? []).every(value => this.contains(value)); }
           size() { return this.items.size; }
           isEmpty() { return this.items.size === 0; }
-          remove(value) { return this.items.delete(value); }
+          remove(value) {
+            for (const item of this.items) {
+              if (GoldClientRuntime.javaEquals(item, value)) return this.items.delete(item);
+            }
+            return false;
+          }
           removeAll(values) { let changed = false; for (const value of values?.items ?? values ?? []) changed = this.remove(value) || changed; return changed; }
-          retainAll(values) { const keep = new Set(values?.items ?? values ?? []); let changed = false; for (const value of this.items) if (!keep.has(value)) { this.items.delete(value); changed = true; } return changed; }
+          retainAll(values) {
+            const keep = Array.from(values?.items ?? values ?? []);
+            let changed = false;
+            for (const value of this.items) {
+              if (!keep.some(candidate => GoldClientRuntime.javaEquals(value, candidate))) {
+                this.items.delete(value);
+                changed = true;
+              }
+            }
+            return changed;
+          }
           clear() { this.items.clear(); }
           toArray() { return Array.from(this.items); }
           forEach(callback) { this.items.forEach(callback); }
