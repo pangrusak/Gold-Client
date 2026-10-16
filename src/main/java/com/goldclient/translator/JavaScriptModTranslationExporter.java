@@ -1079,31 +1079,77 @@ public final class JavaScriptModTranslationExporter {
           static named(name) { return new GoldClientJavaTimeUnit(String(name)); }
         }
 
+        // java.util.Random's specified 48-bit LCG. Keeping this algorithm exact matters
+        // for deterministic world generation and mods that share seeded random streams.
         class GoldClientJavaRandom {
+          static MULTIPLIER = 0x5DEECE66Dn;
+          static ADDEND = 0xBn;
+          static MASK = (1n << 48n) - 1n;
           constructor(seed = Date.now()) { this.setSeed(seed); }
-          setSeed(seed) { this.seed = (Number(seed) ^ 0x6d2b79f5) >>> 0; this.haveGaussian = false; this.nextGaussianValue = 0; }
-          next(bits = 32) { this.seed = (Math.imul(this.seed, 1664525) + 1013904223) >>> 0; return this.seed >>> (32 - Math.max(1, Math.min(32, bits))); }
+          setSeed(seed) {
+            const numericSeed = typeof seed === "bigint" ? seed : BigInt(Math.trunc(Number(seed)));
+            this.seed = (numericSeed ^ GoldClientJavaRandom.MULTIPLIER) & GoldClientJavaRandom.MASK;
+            this.haveGaussian = false;
+            this.nextGaussianValue = 0;
+          }
+          next(bits = 32) {
+            const count = Math.max(1, Math.min(32, Math.trunc(bits)));
+            this.seed = (this.seed * GoldClientJavaRandom.MULTIPLIER + GoldClientJavaRandom.ADDEND)
+              & GoldClientJavaRandom.MASK;
+            return Number(this.seed >> BigInt(48 - count));
+          }
           nextInt(bound) {
             if (bound === undefined) return this.next(32) | 0;
-            if (!Number.isInteger(bound) || bound <= 0) throw new RangeError("IllegalArgumentException: bound must be positive");
-            return Math.floor((this.next(32) >>> 0) / 4294967296 * bound);
+            if (!Number.isInteger(bound) || bound <= 0 || bound > 0x7fffffff) {
+              throw new RangeError("IllegalArgumentException: bound must be positive");
+            }
+            if ((bound & -bound) === bound) {
+              return Math.floor(bound * this.next(31) / 2147483648);
+            }
+            let bits, value;
+            do {
+              bits = this.next(31);
+              value = bits % bound;
+            } while (bits - value + (bound - 1) >= 2147483648);
+            return value;
           }
-          nextLong() { return (BigInt(this.next(32) >>> 0) << 32n) | BigInt(this.next(32) >>> 0); }
+          nextLong() {
+            const high = BigInt(this.next(32) | 0);
+            const low = BigInt(this.next(32) | 0);
+            return BigInt.asIntN(64, (high << 32n) + low);
+          }
           nextBoolean() { return this.next(1) !== 0; }
           nextFloat() { return this.next(24) / 16777216; }
-          nextDouble() { return ((this.next(26) * 67108864) + this.next(27)) / 9007199254740992; }
-          nextBytes(bytes) { for (let i = 0; i < bytes.length; i++) bytes[i] = this.next(8) & 0xff; return bytes; }
+          nextDouble() {
+            return ((this.next(26) * 134217728) + this.next(27)) / 9007199254740992;
+          }
+          nextBytes(bytes) {
+            for (let i = 0; i < bytes.length;) {
+              let random = this.nextInt();
+              for (let n = Math.min(bytes.length - i, 4); n > 0; n--) {
+                bytes[i++] = (random << 24) >> 24;
+                random >>= 8;
+              }
+            }
+            return bytes;
+          }
           nextGaussian() {
-            if (this.haveGaussian) { this.haveGaussian = false; return this.nextGaussianValue; }
+            if (this.haveGaussian) {
+              this.haveGaussian = false;
+              return this.nextGaussianValue;
+            }
             let u, v, s;
-            do { u = 2 * this.nextDouble() - 1; v = 2 * this.nextDouble() - 1; s = u * u + v * v; } while (s >= 1 || s === 0);
+            do {
+              u = 2 * this.nextDouble() - 1;
+              v = 2 * this.nextDouble() - 1;
+              s = u * u + v * v;
+            } while (s >= 1 || s === 0);
             const multiplier = Math.sqrt(-2 * Math.log(s) / s);
             this.nextGaussianValue = v * multiplier;
             this.haveGaussian = true;
             return u * multiplier;
           }
         }
-
         class GoldClientJavaAtomic {
           constructor(value = 0) { this.value = value; }
           get() { return this.value; }
