@@ -2175,6 +2175,7 @@ public final class JavaScriptModTranslationExporter {
             if (name === "net.minecraft.util.ResourceLocation") return new GoldClientMinecraftResourceLocation(...args);
             if (name === "net.minecraft.util.math.BlockPos") return new GoldClientMinecraftBlockPos(...args);
             if (name === "net.minecraft.util.math.Vec3d") return new GoldClientMinecraftVec3d(...args);
+            if (name === "net.minecraft.util.math.AxisAlignedBB") return new GoldClientMinecraftAxisAlignedBB(...args);
             const constructor = this.classes.get(name);
             if (!constructor) {
               const service = this.platformService(name);
