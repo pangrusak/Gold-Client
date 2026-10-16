@@ -491,6 +491,41 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void hashMapUsesJavaEqualsForKeysAndValues() throws Exception {
+    Path output = tempDir.resolve("java-hashmap-equality-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("hashmap-equality-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const makeValue = value => ({ value, equals(other) { return other != null && other.value === this.value; } });
+        const keyA = makeValue("key"), keyB = makeValue("key"), valueA = makeValue("value"), valueB = makeValue("value");
+        const map = r.createJava("java.util.HashMap");
+        if (map.put(keyA, valueA) !== null) throw new Error("new key should return null");
+        if (map.get(keyB) !== valueA || !map.containsKey(keyB)) throw new Error("Map lookup ignored Java key equality");
+        if (map.put(keyB, valueB) !== valueA || map.size() !== 1) throw new Error("equal key created a duplicate entry");
+        if (!map.containsValue(valueA)) throw new Error("Map.containsValue ignored Java equals");
+        if (!map.replacePair(keyA, makeValue("value"), "updated") || map.get(keyB) !== "updated") {
+          throw new Error("Map.replacePair ignored Java equals");
+        }
+        if (map.remove(keyB) !== "updated" || map.size() !== 0) throw new Error("Map.remove ignored Java key equality");
+        const fromEntries = r.createJava("java.util.HashMap", [[keyA, 1], [keyB, 2]]);
+        if (fromEntries.size() !== 1 || fromEntries.get(keyA) !== 2) throw new Error("Map constructor did not collapse equal keys");
+        console.log("java-hashmap-equality-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "HashMap equality runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-hashmap-equality-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
