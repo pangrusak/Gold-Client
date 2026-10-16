@@ -657,6 +657,62 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void commonMinecraftValueTypesRunWithoutGameHostBindings() throws Exception {
+    Path output = tempDir.resolve("minecraft-value-types");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("minecraft-value-types-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const resource = r.create("net.minecraft.util.ResourceLocation", "ExampleMod:Textures/Block.PNG");
+        if (resource.toString() !== "examplemod:textures/block.png") throw new Error("ResourceLocation normalization");
+        if (resource.getResourceDomain() !== "examplemod" || resource.getResourcePath() !== "textures/block.png") {
+          throw new Error("ResourceLocation accessors");
+        }
+        if (!resource.equals(r.create("net.minecraft.util.ResourceLocation", "examplemod", "textures/block.png"))) {
+          throw new Error("ResourceLocation equality");
+        }
+        const defaultNamespace = r.create("net.minecraft.util.ResourceLocation", "stone");
+        if (defaultNamespace.toString() !== "minecraft:stone") throw new Error("ResourceLocation default namespace");
+        let invalidResourceRejected = false;
+        try { r.create("net.minecraft.util.ResourceLocation", "bad namespace:path"); }
+        catch (error) { invalidResourceRejected = error.message.includes("invalid resource location"); }
+        if (!invalidResourceRejected) throw new Error("ResourceLocation accepted invalid identifier");
+        const origin = r.getStaticField("net.minecraft.util.math.BlockPos", "ORIGIN");
+        if (!origin.equals(r.create("net.minecraft.util.math.BlockPos", 0, 0, 0))) throw new Error("BlockPos.ORIGIN");
+        const pos = r.create("net.minecraft.util.math.BlockPos", -12.2, 64.9, 31.1);
+        if (pos.getX() !== -13 || pos.getY() !== 64 || pos.getZ() !== 31) throw new Error("BlockPos floor conversion");
+        if (!pos.add(1, 2, -1).equals(r.create("net.minecraft.util.math.BlockPos", -12, 66, 30))) {
+          throw new Error("BlockPos.add");
+        }
+        const packed = pos.toLong();
+        const unpacked = r.invokePlatformStatic("net.minecraft.util.math.BlockPos", "fromLong", packed);
+        if (!pos.equals(unpacked)) throw new Error("BlockPos packed coordinate round-trip");
+        const vector = r.create("net.minecraft.util.math.Vec3d", 3, 0, 4);
+        if (vector.lengthVector() !== 5 || vector.dotProduct(r.create("net.minecraft.util.math.Vec3d", 1, 2, 3)) !== 15) {
+          throw new Error("Vec3d length/dot product");
+        }
+        const normalized = vector.normalize();
+        if (Math.abs(normalized.x - 0.6) > 1e-12 || Math.abs(normalized.z - 0.8) > 1e-12) {
+          throw new Error("Vec3d normalization");
+        }
+        const cross = vector.crossProduct(r.create("net.minecraft.util.math.Vec3d", 0, 1, 0));
+        if (!cross.equals(r.create("net.minecraft.util.math.Vec3d", -4, 0, 3))) throw new Error("Vec3d cross product");
+        console.log("minecraft-value-types-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Minecraft value types runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("minecraft-value-types-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
