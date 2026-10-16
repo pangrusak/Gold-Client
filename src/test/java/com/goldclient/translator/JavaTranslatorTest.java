@@ -1002,4 +1002,25 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
+  @Test
+  void prioritizesOuterForwardExitOverInnerContinueBranch() {
+    IrMethodModel method = new IrMethodModel("loopWithContinue", "()V", List.of(
+        new IrOperationModel("LABEL", List.of("Lloop"), 0),
+        new IrOperationModel("CALL_VALUE", List.of("hasNext()"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("hasNext() == 0", "Lend"), 2),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("skipItem", "Lloop"), 3),
+        new IrOperationModel("METHOD_CALL", List.of("processItem()"), 4),
+        new IrOperationModel("JUMP", List.of("Lloop"), 5),
+        new IrOperationModel("LABEL", List.of("Lend"), 6),
+        new IrOperationModel("RETURN", List.of(), 7)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("if (skipItem) continue;"), result.source());
+    assertTrue(result.source().contains("processItem();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
 }
