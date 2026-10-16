@@ -502,6 +502,39 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void dispatchesSameArityOverloadsByJvmDescriptor() throws Exception {
+    ClassModel clazz = new ClassModel("example/Overloads", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(),
+        List.of(
+            method("choose", "(I)Ljava/lang/String;", Opcodes.ACC_PUBLIC, List.of(
+                op("CONSTANT", "\\"int\\""), op("RETURN", "\\"int\\""))),
+            method("choose", "(Ljava/lang/String;)Ljava/lang/String;", Opcodes.ACC_PUBLIC, List.of(
+                op("CONSTANT", "\\"string\\""), op("RETURN", "\\"string\\"")))),
+        List.of());
+    Path output = tempDir.resolve("overloaded-methods");
+    new JavaScriptModTranslationExporter().export(List.of(clazz), output);
+    Path runner = output.resolve("run-overloads.mjs");
+    Files.writeString(runner, """
+        import { Translated_example_Overloads } from "./example/Overloads.translated.js";
+        const instance = new Translated_example_Overloads();
+        if (instance.choose(7) !== "int") throw new Error("integer overload selected incorrectly");
+        if (instance.choose("x") !== "string") throw new Error("string overload selected incorrectly");
+        console.log("overload-dispatch-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "overload runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("overload-dispatch-ok", outputText);
+  }
+
+  @Test
   void emitsRegisterClassJavaScriptWithoutLiteralEscapes() throws Exception {
     ClassModel clazz = new ClassModel("example/Escaping", "java/lang/Object", List.of(),
         Opcodes.ACC_PUBLIC, null, List.of(), List.of(), List.of(), List.of());
