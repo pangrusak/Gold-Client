@@ -420,7 +420,8 @@ public final class JavaTranslator {
           }
         }
       }
-      if (normalCompletionEnd > tryEnd + 1) {
+      if (normalCompletionEnd > tryEnd + 1
+          && isSimpleNormalCompletion(operations, tryEnd + 1, normalCompletionEnd)) {
         RenderResult normalCompletion = renderRange(
             operations, tryEnd + 1, normalCompletionEnd, indent + 1, context, labels);
         tryBodySource.append(normalCompletion.source());
@@ -1504,6 +1505,25 @@ public final class JavaTranslator {
       if (joinIndex != null && joinIndex > branchTargetIndex) return i;
     }
     return -1;
+  }
+
+  private static boolean isSimpleNormalCompletion(
+      List<IrOperationModel> operations, int start, int end) {
+    boolean terminalSeen = false;
+    for (int i = start; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (isBranchValueMetadata(operation)) continue;
+      String kind = operation.kind();
+      if ("RETURN".equals(kind) || "THROW".equals(kind) || "TERMINATE".equals(kind)) {
+        if (terminalSeen) return false;
+        terminalSeen = true;
+        continue;
+      }
+      if (terminalSeen) return false;
+      if ("METHOD_CALL".equals(kind) || isExpressionOnly(operation)) continue;
+      return false;
+    }
+    return true;
   }
 
   private static boolean onlyMetadataBetween(
