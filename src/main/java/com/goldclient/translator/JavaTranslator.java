@@ -1235,6 +1235,11 @@ public final class JavaTranslator {
           // only the portion owned by this range, leaving the enclosing renderer
           // to consume the shared continuation.
           int structuredEnd = Math.min(endIndex, end);
+          int tryBeginBeforeJoin = findTryBeginBeforeTarget(
+              operations, branchIndex + 1, endIndex, jump.operands().get(0), labels);
+          if (tryBeginBeforeJoin >= 0 && tryBeginBeforeJoin < structuredEnd) {
+            structuredEnd = tryBeginBeforeJoin;
+          }
           RenderResult fallthroughBody = renderRange(
               operations, branchIndex + 1, jumpIndex, indent + 1, context, labels);
           RenderResult targetBody = renderRange(
