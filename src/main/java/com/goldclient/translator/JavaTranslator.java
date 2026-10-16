@@ -986,22 +986,40 @@ public final class JavaTranslator {
     int backwardJump = findBackwardJump(operations, branchIndex + 1, targetIndex, labels);
     if (backwardJump >= 0) {
       String loopTarget = operations.get(backwardJump).operands().get(0);
-      Integer loopStart = labels.get(labelKey(loopTarget));
+      String normalizedLoopTarget = labelKey(loopTarget);
+      Integer loopStart = labels.get(normalizedLoopTarget);
       if (loopStart != null && loopStart <= branchIndex) {
-        context.enterLoop(labelKey(loopTarget));
-        RenderResult body;
-        try {
-          body = renderRange(
+        if (context.isActiveLoop(normalizedLoopTarget)
+            && onlyMetadataBetween(operations, backwardJump + 1, targetIndex)) {
+          // This branch targets the next block while its fall-through edge
+          // immediately continues the enclosing loop. Keep the body block in
+          // normal order and replace only the backward goto with continue.
+          RenderResult fallthrough = renderRange(
               operations, branchIndex + 1, backwardJump, indent + 1, context, labels);
-        } finally {
-          context.exitLoop();
+          StringBuilder source = new StringBuilder();
+          source.append(indent(indent)).append("if (")
+              .append(negateCondition(condition)).append(") {\n")
+              .append(fallthrough.source())
+              .append(indent(indent + 1)).append("continue;\n")
+              .append(indent(indent)).append("}\n");
+          return new ConditionalRender(source.toString(), fallthrough.complete(), backwardJump);
         }
-        StringBuilder source = new StringBuilder();
-        source.append(indent(indent)).append("while (")
-            .append(normalizeCondition(condition)).append(") {\n")
-            .append(body.source())
-            .append(indent(indent)).append("}\n");
-        return new ConditionalRender(source.toString(), body.complete(), targetIndex);
+        if (!context.isActiveLoop(normalizedLoopTarget)) {
+          context.enterLoop(normalizedLoopTarget);
+          RenderResult body;
+          try {
+            body = renderRange(
+                operations, branchIndex + 1, backwardJump, indent + 1, context, labels);
+          } finally {
+            context.exitLoop();
+          }
+          StringBuilder source = new StringBuilder();
+          source.append(indent(indent)).append("while (")
+              .append(normalizeCondition(condition)).append(") {\n")
+              .append(body.source())
+              .append(indent(indent)).append("}\n");
+          return new ConditionalRender(source.toString(), body.complete(), targetIndex);
+        }
       }
     }
 
@@ -1287,6 +1305,14 @@ public final class JavaTranslator {
       if (joinIndex != null && joinIndex > branchTargetIndex) return i;
     }
     return -1;
+  }
+
+  private static boolean onlyMetadataBetween(
+      List<IrOperationModel> operations, int start, int end) {
+    for (int i = start; i < end; i++) {
+      if (!isBranchValueMetadata(operations.get(i))) return false;
+    }
+    return true;
   }
 
   private static int findBackwardJump(
