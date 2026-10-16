@@ -1612,6 +1612,27 @@ public final class JavaScriptModTranslationExporter {
             const dx = this.x - Number(x), dy = this.y - Number(y), dz = this.z - Number(z);
             return dx * dx + dy * dy + dz * dz;
           }
+          getDistance(x, y, z) { return Math.sqrt(this.distanceSq(x, y, z)); }
+          distanceSqToCenter(x, y, z) {
+            const dx = this.x + 0.5 - Number(x), dy = this.y + 0.5 - Number(y), dz = this.z + 0.5 - Number(z);
+            return dx * dx + dy * dy + dz * dz;
+          }
+          manhattanDistance(other) {
+            return Math.abs(this.x - Number(other.x ?? other.getX?.() ?? 0))
+              + Math.abs(this.y - Number(other.y ?? other.getY?.() ?? 0))
+              + Math.abs(this.z - Number(other.z ?? other.getZ?.() ?? 0));
+          }
+          crossProduct(other) {
+            const x = Number(other.x ?? other.getX?.() ?? 0), y = Number(other.y ?? other.getY?.() ?? 0), z = Number(other.z ?? other.getZ?.() ?? 0);
+            return new GoldClientMinecraftBlockPos(this.y*z-this.z*y, this.z*x-this.x*z, this.x*y-this.y*x);
+          }
+          compareTo(other) {
+            const y = this.y - Number(other.y ?? other.getY?.() ?? 0);
+            if (y) return Math.sign(y);
+            const z = this.z - Number(other.z ?? other.getZ?.() ?? 0);
+            if (z) return Math.sign(z);
+            return Math.sign(this.x - Number(other.x ?? other.getX?.() ?? 0));
+          }
           toLong() {
             return BigInt.asIntN(64, (BigInt(this.x & 0x3ffffff) << 38n)
               | (BigInt(this.z & 0x3ffffff) << 12n) | BigInt(this.y & 0xfff));
