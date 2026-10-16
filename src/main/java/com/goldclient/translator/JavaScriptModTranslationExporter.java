@@ -931,26 +931,88 @@ public final class JavaScriptModTranslationExporter {
         class GoldClientJavaMap {
           constructor(initial = []) {
             const entries = initial?.items instanceof Map ? initial.items : (initial instanceof Map ? initial : (initial?.items ?? initial ?? []));
-            this.items = new Map(entries);
+            this.items = new Map();
+            for (const [key, value] of entries) this.put(key, value);
           }
-          put(key, value) { const old = this.items.has(key) ? this.items.get(key) : null; this.items.set(key, value); return old; }
-          get(key) { return this.items.has(key) ? this.items.get(key) : null; }
-          getOrDefault(key, fallback) { return this.items.has(key) ? this.items.get(key) : fallback; }
-          containsKey(key) { return this.items.has(key); }
-          containsValue(value) { return Array.from(this.items.values()).some(item => Object.is(item, value)); }
+          #lookup(key) {
+            for (const storedKey of this.items.keys()) {
+              if (GoldClientRuntime.javaEquals(storedKey, key)) return { found: true, key: storedKey };
+            }
+            return { found: false, key: undefined };
+          }
+          put(key, value) {
+            const match = this.#lookup(key);
+            const storedKey = match.found ? match.key : key;
+            const old = match.found ? this.items.get(storedKey) : null;
+            this.items.set(storedKey, value);
+            return old;
+          }
+          get(key) { const match = this.#lookup(key); return match.found ? this.items.get(match.key) : null; }
+          getOrDefault(key, fallback) { const match = this.#lookup(key); return match.found ? this.items.get(match.key) : fallback; }
+          containsKey(key) { return this.#lookup(key).found; }
+          containsValue(value) { return Array.from(this.items.values()).some(item => GoldClientRuntime.javaEquals(item, value)); }
           size() { return this.items.size; }
           isEmpty() { return this.items.size === 0; }
-          remove(key) { if (!this.items.has(key)) return null; const old = this.items.get(key); this.items.delete(key); return old; }
-          removePair(key, value) { if (!this.items.has(key) || !Object.is(this.items.get(key), value)) return false; this.items.delete(key); return true; }
-          replace(key, value) { if (!this.items.has(key)) return null; const old = this.items.get(key); this.items.set(key, value); return old; }
-          replacePair(key, oldValue, newValue) { if (!this.items.has(key) || !Object.is(this.items.get(key), oldValue)) return false; this.items.set(key, newValue); return true; }
-          putIfAbsent(key, value) { if (!this.items.has(key) || this.items.get(key) == null) this.items.set(key, value); return this.items.get(key); }
-          computeIfAbsent(key, fn) { let value = this.items.get(key); if (value == null) { value = fn(key); if (value != null) this.items.set(key, value); } return value ?? null; }
-          computeIfPresent(key, fn) { if (!this.items.has(key) || this.items.get(key) == null) return null; const value = fn(key, this.items.get(key)); if (value == null) this.items.delete(key); else this.items.set(key, value); return value ?? null; }
-          compute(key, fn) { const value = fn(key, this.items.has(key) ? this.items.get(key) : null); if (value == null) this.items.delete(key); else this.items.set(key, value); return value ?? null; }
-          merge(key, value, fn) { const old = this.items.get(key); const next = old == null ? value : fn(old, value); if (next == null) this.items.delete(key); else this.items.set(key, next); return next ?? null; }
+          remove(key) {
+            const match = this.#lookup(key);
+            if (!match.found) return null;
+            const old = this.items.get(match.key);
+            this.items.delete(match.key);
+            return old;
+          }
+          removePair(key, value) {
+            const match = this.#lookup(key);
+            if (!match.found || !GoldClientRuntime.javaEquals(this.items.get(match.key), value)) return false;
+            this.items.delete(match.key);
+            return true;
+          }
+          replace(key, value) {
+            const match = this.#lookup(key);
+            if (!match.found) return null;
+            const old = this.items.get(match.key);
+            this.items.set(match.key, value);
+            return old;
+          }
+          replacePair(key, oldValue, newValue) {
+            const match = this.#lookup(key);
+            if (!match.found || !GoldClientRuntime.javaEquals(this.items.get(match.key), oldValue)) return false;
+            this.items.set(match.key, newValue);
+            return true;
+          }
+          putIfAbsent(key, value) {
+            const match = this.#lookup(key);
+            if (!match.found || this.items.get(match.key) == null) this.put(key, value);
+            return this.get(key);
+          }
+          computeIfAbsent(key, fn) {
+            let value = this.get(key);
+            if (value == null) { value = fn(key); if (value != null) this.put(key, value); }
+            return value ?? null;
+          }
+          computeIfPresent(key, fn) {
+            const match = this.#lookup(key);
+            if (!match.found || this.items.get(match.key) == null) return null;
+            const value = fn(key, this.items.get(match.key));
+            if (value == null) this.items.delete(match.key); else this.items.set(match.key, value);
+            return value ?? null;
+          }
+          compute(key, fn) {
+            const match = this.#lookup(key);
+            const value = fn(key, match.found ? this.items.get(match.key) : null);
+            if (value == null) { if (match.found) this.items.delete(match.key); }
+            else this.put(key, value);
+            return value ?? null;
+          }
+          merge(key, value, fn) {
+            const match = this.#lookup(key);
+            const old = match.found ? this.items.get(match.key) : null;
+            const next = old == null ? value : fn(old, value);
+            if (next == null) { if (match.found) this.items.delete(match.key); }
+            else this.put(key, next);
+            return next ?? null;
+          }
           clear() { this.items.clear(); }
-          putAll(other) { for (const [key, value] of (other?.items ?? other)) this.items.set(key, value); }
+          putAll(other) { for (const [key, value] of (other?.items ?? other)) this.put(key, value); }
           keySet() { return new GoldClientJavaSet(this.items.keys()); }
           values() { return new GoldClientJavaList(Array.from(this.items.values())); }
           entrySet() { return new GoldClientJavaSet(Array.from(this.items.entries()).map(([key, value]) => ({ key, value, getKey() { return this.key; }, getValue() { return this.value; }, setValue(next) { const old = this.value; this.value = next; return old; } }))); }
