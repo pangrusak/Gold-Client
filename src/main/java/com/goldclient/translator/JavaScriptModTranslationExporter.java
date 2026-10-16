@@ -1676,6 +1676,90 @@ public final class JavaScriptModTranslationExporter {
           WEST: GoldClientMinecraftEnumFacing.EAST, EAST: GoldClientMinecraftEnumFacing.WEST
         };
 
+        class GoldClientMinecraftAxisAlignedBB {
+          constructor(...args) {
+            let values;
+            if (args.length === 1 && args[0] != null && typeof args[0] === "object") {
+              const p = args[0];
+              const x = Number(p.x ?? p.getX?.() ?? 0), y = Number(p.y ?? p.getY?.() ?? 0), z = Number(p.z ?? p.getZ?.() ?? 0);
+              values = [x, y, z, x + 1, y + 1, z + 1];
+            } else if (args.length === 2 && args[0] != null && args[1] != null
+                && typeof args[0] === "object" && typeof args[1] === "object") {
+              const a = args[0], b = args[1];
+              values = [a.x ?? a.getX?.() ?? 0, a.y ?? a.getY?.() ?? 0, a.z ?? a.getZ?.() ?? 0,
+                b.x ?? b.getX?.() ?? 0, b.y ?? b.getY?.() ?? 0, b.z ?? b.getZ?.() ?? 0].map(Number);
+            } else if (args.length >= 6) values = args.slice(0, 6).map(Number);
+            else throw new TypeError("IllegalArgumentException: AxisAlignedBB requires a position or six coordinates");
+            this.minX = Math.min(values[0], values[3]); this.minY = Math.min(values[1], values[4]); this.minZ = Math.min(values[2], values[5]);
+            this.maxX = Math.max(values[0], values[3]); this.maxY = Math.max(values[1], values[4]); this.maxZ = Math.max(values[2], values[5]);
+          }
+          intersects(other) {
+            return other != null && this.maxX > other.minX && this.minX < other.maxX
+              && this.maxY > other.minY && this.minY < other.maxY
+              && this.maxZ > other.minZ && this.minZ < other.maxZ;
+          }
+          intersectsWith(other) { return this.intersects(other); }
+          contains(point) {
+            return point != null && point.x >= this.minX && point.x <= this.maxX
+              && point.y >= this.minY && point.y <= this.maxY
+              && point.z >= this.minZ && point.z <= this.maxZ;
+          }
+          offset(x, y = undefined, z = undefined) {
+            if (x != null && typeof x === "object") { z = x.z ?? x.getZ?.() ?? 0; y = x.y ?? x.getY?.() ?? 0; x = x.x ?? x.getX?.() ?? 0; }
+            x = Number(x); y = Number(y); z = Number(z);
+            return new GoldClientMinecraftAxisAlignedBB(this.minX+x, this.minY+y, this.minZ+z, this.maxX+x, this.maxY+y, this.maxZ+z);
+          }
+          grow(x, y = x, z = x) {
+            return new GoldClientMinecraftAxisAlignedBB(this.minX-Number(x), this.minY-Number(y), this.minZ-Number(z),
+              this.maxX+Number(x), this.maxY+Number(y), this.maxZ+Number(z));
+          }
+          expand(x, y, z) {
+            x = Number(x); y = Number(y); z = Number(z);
+            return new GoldClientMinecraftAxisAlignedBB(
+              this.minX + (x < 0 ? x : 0), this.minY + (y < 0 ? y : 0), this.minZ + (z < 0 ? z : 0),
+              this.maxX + (x > 0 ? x : 0), this.maxY + (y > 0 ? y : 0), this.maxZ + (z > 0 ? z : 0));
+          }
+          contract(x, y, z) { return this.grow(-Number(x), -Number(y), -Number(z)); }
+          union(other) {
+            return new GoldClientMinecraftAxisAlignedBB(Math.min(this.minX, other.minX), Math.min(this.minY, other.minY), Math.min(this.minZ, other.minZ),
+              Math.max(this.maxX, other.maxX), Math.max(this.maxY, other.maxY), Math.max(this.maxZ, other.maxZ));
+          }
+          calculateXOffset(other, offset) {
+            if (other.maxY > this.minY && other.minY < this.maxY && other.maxZ > this.minZ && other.minZ < this.maxZ) {
+              if (offset > 0 && other.maxX <= this.minX) offset = Math.min(this.minX - other.maxX, offset);
+              else if (offset < 0 && other.minX >= this.maxX) offset = Math.max(this.maxX - other.minX, offset);
+            }
+            return offset;
+          }
+          calculateYOffset(other, offset) {
+            if (other.maxX > this.minX && other.minX < this.maxX && other.maxZ > this.minZ && other.minZ < this.maxZ) {
+              if (offset > 0 && other.maxY <= this.minY) offset = Math.min(this.minY - other.maxY, offset);
+              else if (offset < 0 && other.minY >= this.maxY) offset = Math.max(this.maxY - other.minY, offset);
+            }
+            return offset;
+          }
+          calculateZOffset(other, offset) {
+            if (other.maxX > this.minX && other.minX < this.maxX && other.maxY > this.minY && other.minY < this.maxY) {
+              if (offset > 0 && other.maxZ <= this.minZ) offset = Math.min(this.minZ - other.maxZ, offset);
+              else if (offset < 0 && other.minZ >= this.maxZ) offset = Math.max(this.maxZ - other.minZ, offset);
+            }
+            return offset;
+          }
+          getAverageEdgeLength() { return ((this.maxX-this.minX)+(this.maxY-this.minY)+(this.maxZ-this.minZ))/3; }
+          isEmpty() { return this.maxX <= this.minX || this.maxY <= this.minY || this.maxZ <= this.minZ; }
+          hasNaN() { return ![this.minX,this.minY,this.minZ,this.maxX,this.maxY,this.maxZ].every(Number.isFinite); }
+          equals(other) {
+            return other != null && this.minX === other.minX && this.minY === other.minY && this.minZ === other.minZ
+              && this.maxX === other.maxX && this.maxY === other.maxY && this.maxZ === other.maxZ;
+          }
+          hashCode() {
+            let hash = 1;
+            for (const value of [this.minX,this.minY,this.minZ,this.maxX,this.maxY,this.maxZ]) hash = (Math.imul(hash,31) + (Number.isFinite(value) ? (value * 31 | 0) : 0)) | 0;
+            return hash;
+          }
+          toString() { return "box["+this.minX+", "+this.minY+", "+this.minZ+" -> "+this.maxX+", "+this.maxY+", "+this.maxZ+"]"; }
+        }
+
         class GoldClientMinecraftVec3d {
           constructor(x = 0, y = 0, z = 0) {
             if (x != null && typeof x === "object") {
