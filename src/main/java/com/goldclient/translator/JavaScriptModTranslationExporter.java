@@ -1233,7 +1233,7 @@ public final class JavaScriptModTranslationExporter {
           sorted(comparator) {
             this.#assertOpen();
             const values = this.values.slice();
-            values.sort(typeof comparator === "function" ? comparator : ((a, b) => a < b ? -1 : a > b ? 1 : 0));
+            values.sort((a, b) => GoldClientRuntime.compareJava(a, b, comparator ?? null));
             return this.#next(values);
           }
           limit(count) { this.#assertOpen(); if (count < 0) throw new RangeError("IllegalArgumentException: negative limit"); return this.#next(this.values.slice(0, count)); }
@@ -1260,14 +1260,14 @@ public final class JavaScriptModTranslationExporter {
           min(comparator) {
             this.#assertOpen();
             if (!this.values.length) return GoldClientJavaOptional.empty();
-            const compare = typeof comparator === "function" ? comparator : ((a, b) => a < b ? -1 : a > b ? 1 : 0);
-            return new GoldClientJavaOptional(this.values.reduce((a, b) => compare(a, b) <= 0 ? a : b));
+            return new GoldClientJavaOptional(this.values.reduce((a, b) =>
+              GoldClientRuntime.compareJava(a, b, comparator ?? null) <= 0 ? a : b));
           }
           max(comparator) {
             this.#assertOpen();
             if (!this.values.length) return GoldClientJavaOptional.empty();
-            const compare = typeof comparator === "function" ? comparator : ((a, b) => a < b ? -1 : a > b ? 1 : 0);
-            return new GoldClientJavaOptional(this.values.reduce((a, b) => compare(a, b) >= 0 ? a : b));
+            return new GoldClientJavaOptional(this.values.reduce((a, b) =>
+              GoldClientRuntime.compareJava(a, b, comparator ?? null) >= 0 ? a : b));
           }
           collect(collector, valueMapper, mergeFunction) {
             this.#assertOpen();
