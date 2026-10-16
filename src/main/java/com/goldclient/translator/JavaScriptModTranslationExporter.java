@@ -66,7 +66,8 @@ public final class JavaScriptModTranslationExporter {
               : "semantic IR was not recovered";
           result = translator.translateAdapter(clazz.name(), method.name(), method.descriptor(), why,
               (method.access() & Opcodes.ACC_STATIC) != 0);
-          status = "adapter-required";
+          status = (method.access() & Opcodes.ACC_ABSTRACT) != 0
+              ? "declaration-only" : "adapter-required";
           reason = why;
         } else {
           result = translator.translate(method.intermediateRepresentation(),
@@ -757,6 +758,7 @@ public final class JavaScriptModTranslationExporter {
         Skipped: %d
         Stubbed (symbol preserved): %d
         Adapter-required declarations: %d
+        Abstract declarations (not executable bodies): %d
         JavaScript class modules: %d
         Preserved JAR resources: %d
 
@@ -765,7 +767,8 @@ public final class JavaScriptModTranslationExporter {
         require target-side adapters and are not automatically implemented here.
         """.formatted(report.formatVersion(), report.classCount(), report.methodCount(),
             report.completeCount(), report.incompleteCount(), report.skippedCount(),
-            report.stubbedCount(), report.adapterRequiredCount(), report.fileCount(), report.resourceCount());
+            report.stubbedCount(), report.adapterRequiredCount(), count(report.methods(), "declaration-only"),
+            report.fileCount(), report.resourceCount());
   }
 
   private static String runtimeSource() {
