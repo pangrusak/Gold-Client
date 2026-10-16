@@ -581,7 +581,7 @@ class IntermediateRepresentationAnalyzerTest {
     assertTrue(ir.operations().stream().anyMatch(operation ->
         "CALL_VALUE".equals(operation.kind())
             && operation.operands().get(0).contains(
-                "GoldClientRuntime.getStaticField(\\"example.Owner\\", \\"VALUE\\")")),
+                "GoldClientRuntime.getStaticField(\"example.Owner\", \"VALUE\")")),
         ir.operations().toString());
     assertFalse(ir.operations().stream().anyMatch(operation ->
         "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
@@ -600,7 +600,7 @@ class IntermediateRepresentationAnalyzerTest {
 
     assertTrue(ir.operations().stream().anyMatch(operation ->
         "CALL_VALUE".equals(operation.kind())
-            && operation.operands().get(0).contains("lambdaArg0[\\"VALUE\\"]")),
+            && operation.operands().get(0).contains("lambdaArg0[\"VALUE\"]")),
         ir.operations().toString());
     assertFalse(ir.operations().stream().anyMatch(operation ->
         "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
@@ -620,7 +620,7 @@ class IntermediateRepresentationAnalyzerTest {
     assertTrue(ir.operations().stream().anyMatch(operation ->
         "CALL_VALUE".equals(operation.kind())
             && operation.operands().get(0).contains(
-                "GoldClientRuntime.setStaticField(\\"example.Owner\\", \\"VALUE\\", lambdaArg0)")),
+                "GoldClientRuntime.setStaticField(\"example.Owner\", \"VALUE\", lambdaArg0)")),
         ir.operations().toString());
     assertFalse(ir.operations().stream().anyMatch(operation ->
         "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
@@ -640,7 +640,7 @@ class IntermediateRepresentationAnalyzerTest {
     assertTrue(ir.operations().stream().anyMatch(operation ->
         "CALL_VALUE".equals(operation.kind())
             && operation.operands().get(0).contains(
-                "(lambdaArg0[\\"VALUE\\"] = lambdaArg1)")),
+                "(lambdaArg0[\"VALUE\"] = lambdaArg1)")),
         ir.operations().toString());
     assertFalse(ir.operations().stream().anyMatch(operation ->
         "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
