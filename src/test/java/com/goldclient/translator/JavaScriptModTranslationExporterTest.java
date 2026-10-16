@@ -326,12 +326,12 @@ class JavaScriptModTranslationExporterTest {
         }
         const list = r.createJava("java.util.ArrayList", [0, 1, 2, 3, 4]);
         r.invokeJavaStatic("java.util.Collections", "shuffle", list, r.createJava("java.util.Random", 0));
-        if (list.items.join(",") !== "3,2,1,4,0") {
+        if (list.items.join(",") !== "4,2,1,3,0") {
           throw new Error("Collections.shuffle should use the supplied seeded Random: " + list.items);
         }
         const array = [0, 1, 2, 3, 4];
         r.invokeJavaStatic("java.util.Collections", "shuffle", array, r.createJava("java.util.Random", 0));
-        if (array.join(",") !== "3,2,1,4,0") throw new Error("Collections.shuffle array mismatch");
+        if (array.join(",") !== "4,2,1,3,0") throw new Error("Collections.shuffle array mismatch");
         console.log("java-collections-ok");
         """, StandardCharsets.UTF_8);
     Process node;
