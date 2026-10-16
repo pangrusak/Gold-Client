@@ -684,6 +684,13 @@ class JavaScriptModTranslationExporterTest {
         if (!pos.add(1, 2, -1).equals(r.create("net.minecraft.util.math.BlockPos", -12, 66, 30))) {
           throw new Error("BlockPos.add");
         }
+        if (pos.compareTo(r.create("net.minecraft.util.math.BlockPos", -13, 65, 31)) !== -1) {
+          throw new Error("BlockPos compareTo should compare y, then z, then x");
+        }
+        if (pos.manhattanDistance(r.create("net.minecraft.util.math.BlockPos", -10, 60, 30)) !== 8) {
+          throw new Error("BlockPos manhattanDistance");
+        }
+        if (pos.distanceSqToCenter(-12.5, 64.5, 31.5) !== 0) throw new Error("BlockPos distanceSqToCenter");
         const packed = pos.toLong();
         const unpacked = r.invokePlatformStatic("net.minecraft.util.math.BlockPos", "fromLong", packed);
         if (!pos.equals(unpacked)) throw new Error("BlockPos packed coordinate round-trip");
