@@ -724,6 +724,41 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void minecraftMathHelperImplementsCommonDeterministicOperations() throws Exception {
+    Path output = tempDir.resolve("minecraft-mathhelper-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("mathhelper-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const call = (method, ...args) => r.invokePlatformStatic("net.minecraft.util.math.MathHelper", method, ...args);
+        if (call("floor", -1.2) !== -2 || call("ceil", -1.2) !== -1) throw new Error("MathHelper floor/ceil");
+        if (call("clamp", 5, 0, 3) !== 3 || call("clamp_int", -5, 0, 3) !== 0) throw new Error("MathHelper clamp");
+        if (call("wrapDegrees", 190) !== -170 || call("wrapDegrees", -190) !== 170) throw new Error("MathHelper.wrapDegrees");
+        if (call("denormalizeClamp", 10, 20, 1.5) !== 20 || call("denormalizeClamp", 10, 20, -1) !== 10) {
+          throw new Error("MathHelper.denormalizeClamp");
+        }
+        if (call("hsvToRGB", 0, 1, 1) !== 0xff0000 || call("hsvToRGB", 1/3, 1, 1) !== 0x00ff00) {
+          throw new Error("MathHelper.hsvToRGB");
+        }
+        const random = r.createJava("java.util.Random", 0);
+        if (call("getInt", random, 5, 9) !== 5) throw new Error("MathHelper.getInt seeded range");
+        if (call("average", [2, 4, 6]) !== 4) throw new Error("MathHelper.average");
+        console.log("minecraft-mathhelper-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "MathHelper runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("minecraft-mathhelper-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
