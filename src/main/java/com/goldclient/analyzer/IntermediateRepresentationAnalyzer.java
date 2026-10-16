@@ -539,7 +539,7 @@ public final class IntermediateRepresentationAnalyzer {
     if (!lambdaMetafactory || operands.size() < 6 || !handle.matches()) {
       String detail = name + " " + callSiteDescriptor + " " + bootstrap;
       String unsupported = "GoldClientRuntime.unsupported(\"invokedynamic\", \"";
-      unsupported += detail.replace("\\", "/").replace("\"", "'") + "\")";
+      unsupported += detail.replace("\", "/").replace("\"", "'") + "\")";
       if (!returnsVoid(callSiteDescriptor)) {
         stack.push(unsupported);
         operations.add(op("CALL_VALUE", List.of(unsupported), sourceInstruction));
@@ -567,8 +567,8 @@ public final class IntermediateRepresentationAnalyzer {
       // Static field method references (Owner::FIELD) are valid LambdaMetafactory
       // targets too. Route them through the runtime's static-field bridge so
       // translated classes and native compatibility classes share one lookup path.
-      call = "GoldClientRuntime.getStaticField(\\"" + owner + "\\", \\""
-          + implementationName + "\\")";
+      call = "GoldClientRuntime.getStaticField(\"" + owner + "\", \""
+          + implementationName + "\")";
     } else if (tag == Opcodes.H_GETFIELD) {
       // Owner::field receives the instance as its first SAM argument, while
       // instance::field captures the receiver at the call site.
@@ -576,19 +576,19 @@ public final class IntermediateRepresentationAnalyzer {
           : (!lambdaArguments.isEmpty() ? lambdaArguments.get(0) : null);
       if (receiver == null) {
         String detail = "field getter has no receiver for " + owner + "." + implementationName;
-        call = "GoldClientRuntime.unsupported(\\"lambda-field-getter\\", \\"" + detail + "\\")";
+        call = "GoldClientRuntime.unsupported(\"lambda-field-getter\", \"" + detail + "\")";
         operations.add(op("UNSUPPORTED_DYNAMIC", List.of(name, detail), sourceInstruction));
       } else {
-        call = receiver + "[\\"" + implementationName + "\\"]";
+        call = receiver + "[\"" + implementationName + "\"]";
       }
     } else if (tag == Opcodes.H_PUTSTATIC) {
       if (lambdaArguments.isEmpty()) {
         String detail = "static field setter has no value for " + owner + "." + implementationName;
-        call = "GoldClientRuntime.unsupported(\\"lambda-field-setter\\", \\"" + detail + "\\")";
+        call = "GoldClientRuntime.unsupported(\"lambda-field-setter\", \"" + detail + "\")";
         operations.add(op("UNSUPPORTED_DYNAMIC", List.of(name, detail), sourceInstruction));
       } else {
-        call = "GoldClientRuntime.setStaticField(\\"" + owner + "\\", \\""
-            + implementationName + "\\", " + lambdaArguments.get(lambdaArguments.size() - 1) + ")";
+        call = "GoldClientRuntime.setStaticField(\"" + owner + "\", \""
+            + implementationName + "\", " + lambdaArguments.get(lambdaArguments.size() - 1) + ")";
       }
     } else if (tag == Opcodes.H_PUTFIELD) {
       boolean boundReceiver = !capturedNames.isEmpty();
@@ -598,10 +598,10 @@ public final class IntermediateRepresentationAnalyzer {
       if (receiver == null || lambdaArguments.size() <= valueIndex) {
         String detail = "instance field setter has incomplete arguments for "
             + owner + "." + implementationName;
-        call = "GoldClientRuntime.unsupported(\\"lambda-field-setter\\", \\"" + detail + "\\")";
+        call = "GoldClientRuntime.unsupported(\"lambda-field-setter\", \"" + detail + "\")";
         operations.add(op("UNSUPPORTED_DYNAMIC", List.of(name, detail), sourceInstruction));
       } else {
-        call = "(" + receiver + "[\\"" + implementationName + "\\"] = "
+        call = "(" + receiver + "[\"" + implementationName + "\"] = "
             + lambdaArguments.get(valueIndex) + ")";
       }
     } else if (tag == Opcodes.H_INVOKESTATIC) {
@@ -685,7 +685,7 @@ public final class IntermediateRepresentationAnalyzer {
   }
 
   private static String quoteJs(String value) {
-    return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"")
+    return "\"" + value.replace("\", "\\\").replace("\"", "\\"")
         .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\"";
   }
 
@@ -917,7 +917,7 @@ public final class IntermediateRepresentationAnalyzer {
       if ("LDC".equals(opcode) && !isNumericLiteral(value)
           && !"true".equals(value) && !"false".equals(value)
           && !"null".equals(value) && !isQuoted(value)) {
-        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"")
+        return "\"" + value.replace("\", "\\\").replace("\"", "\\"")
             .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\"";
       }
       return value;
