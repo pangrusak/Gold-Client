@@ -1906,6 +1906,8 @@ public final class JavaScriptModTranslationExporter {
             }
           },
           getStaticField(className, fieldName) {
+            if (className === "net.minecraft.util.math.BlockPos" && fieldName === "ORIGIN") return GoldClientMinecraftBlockPos.ORIGIN;
+            if (className === "net.minecraft.util.math.Vec3d" && fieldName === "ZERO") return GoldClientMinecraftVec3d.ZERO;
             if (className === "java.util.concurrent.TimeUnit") return GoldClientJavaTimeUnit.named(fieldName);
             if (className === "java.util.Locale") {
               const locales = { ROOT: new GoldClientJavaLocale(), US: new GoldClientJavaLocale("en", "US"),
@@ -1955,6 +1957,9 @@ public final class JavaScriptModTranslationExporter {
             return null;
           },
           invokePlatformStatic(owner, method, ...args) {
+            if (owner === "net.minecraft.util.math.BlockPos" && method === "fromLong") {
+              return GoldClientMinecraftBlockPos.fromLong(args[0]);
+            }
             const service = this.platformService(owner);
             if (!service) return this.unsupported("unknown-platform-class", owner + "." + method);
             const bindings = globalThis.window?.goldClientForgeBindings ?? globalThis.goldClientForgeBindings;
@@ -1968,6 +1973,9 @@ public final class JavaScriptModTranslationExporter {
             return this.classes.get(name) ?? null;
           },
           create(name, ...args) {
+            if (name === "net.minecraft.util.ResourceLocation") return new GoldClientMinecraftResourceLocation(...args);
+            if (name === "net.minecraft.util.math.BlockPos") return new GoldClientMinecraftBlockPos(...args);
+            if (name === "net.minecraft.util.math.Vec3d") return new GoldClientMinecraftVec3d(...args);
             const constructor = this.classes.get(name);
             if (!constructor) {
               const service = this.platformService(name);
