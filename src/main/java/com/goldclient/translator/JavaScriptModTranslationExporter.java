@@ -1488,13 +1488,43 @@ public final class JavaScriptModTranslationExporter {
 
         class GoldClientJavaStringBuilder {
           constructor(initial = "") { this.value = initial == null ? "" : String(initial); }
-          append(value) { this.value += value == null ? "null" : String(value); return this; }
+          append(value) { this.value += GoldClientRuntime.javaString(value); return this; }
           toString() { return this.value; }
           length() { return this.value.length; }
-          charAt(index) { return this.value.charAt(index); }
-          setLength(length) { this.value = this.value.slice(0, length).padEnd(length, "\\0"); return this; }
-          delete(start, end) { this.value = this.value.slice(0, start) + this.value.slice(end); return this; }
-          insert(index, value) { this.value = this.value.slice(0, index) + String(value) + this.value.slice(index); return this; }
+          charAt(index) {
+            if (!Number.isInteger(index) || index < 0 || index >= this.value.length) {
+              throw new RangeError("StringIndexOutOfBoundsException: " + index);
+            }
+            return this.value.charAt(index);
+          }
+          setLength(length) {
+            if (!Number.isInteger(length) || length < 0) throw new RangeError("NegativeArraySizeException: " + length);
+            this.value = length <= this.value.length
+              ? this.value.slice(0, length) : this.value.padEnd(length, "\\0");
+            return this;
+          }
+          delete(start, end) {
+            if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start > this.value.length || end < 0 || start > end) {
+              throw new RangeError("StringIndexOutOfBoundsException");
+            }
+            this.value = this.value.slice(0, start) + this.value.slice(Math.min(end, this.value.length));
+            return this;
+          }
+          deleteCharAt(index) {
+            if (!Number.isInteger(index) || index < 0 || index >= this.value.length) {
+              throw new RangeError("StringIndexOutOfBoundsException: " + index);
+            }
+            this.value = this.value.slice(0, index) + this.value.slice(index + 1);
+            return this;
+          }
+          insert(index, value) {
+            if (!Number.isInteger(index) || index < 0 || index > this.value.length) {
+              throw new RangeError("StringIndexOutOfBoundsException: " + index);
+            }
+            this.value = this.value.slice(0, index) + GoldClientRuntime.javaString(value) + this.value.slice(index);
+            return this;
+          }
+          reverse() { this.value = Array.from(this.value).reverse().join(""); return this; }
         }
 
         export const GoldClientRuntime = Object.freeze({
