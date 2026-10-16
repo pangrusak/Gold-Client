@@ -152,6 +152,14 @@ public final class JavaTranslator {
           i = ternaryValue.lastIndex();
           continue;
         }
+        ConditionalRender branchChain = renderConditionalValueChain(
+            operations, i, end, indent, context, labels);
+        if (branchChain != null) {
+          source.append(branchChain.source());
+          complete &= branchChain.complete();
+          i = branchChain.lastIndex();
+          continue;
+        }
         ConditionalRender branchReturn = renderBranchToReturn(
             operations, i, end, indent, context, labels);
         if (branchReturn != null) {
@@ -769,6 +777,85 @@ public final class JavaTranslator {
    * must be expression-only; control flow or side effects in the paths are
    * deliberately rejected rather than dropped.
    */
+  /**
+   * Structures a two-condition chain whose true and false destinations join
+   * after two statement blocks. This is the common JVM shape for an if /
+   * else-if / else that assigns the same local in each branch.
+   */
+  private static ConditionalRender renderConditionalValueChain(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    IrOperationModel firstBranch = operations.get(branchIndex);
+    if (firstBranch.operands().size() < 2) return null;
+    Integer firstTargetIndex = labels.get(labelKey(firstBranch.operands().get(1)));
+    if (firstTargetIndex == null || firstTargetIndex <= branchIndex || firstTargetIndex >= end) return null;
+
+    int secondBranchIndex = -1;
+    for (int i = branchIndex + 1; i < firstTargetIndex; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind())) return null;
+      if ("CONDITIONAL_BRANCH".equals(operation.kind())) {
+        if (secondBranchIndex >= 0 || operation.operands().size() < 2) return null;
+        secondBranchIndex = i;
+      }
+    }
+    if (secondBranchIndex < 0) return null;
+    Integer secondTargetIndex = labels.get(
+        labelKey(operations.get(secondBranchIndex).operands().get(1)));
+    if (secondTargetIndex == null || secondTargetIndex <= firstTargetIndex
+        || secondTargetIndex >= end) return null;
+
+    int joinJumpIndex = findForwardJoinJump(
+        operations, firstTargetIndex + 1, secondTargetIndex, end, labels);
+    if (joinJumpIndex < 0 || !onlyMetadataBetween(operations, joinJumpIndex + 1, secondTargetIndex))
+      return null;
+    IrOperationModel joinJump = operations.get(joinJumpIndex);
+    if (joinJump.operands().isEmpty()) return null;
+    Integer joinIndex = labels.get(labelKey(joinJump.operands().get(0)));
+    if (joinIndex == null || joinIndex <= secondTargetIndex || joinIndex >= end) return null;
+
+    for (int i = firstTargetIndex + 1; i < joinJumpIndex; i++) {
+      if ("JUMP".equals(operations.get(i).kind())
+          || "CONDITIONAL_BRANCH".equals(operations.get(i).kind())) return null;
+    }
+    for (int i = secondTargetIndex + 1; i < joinIndex; i++) {
+      if ("JUMP".equals(operations.get(i).kind())
+          || "CONDITIONAL_BRANCH".equals(operations.get(i).kind())) return null;
+    }
+
+    RenderResult prefix = renderRange(
+        operations, branchIndex + 1, secondBranchIndex, indent + 1, context, labels);
+    RenderResult firstBody = renderRange(
+        operations, firstTargetIndex + 1, joinJumpIndex, indent + 1, context, labels);
+    RenderResult secondBody = renderRange(
+        operations, secondTargetIndex + 1, joinIndex, indent + 2, context, labels);
+    RenderResult alternateFirstBody = renderRange(
+        operations, firstTargetIndex + 1, joinJumpIndex, indent + 2, context, labels);
+
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("if (")
+        .append(normalizeCondition(firstBranch.operands().get(0))).append(") {\n")
+        .append(firstBody.source())
+        .append(indent(indent)).append("} else {\n")
+        .append(prefix.source())
+        .append(indent(indent + 1)).append("if (")
+        .append(normalizeCondition(operations.get(secondBranchIndex).operands().get(0)))
+        .append(") {\n")
+        .append(secondBody.source())
+        .append(indent(indent + 1)).append("} else {\n")
+        .append(alternateFirstBody.source())
+        .append(indent(indent + 1)).append("}\n")
+        .append(indent(indent)).append("}\n");
+    return new ConditionalRender(source.toString(),
+        prefix.complete() && firstBody.complete() && secondBody.complete()
+            && alternateFirstBody.complete(),
+        joinIndex - 1);
+  }
+
   private static ConditionalRender renderBranchToReturn(
       List<IrOperationModel> operations,
       int branchIndex,
