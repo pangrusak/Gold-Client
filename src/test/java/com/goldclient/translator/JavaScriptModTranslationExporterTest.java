@@ -500,4 +500,17 @@ class JavaScriptModTranslationExporterTest {
     assertTrue(manifest.contains("example.IValue#getValue()Ljava/lang/String;: abstract method"));
   }
 
+  @Test
+  void emitsRegisterClassJavaScriptWithoutLiteralEscapes() throws Exception {
+    ClassModel clazz = new ClassModel("example/Escaping", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(), List.of(), List.of());
+    Path output = tempDir.resolve("register-class-escaping");
+    new JavaScriptModTranslationExporter().export(List.of(clazz), output);
+    String module = Files.readString(output.resolve("example/Escaping.translated.js"));
+    assertTrue(module.contains("__goldMethods.get(\"<clinit>\") ?? [])"));
+    assertTrue(module.contains("], methods: __goldMethods });" + System.lineSeparator()));
+    assertFalse(module.contains("__goldMethods.get(\\\"<clinit>\\\")"));
+    assertFalse(module.contains("methods: __goldMethods });\\n"));
+  }
+
 }
