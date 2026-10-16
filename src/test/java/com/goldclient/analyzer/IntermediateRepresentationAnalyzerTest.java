@@ -567,6 +567,85 @@ class IntermediateRepresentationAnalyzerTest {
         ir.operations().toString());
   }
 
+  @Test
+  void lowersStaticFieldGetterMethodReference() {
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method("staticGetter", "()V", List.of(
+        instruction(186, "INVOKEDYNAMIC", "get", "()Ljava/util/function/Supplier;",
+            "Handle(6,java/lang/invoke/LambdaMetafactory,metafactory,(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;,false)",
+            "Type(()Ljava/lang/Object;)",
+            "Handle(2,example/Owner,VALUE,I,false)",
+            "Type(()Ljava/lang/Object;)"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN"))));
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().get(0).contains(
+                "GoldClientRuntime.getStaticField(\\"example.Owner\\", \\"VALUE\\")")),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
+  }
+
+  @Test
+  void lowersInstanceFieldGetterMethodReference() {
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method("fieldGetter", "()V", List.of(
+        instruction(186, "INVOKEDYNAMIC", "get", "()Ljava/util/function/Function;",
+            "Handle(6,java/lang/invoke/LambdaMetafactory,metafactory,(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;,false)",
+            "Type((Ljava/lang/Object;)Ljava/lang/Object;)",
+            "Handle(1,example/Owner,VALUE,I,false)",
+            "Type((Ljava/lang/Object;)Ljava/lang/Object;)"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN"))));
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().get(0).contains("lambdaArg0[\\"VALUE\\"]")),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
+  }
+
+  @Test
+  void lowersStaticFieldSetterMethodReference() {
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method("staticSetter", "()V", List.of(
+        instruction(186, "INVOKEDYNAMIC", "set", "()Ljava/util/function/Consumer;",
+            "Handle(6,java/lang/invoke/LambdaMetafactory,metafactory,(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;,false)",
+            "Type((Ljava/lang/Object;)V)",
+            "Handle(4,example/Owner,VALUE,I,false)",
+            "Type((Ljava/lang/Object;)V)"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN"))));
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().get(0).contains(
+                "GoldClientRuntime.setStaticField(\\"example.Owner\\", \\"VALUE\\", lambdaArg0)")),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
+  }
+
+  @Test
+  void lowersUnboundInstanceFieldSetterMethodReference() {
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method("fieldSetter", "()V", List.of(
+        instruction(186, "INVOKEDYNAMIC", "set", "()Ljava/util/function/BiConsumer;",
+            "Handle(6,java/lang/invoke/LambdaMetafactory,metafactory,(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;,false)",
+            "Type((Ljava/lang/Object;Ljava/lang/Object;)V)",
+            "Handle(3,example/Owner,VALUE,I,false)",
+            "Type((Ljava/lang/Object;Ljava/lang/Object;)V)"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN"))));
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().get(0).contains(
+                "(lambdaArg0[\\"VALUE\\"] = lambdaArg1)")),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
+  }
+
   private static int indexOfKind(IrMethodModel method, String kind) {
     for (int i = 0; i < method.operations().size(); i++) {
       if (kind.equals(method.operations().get(i).kind())) return i;
