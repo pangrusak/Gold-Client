@@ -1947,8 +1947,13 @@ public final class JavaScriptModTranslationExporter {
               }
               if (method === "equals" || method === "deepEquals") {
                 const a = args[0], b = args[1];
-                return Array.isArray(a) && Array.isArray(b) && a.length === b.length
-                  && a.every((value, index) => Object.is(value, b[index]));
+                if (a == null || b == null) return a == b;
+                const arrayA = Array.isArray(a) || ArrayBuffer.isView(a);
+                const arrayB = Array.isArray(b) || ArrayBuffer.isView(b);
+                if (!arrayA || !arrayB || a.length !== b.length) return false;
+                return method === "deepEquals"
+                  ? this.javaDeepEquals(a, b)
+                  : Array.from(a).every((value, index) => this.javaEquals(value, b[index]));
               }
               if (method === "hashCode") {
                 return Array.from(args[0] ?? []).reduce((hash, value) =>
