@@ -8,4 +8,3 @@ output/*
 .gold-client-jre
 unminified-clients/
 translated-js/
-dependency-reduced-pom.xml
