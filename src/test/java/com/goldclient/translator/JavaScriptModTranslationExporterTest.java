@@ -566,6 +566,47 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void stringBuilderUsesJavaStringConversionAndBoundsChecks() throws Exception {
+    Path output = tempDir.resolve("java-stringbuilder-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("stringbuilder-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const builder = r.createJava("java.lang.StringBuilder", "ab");
+        builder.append(null).append({ toString() { return "OBJ"; } });
+        if (builder.toString() !== "abnullOBJ") throw new Error("StringBuilder.append conversion mismatch");
+        builder.insert(2, "-");
+        if (builder.toString() !== "ab-nullOBJ") throw new Error("StringBuilder.insert mismatch");
+        builder.delete(2, 3).deleteCharAt(0);
+        if (builder.toString() !== "bnullOBJ") throw new Error("StringBuilder delete mismatch");
+        builder.setLength(10);
+        if (builder.length() !== 10 || builder.toString().charCodeAt(9) !== 0) {
+          throw new Error("StringBuilder.setLength should pad with NUL characters");
+        }
+        builder.setLength(1);
+        if (builder.toString() !== "b") throw new Error("StringBuilder.setLength truncation mismatch");
+        let badIndex = false;
+        try { builder.charAt(1); } catch (error) { badIndex = error.message.includes("StringIndexOutOfBoundsException"); }
+        if (!badIndex) throw new Error("StringBuilder.charAt accepted invalid index");
+        let badLength = false;
+        try { builder.setLength(-1); } catch (error) { badLength = error.message.includes("NegativeArraySizeException"); }
+        if (!badLength) throw new Error("StringBuilder.setLength accepted negative length");
+        console.log("java-stringbuilder-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "StringBuilder runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-stringbuilder-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
