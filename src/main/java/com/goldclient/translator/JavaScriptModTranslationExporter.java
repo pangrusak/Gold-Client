@@ -1441,6 +1441,18 @@ public final class JavaScriptModTranslationExporter {
             if (typeof a.equals === "function") return Boolean(a.equals(b));
             return a === b;
           },
+          compareJava(a, b, comparator = null) {
+            if (typeof comparator === "function") return Number(comparator(a, b));
+            if (comparator != null && typeof comparator.compare === "function") {
+              return Number(comparator.compare(a, b));
+            }
+            if (a == null || b == null) throw new TypeError("NullPointerException: natural ordering");
+            if (typeof a.compareTo === "function") return Number(a.compareTo(b));
+            if (typeof a === "number" && typeof b === "number") return a < b ? -1 : a > b ? 1 : 0;
+            if (typeof a === "string" && typeof b === "string") return a < b ? -1 : a > b ? 1 : 0;
+            if (typeof a === "boolean" && typeof b === "boolean") return a === b ? 0 : a ? 1 : -1;
+            throw new TypeError("ClassCastException: values do not implement Java natural ordering");
+          },
           javaDeepEquals(a, b) {
             if (a === b) return true;
             if (a == null || b == null) return false;
@@ -1967,17 +1979,17 @@ public final class JavaScriptModTranslationExporter {
               }
               if (method === "sort") {
                 const array = args[0];
-                const comparator = typeof args[1] === "function" ? args[1] : ((a, b) => String(a).localeCompare(String(b)));
-                array.sort(comparator);
+                const comparator = args[1] ?? null;
+                array.sort((a, b) => this.compareJava(a, b, comparator));
                 return;
               }
               if (method === "binarySearch") {
                 const array = args[0], target = args[1];
-                const comparator = typeof args[2] === "function" ? args[2] : ((a, b) => a < b ? -1 : a > b ? 1 : 0);
+                const comparator = args[2] ?? null;
                 let low = 0, high = array.length - 1;
                 while (low <= high) {
                   const mid = (low + high) >>> 1;
-                  const compare = comparator(array[mid], target);
+                  const compare = this.compareJava(array[mid], target, comparator);
                   if (compare < 0) low = mid + 1;
                   else if (compare > 0) high = mid - 1;
                   else return mid;
@@ -2014,7 +2026,12 @@ public final class JavaScriptModTranslationExporter {
                 if (Array.isArray(collection)) { collection.push(...values); return values.length > 0; }
               }
               if (method === "reverse") { if (args[0]?.items) args[0].items.reverse(); else args[0]?.reverse?.(); return; }
-              if (method === "sort") { if (args[0]?.items) args[0].items.sort(args[1]); else args[0]?.sort?.(args[1]); return; }
+              if (method === "sort") {
+                const collection = args[0]?.items ?? args[0];
+                if (collection == null) throw new TypeError("NullPointerException: list");
+                collection.sort((a, b) => this.compareJava(a, b, args[1] ?? null));
+                return;
+              }
               if (method === "frequency") {
                 const values = args[0]?.items ?? args[0] ?? [];
                 return Array.from(values).filter(value => this.javaEquals(value, args[1])).length;
@@ -2027,9 +2044,9 @@ public final class JavaScriptModTranslationExporter {
               if (method === "min" || method === "max") {
                 const values = Array.from(args[0]?.items ?? args[0] ?? []);
                 if (!values.length) throw new Error("NoSuchElementException");
-                const comparator = typeof args[1] === "function" ? args[1] : ((a, b) => a < b ? -1 : a > b ? 1 : 0);
+                const comparator = args[1] ?? null;
                 return values.reduce((best, value) => {
-                  const compare = comparator(value, best);
+                  const compare = this.compareJava(value, best, comparator);
                   return method === "min" ? (compare < 0 ? value : best) : (compare > 0 ? value : best);
                 });
               }
