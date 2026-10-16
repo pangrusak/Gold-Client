@@ -1630,6 +1630,52 @@ public final class JavaScriptModTranslationExporter {
         }
         GoldClientMinecraftBlockPos.ORIGIN = new GoldClientMinecraftBlockPos(0, 0, 0);
 
+        class GoldClientMinecraftEnumFacing {
+          constructor(name, index, x, y, z, horizontalIndex = -1) {
+            this.name = name; this.index = index;
+            this.xOffset = x; this.yOffset = y; this.zOffset = z;
+            this.horizontalIndex = horizontalIndex;
+            this.axis = y !== 0 ? "Y" : x !== 0 ? "X" : "Z";
+          }
+          getName() { return this.name.toLowerCase(); }
+          getIndex() { return this.index; }
+          getHorizontalIndex() { return this.horizontalIndex; }
+          getXOffset() { return this.xOffset; }
+          getYOffset() { return this.yOffset; }
+          getZOffset() { return this.zOffset; }
+          getAxis() { return this.axis; }
+          getOpposite() { return GoldClientMinecraftEnumFacing.OPPOSITES[this.name]; }
+          toString() { return this.getName(); }
+          equals(other) { return other != null && this.name === other.name; }
+          static VALUES = [];
+          static OPPOSITES = {};
+          static byName(name) {
+            if (name == null) return null;
+            return this.VALUES.find(value => value.getName() === String(name).toLowerCase()) ?? null;
+          }
+          static getFront(index) { return this.VALUES[((Math.trunc(Number(index)) % 6) + 6) % 6]; }
+          static getHorizontal(index) {
+            const horizontal = [this.SOUTH, this.WEST, this.NORTH, this.EAST];
+            return horizontal[((Math.trunc(Number(index)) % 4) + 4) % 4];
+          }
+        }
+        GoldClientMinecraftEnumFacing.DOWN = new GoldClientMinecraftEnumFacing("DOWN", 0, 0, -1, 0);
+        GoldClientMinecraftEnumFacing.UP = new GoldClientMinecraftEnumFacing("UP", 1, 0, 1, 0);
+        GoldClientMinecraftEnumFacing.NORTH = new GoldClientMinecraftEnumFacing("NORTH", 2, 0, 0, -1, 2);
+        GoldClientMinecraftEnumFacing.SOUTH = new GoldClientMinecraftEnumFacing("SOUTH", 3, 0, 0, 1, 0);
+        GoldClientMinecraftEnumFacing.WEST = new GoldClientMinecraftEnumFacing("WEST", 4, -1, 0, 0, 1);
+        GoldClientMinecraftEnumFacing.EAST = new GoldClientMinecraftEnumFacing("EAST", 5, 1, 0, 0, 3);
+        GoldClientMinecraftEnumFacing.VALUES = [
+          GoldClientMinecraftEnumFacing.DOWN, GoldClientMinecraftEnumFacing.UP,
+          GoldClientMinecraftEnumFacing.NORTH, GoldClientMinecraftEnumFacing.SOUTH,
+          GoldClientMinecraftEnumFacing.WEST, GoldClientMinecraftEnumFacing.EAST
+        ];
+        GoldClientMinecraftEnumFacing.OPPOSITES = {
+          DOWN: GoldClientMinecraftEnumFacing.UP, UP: GoldClientMinecraftEnumFacing.DOWN,
+          NORTH: GoldClientMinecraftEnumFacing.SOUTH, SOUTH: GoldClientMinecraftEnumFacing.NORTH,
+          WEST: GoldClientMinecraftEnumFacing.EAST, EAST: GoldClientMinecraftEnumFacing.WEST
+        };
+
         class GoldClientMinecraftVec3d {
           constructor(x = 0, y = 0, z = 0) {
             if (x != null && typeof x === "object") {
