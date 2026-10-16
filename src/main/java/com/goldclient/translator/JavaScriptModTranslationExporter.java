@@ -102,6 +102,7 @@ public final class JavaScriptModTranslationExporter {
         StandardCharsets.UTF_8);
     Files.writeString(root.resolve("javascript-report.txt"), summary(report), StandardCharsets.UTF_8);
     writeIncompleteDiagnostics(root, statuses, classes);
+    writeDeclarationAdapterManifest(root, statuses, classes);
     return report;
   }
 
@@ -110,6 +111,45 @@ public final class JavaScriptModTranslationExporter {
    * Method bodies stay independently exportable, while callers get Java-like
    * instance/static dispatch and constructors that execute the recovered body.
    */
+  /** Exports exact stable keys needed to bind abstract/native declarations to target adapters. */
+  private static void writeDeclarationAdapterManifest(
+      Path root, List<MethodStatus> statuses, List<ClassModel> classes) throws IOException {
+    java.util.Map<String, ClassModel> classByName = new java.util.HashMap<>();
+    for (ClassModel clazz : classes) classByName.put(clazz.name(), clazz);
+    List<DeclarationAdapter> adapters = new ArrayList<>();
+    for (MethodStatus status : statuses) {
+      if (!"adapter-required".equals(status.status())) continue;
+      ClassModel clazz = classByName.get(status.className());
+      if (clazz == null) continue;
+      MethodModel method = clazz.methods().stream()
+          .filter(candidate -> candidate.name().equals(status.methodName())
+              && candidate.descriptor().equals(status.descriptor()))
+          .findFirst().orElse(null);
+      if (method == null) continue;
+      String owner = clazz.name().replace('/', '.');
+      String reason = status.reason() == null ? "declaration" : status.reason();
+      adapters.add(new DeclarationAdapter(owner, method.name(), method.descriptor(),
+          (method.access() & Opcodes.ACC_STATIC) != 0,
+          (method.access() & Opcodes.ACC_ABSTRACT) != 0,
+          descriptorArity(method.descriptor()),
+          owner + "#" + method.name() + method.descriptor() + ": " + reason, reason));
+    }
+    DeclarationAdapterManifest manifest = new DeclarationAdapterManifest(
+        "gold-client-declaration-adapters-v1", adapters.size(), List.copyOf(adapters));
+    Files.writeString(root.resolve("declaration-adapters.json"),
+        new GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create().toJson(manifest)
+            + System.lineSeparator(), StandardCharsets.UTF_8);
+  }
+
+  public record DeclarationAdapterManifest(
+      String formatVersion, int adapterRequiredCount, List<DeclarationAdapter> adapters) {
+    public DeclarationAdapterManifest { adapters = List.copyOf(adapters); }
+  }
+
+  public record DeclarationAdapter(
+      String owner, String methodName, String descriptor, boolean isStatic,
+      boolean isAbstract, int arity, String adapterKey, String reason) {}
+
   private static void appendExecutableClassWrapper(
       StringBuilder module, ClassModel clazz, List<ClassModel> allClasses) {
     String className = "Translated_" + safeIdentifier(clazz.name().replace('/', '_').replace('.', '_'));
