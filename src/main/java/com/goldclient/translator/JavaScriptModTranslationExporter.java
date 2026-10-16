@@ -836,9 +836,14 @@ public final class JavaScriptModTranslationExporter {
           }
           clear() { this.items.length = 0; }
           remove(value) {
-            const index = Number.isInteger(value) ? value : this.indexOf(value);
-            if (index < 0 || index >= this.items.length) return false;
-            this.items.splice(index, 1); return true;
+            if (Number.isInteger(value)) return this.removeAt(value) !== undefined;
+            return this.removeObject(value);
+          }
+          removeObject(value) {
+            const index = this.indexOf(value);
+            if (index < 0) return false;
+            this.items.splice(index, 1);
+            return true;
           }
           removeAt(index) { this.#checkIndex(index); return this.items.splice(index, 1)[0]; }
           removeAll(values) {
