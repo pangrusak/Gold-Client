@@ -596,7 +596,8 @@ public final class JavaTranslator {
       }
     }
 
-    int jumpIndex = findForwardJoinJump(operations, branchIndex + 1, targetIndex);
+    int jumpIndex = findForwardJoinJump(
+        operations, branchIndex + 1, targetIndex, end, labels);
     if (jumpIndex >= 0) {
       IrOperationModel jump = operations.get(jumpIndex);
       if (!jump.operands().isEmpty()) {
@@ -717,10 +718,17 @@ public final class JavaTranslator {
   private static int findForwardJoinJump(
       List<IrOperationModel> operations,
       int start,
-      int targetIndex) {
-    for (int i = start; i < targetIndex; i++) {
-      if ("JUMP".equals(operations.get(i).kind()))
-        return i;
+      int branchTargetIndex,
+      int end,
+      Map<String, Integer> labels) {
+    // A nested if/switch can contain its own goto before the outer if's join.
+    // Scan backward from the branch target so we prefer the final join edge
+    // immediately preceding that target, not the first unrelated jump.
+    for (int i = Math.min(branchTargetIndex - 1, end - 1); i >= start; i--) {
+      IrOperationModel operation = operations.get(i);
+      if (!"JUMP".equals(operation.kind()) || operation.operands().isEmpty()) continue;
+      Integer joinIndex = labels.get(labelKey(operation.operands().get(0)));
+      if (joinIndex != null && joinIndex > branchTargetIndex && joinIndex <= end) return i;
     }
     return -1;
   }
