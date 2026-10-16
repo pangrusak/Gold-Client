@@ -490,14 +490,30 @@ class JavaScriptModTranslationExporterTest {
     Path output = tempDir.resolve("declaration-manifest");
     var report = new JavaScriptModTranslationExporter().export(List.of(contract), output);
 
-    assertEquals(1, report.adapterRequiredCount());
+    assertEquals(0, report.adapterRequiredCount());
+    assertTrue(report.methods().stream().anyMatch(item -> item.status().equals("declaration-only")));
     String manifest = Files.readString(output.resolve("declaration-adapters.json"));
     assertTrue(manifest.contains("\"formatVersion\": \"gold-client-declaration-adapters-v1\""));
     assertTrue(manifest.contains("\"owner\": \"example.IValue\""));
     assertTrue(manifest.contains("\"methodName\": \"getValue\""));
     assertTrue(manifest.contains("\"descriptor\": \"()Ljava/lang/String;\""));
-    assertTrue(manifest.contains("\"isAbstract\": true"));
-    assertTrue(manifest.contains("example.IValue#getValue()Ljava/lang/String;: abstract method"));
+    assertTrue(manifest.contains("\"adapterRequiredCount\": 0"));
+    assertFalse(manifest.contains("example.IValue#getValue()Ljava/lang/String;: abstract method"));
   }
+
+  @Test
+  void emitsRegisterClassJavaScriptWithoutLiteralEscapes() throws Exception {
+    ClassModel clazz = new ClassModel("example/Escaping", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(), List.of(), List.of());
+    Path output = tempDir.resolve("register-class-escaping");
+    new JavaScriptModTranslationExporter().export(List.of(clazz), output);
+    String module = Files.readString(output.resolve("example/Escaping.translated.js"));
+    assertTrue(module.contains("__goldMethods.get(\"<clinit>\") ?? [])"));
+    assertTrue(module.contains("], methods: __goldMethods });" + System.lineSeparator()));
+    assertFalse(module.contains("__goldMethods.get(\\\"<clinit>\\\")"));
+    assertFalse(module.contains("methods: __goldMethods });\\n"));
+  }
+
+}
 
 }
