@@ -428,4 +428,22 @@ class JavaScriptTranslatorTest {
     assertFalse(lowered.contains("invokeStaticClass(\"net.minecraft.client.Minecraft\""), lowered);
   }
 
+  @Test
+  void preservesTypedCatchSemanticsWithRuntimeTypeGuard() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        try {
+          work();
+        } catch (java.io.IOException missingNode) {
+          recover(missingNode);
+        }
+        """);
+
+    assertTrue(lowered.contains("catch (missingNode)"), lowered);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.instanceOf(missingNode, \"java.io.IOException\")"), lowered);
+    assertTrue(lowered.contains("throw missingNode;"), lowered);
+    assertTrue(lowered.contains("recover(missingNode);"), lowered);
+    assertFalse(lowered.contains("catch (java.io.IOException"), lowered);
+  }
+
 }

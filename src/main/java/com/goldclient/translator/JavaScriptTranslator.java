@@ -19,7 +19,7 @@ public final class JavaScriptTranslator {
   private static final Pattern SIGNATURE = Pattern.compile(
       "(?m)^\\s*[\\w.$<>\\[\\]]+\\s+([\\w$<>]+)\\(([^)]*)\\) \\{");
   private static final Pattern CATCH = Pattern.compile(
-      "catch\\s*\\(\\s*[\\w.$]+\\s+([\\w$]+)\\s*\\)");
+      "catch\\s*\\(\\s*([\\w.$]+)\\s+([\\w$]+)\\s*\\)\\s*\\{");
   private static final Pattern LOCAL_TYPE = Pattern.compile(
       "\\b(?:Object|String|Boolean|Byte|Character|Short|Integer|Long|Float|Double|"
           + "boolean|byte|char|short|int|long|float|double)\\s+(local\\d+)\\s*=");
@@ -228,8 +228,13 @@ public final class JavaScriptTranslator {
     Matcher catchMatcher = CATCH.matcher(result);
     StringBuffer catchBuffer = new StringBuffer();
     while (catchMatcher.find()) {
-      catchMatcher.appendReplacement(catchBuffer,
-          Matcher.quoteReplacement("catch (" + catchMatcher.group(1) + ")"));
+      String exceptionType = catchMatcher.group(1);
+      String exceptionVariable = catchMatcher.group(2);
+      // Java's typed catch is not a JavaScript construct. Preserve its semantics
+      // by using a JS catch-all with an explicit runtime type guard and rethrow.
+      String replacement = "catch (" + exceptionVariable + ") { if (!GoldClientRuntime.instanceOf("
+          + exceptionVariable + ", " + quote(exceptionType) + ")) throw " + exceptionVariable + ";";
+      catchMatcher.appendReplacement(catchBuffer, Matcher.quoteReplacement(replacement));
     }
     catchMatcher.appendTail(catchBuffer);
     result = catchBuffer.toString();

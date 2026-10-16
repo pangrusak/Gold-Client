@@ -64,7 +64,7 @@ class JavaTranslatorTest {
 
     assertTrue(result.complete());
     assertTrue(result.source().contains(
-        "if (me.jellysquid.mods.lithium.common.LithiumMod.CONFIG == null) {"));
+        "if (me.jellysquid.mods.lithium.common.LithiumMod.CONFIG != null) {"));
     assertTrue(result.source().contains(
         "throw new java.lang.IllegalStateException(\"The mixin plugin did not initialize the config! Did it not load?\");"));
     assertTrue(result.source().contains("return;"));
@@ -252,7 +252,7 @@ class JavaTranslatorTest {
 
     assertTrue(result.complete());
     assertTrue(result.complete());
-    assertTrue(result.source().contains("if (a != 0) {"));
+    assertTrue(result.source().contains("if (a == 0) {"));
     assertTrue(result.source().contains("if (b != 0) {"));
     assertTrue(result.source().contains("nested();"));
   }
@@ -280,7 +280,8 @@ class JavaTranslatorTest {
   void translatesForwardExitWithBackwardGotoAsWhileLoop() {
     IrMethodModel method = new IrMethodModel("sum", "()I", List.of(
         new IrOperationModel("LABEL", List.of("L0"), 0),
-        new IrOperationModel("CONDITIONAL_BRANCH", List.of("iterator.hasNext() != 0", "Lexit"), 1),
+        // The branch condition is true when the JVM jumps to the loop exit.
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("iterator.hasNext() == 0", "Lexit"), 1),
         new IrOperationModel("LOCAL_WRITE", List.of("local1", "local1 + iterator.next()"), 2),
         new IrOperationModel("JUMP", List.of("L0"), 3),
         new IrOperationModel("LABEL", List.of("Lexit"), 4),
@@ -289,7 +290,8 @@ class JavaTranslatorTest {
     TranslationResult result = new JavaTranslator().translate(method);
 
     assertTrue(result.complete(), result.source());
-    assertTrue(result.source().contains("while (iterator.hasNext() != 0)"), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("if (iterator.hasNext() == 0) break;"), result.source());
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
@@ -646,7 +648,8 @@ class JavaTranslatorTest {
     TranslationResult result = new JavaTranslator().translate(method);
 
     assertTrue(result.complete(), result.source());
-    assertTrue(result.source().contains("do {\n    step();\n  } while (keepGoing);"), result.source());
+    assertTrue(result.source().contains("while (true) {"), result.source());
+    assertTrue(result.source().contains("if (keepGoing) break;"), result.source());
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
@@ -729,6 +732,527 @@ class JavaTranslatorTest {
         "new java.util.HashMap(new java.util.HashMap(), () -> new java.util.IdentityHashMap())"),
         result.source());
     assertTrue(!result.source().contains("\\"), result.source());
+  }
+
+  @Test
+  void prefersOuterIfJoinOverEarlierNestedGoto() {
+    IrMethodModel method = new IrMethodModel("test", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("outerCondition", "Lelse"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("innerCondition", "LinnerElse"), 1),
+        new IrOperationModel("METHOD_CALL", List.of("early()"), 2),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 3),
+        new IrOperationModel("LABEL", List.of("LinnerElse"), 4),
+        new IrOperationModel("METHOD_CALL", List.of("later()"), 5),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 6),
+        new IrOperationModel("LABEL", List.of("Lelse"), 7),
+        new IrOperationModel("METHOD_CALL", List.of("outerElse()"), 8),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 9),
+        new IrOperationModel("RETURN", List.of(), 10)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("early();"), result.source());
+    assertTrue(result.source().contains("later();"), result.source());
+    assertTrue(result.source().contains("outerElse();"), result.source());
+    assertTrue(result.source().contains("} else {"), result.source());
+  }
+
+  @Test
+  void lowersMultiCatchWithOneRuntimeDispatchAndSharedHandler() {
+    List<String> io = List.of("Ltry", "LafterTry", "Lhandler", "java.io.IOException");
+    List<String> sql = List.of("Ltry", "LafterTry", "Lhandler", "java.sql.SQLException");
+    IrMethodModel method = new IrMethodModel("test", "()V", List.of(
+        new IrOperationModel("TRY_BEGIN", io, 0),
+        new IrOperationModel("TRY_BEGIN", sql, 1),
+        new IrOperationModel("LABEL", List.of("Ltry"), 2),
+        new IrOperationModel("METHOD_CALL", List.of("work()"), 3),
+        new IrOperationModel("TRY_END", io, 4),
+        new IrOperationModel("TRY_END", sql, 5),
+        new IrOperationModel("LABEL", List.of("LafterTry"), 6),
+        new IrOperationModel("CATCH_BEGIN", io, 7),
+        new IrOperationModel("CATCH_BEGIN", sql, 8),
+        new IrOperationModel("LABEL", List.of("Lhandler"), 9),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 10),
+        new IrOperationModel("METHOD_CALL", List.of("recover(local1)"), 11),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 12),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 13),
+        new IrOperationModel("RETURN", List.of(), 14)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("catch (caughtException)"), result.source());
+    assertTrue(result.source().contains(
+        "GoldClientRuntime.instanceOf(caughtException, \"java.io.IOException\")"), result.source());
+    assertTrue(result.source().contains(
+        "GoldClientRuntime.instanceOf(caughtException, \"java.sql.SQLException\")"), result.source());
+    assertTrue(result.source().contains("var local1 = caughtException;"), result.source());
+    assertTrue(result.source().contains("recover(local1);"), result.source());
+    assertTrue(!result.source().contains("<exception>"), result.source());
+  }
+
+  @Test
+  void structuresForwardExitLoopWithNestedBackwardLoop() {
+    IrMethodModel method = new IrMethodModel("nestedLoops", "()V", List.of(
+        new IrOperationModel("LABEL", List.of("Louter"), 0),
+        new IrOperationModel("CALL_VALUE", List.of("outerHasNext()"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("outerHasNext() == 0", "LouterEnd"), 2),
+        new IrOperationModel("METHOD_CALL", List.of("outerWork()"), 3),
+        new IrOperationModel("LABEL", List.of("Linner"), 4),
+        new IrOperationModel("CALL_VALUE", List.of("innerHasNext()"), 5),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("innerHasNext() == 0", "LinnerEnd"), 6),
+        new IrOperationModel("METHOD_CALL", List.of("innerWork()"), 7),
+        new IrOperationModel("JUMP", List.of("Linner"), 8),
+        new IrOperationModel("LABEL", List.of("LinnerEnd"), 9),
+        new IrOperationModel("JUMP", List.of("Louter"), 10),
+        new IrOperationModel("LABEL", List.of("LouterEnd"), 11),
+        new IrOperationModel("RETURN", List.of(), 12)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("if (outerHasNext() == 0) break;"), result.source());
+    assertTrue(result.source().contains("if (innerHasNext() == 0) break;"), result.source());
+    assertTrue(result.source().contains("outerWork();"), result.source());
+    assertTrue(result.source().contains("innerWork();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void lowersShortCircuitBooleanReturnMergeWithoutUnknownStackValue() {
+    IrMethodModel method = new IrMethodModel("isEnabled", "()Z", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("primaryEnabled != 0", "Ltrue"), 0),
+        new IrOperationModel("CALL_VALUE", List.of("toggleKey.isPressed()"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("toggleKey.isPressed() != 0", "Lfalse"), 2),
+        new IrOperationModel("LABEL", List.of("Ltrue"), 3),
+        new IrOperationModel("CONSTANT", List.of("1"), 4),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 5),
+        new IrOperationModel("LABEL", List.of("Lfalse"), 6),
+        new IrOperationModel("CONSTANT", List.of("0"), 7),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 8),
+        new IrOperationModel("RETURN", List.of("<unknown>"), 9)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (primaryEnabled != 0)"), result.source());
+    assertTrue(result.source().contains("return 1;"), result.source());
+    assertTrue(result.source().contains("if (toggleKey.isPressed() != 0)"), result.source());
+    assertTrue(result.source().contains("return 0;"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void structuresTryRegionThatStartsAtConditionalTarget() {
+    List<String> region = List.of("Ltry", "LafterTry", "Lhandler", "java.lang.RuntimeException");
+    IrMethodModel method = new IrMethodModel("render", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("skipPreTry != 0", "Ltry"), 0),
+        new IrOperationModel("METHOD_CALL", List.of("beforeTry()"), 1),
+        new IrOperationModel("TRY_BEGIN", region, 2),
+        new IrOperationModel("LABEL", List.of("Ltry"), 3),
+        new IrOperationModel("METHOD_CALL", List.of("protectedWork()"), 4),
+        new IrOperationModel("TRY_END", region, 5),
+        new IrOperationModel("LABEL", List.of("LafterTry"), 6),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 7),
+        new IrOperationModel("CATCH_BEGIN", region, 8),
+        new IrOperationModel("LABEL", List.of("Lhandler"), 9),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 10),
+        new IrOperationModel("METHOD_CALL", List.of("recover(local1)"), 11),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 12),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 13),
+        new IrOperationModel("RETURN", List.of(), 14)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("beforeTry();"), result.source());
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains("catch (java.lang.RuntimeException local1)"), result.source());
+    assertTrue(result.source().contains("protectedWork();"), result.source());
+    assertTrue(result.source().contains("recover(local1);"), result.source());
+    assertTrue(!result.source().contains("<exception>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void lowersConditionalStackMergeIntoLocalTernary() {
+    IrMethodModel method = new IrMethodModel("chooseMode", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("isOutput == 0", "Loutput"), 0),
+        new IrOperationModel("FIELD_READ", List.of("Focus.Mode.INPUT", "Focus.Mode.INPUT", "Focus.Mode.INPUT"), 1),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 2),
+        new IrOperationModel("LABEL", List.of("Loutput"), 3),
+        new IrOperationModel("FIELD_READ", List.of("Focus.Mode.OUTPUT", "Focus.Mode.OUTPUT", "Focus.Mode.OUTPUT"), 4),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 5),
+        new IrOperationModel("LOCAL_WRITE", List.of("local4", "<unknown>"), 6),
+        new IrOperationModel("RETURN", List.of("local4"), 7)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "var local4 = (isOutput == 0 ? Focus.Mode.OUTPUT : Focus.Mode.INPUT);"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void lowersConditionalStackMergeInsideConstructorArgument() {
+    IrMethodModel method = new IrMethodModel("createTimer", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("reverse != 0", "Lzero"), 0),
+        new IrOperationModel("CONSTANT", List.of("1"), 1),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 2),
+        new IrOperationModel("LABEL", List.of("Lzero"), 3),
+        new IrOperationModel("CONSTANT", List.of("0"), 4),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 5),
+        new IrOperationModel("CALL_VALUE", List.of("new Timer(local2, local6, <unknown>)"), 6),
+        new IrOperationModel("FIELD_WRITE", List.of("local0", "Example.timer", "new Timer(local2, local6, <unknown>)"), 7),
+        new IrOperationModel("RETURN", List.of(), 8)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "local0.timer = new Timer(local2, local6, (reverse != 0 ? 0 : 1));"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void lowersShortCircuitLocalValueMergeWithoutUnknown() {
+    IrMethodModel method = new IrMethodModel("chooseFlag", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("primary != 0", "Ltrue"), 0),
+        new IrOperationModel("CALL_VALUE", List.of("secondary()"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("secondary() != 0", "Lfalse"), 2),
+        new IrOperationModel("LABEL", List.of("Ltrue"), 3),
+        new IrOperationModel("CONSTANT", List.of("1"), 4),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 5),
+        new IrOperationModel("LABEL", List.of("Lfalse"), 6),
+        new IrOperationModel("CONSTANT", List.of("0"), 7),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 8),
+        new IrOperationModel("LOCAL_WRITE", List.of("local3", "<unknown>"), 9),
+        new IrOperationModel("RETURN", List.of("local3"), 10)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (primary != 0)"), result.source());
+    assertTrue(result.source().contains("local3 = 1;"), result.source());
+    assertTrue(result.source().contains("local3 = 0;"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void structuresInfiniteLoopWithEarlyReturnsAndContinue() {
+    IrMethodModel method = new IrMethodModel("findEntry", "()Z", List.of(
+        new IrOperationModel("LABEL", List.of("Lloop"), 0),
+        new IrOperationModel("CALL_VALUE", List.of("nextEntry()"), 1),
+        new IrOperationModel("LOCAL_WRITE", List.of("local2", "nextEntry()"), 2),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local2 == null", "LnotFound"), 3),
+        new IrOperationModel("CALL_VALUE", List.of("local2.getName().equals(name)"), 4),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local2.getName().equals(name) == 0", "Lcontinue"), 5),
+        new IrOperationModel("CONSTANT", List.of("1"), 6),
+        new IrOperationModel("RETURN", List.of("1"), 7),
+        new IrOperationModel("LABEL", List.of("LnotFound"), 8),
+        new IrOperationModel("CONSTANT", List.of("0"), 9),
+        new IrOperationModel("RETURN", List.of("0"), 10),
+        new IrOperationModel("LABEL", List.of("Lcontinue"), 11),
+        new IrOperationModel("JUMP", List.of("Lloop"), 12)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("if (local2 == null)"), result.source());
+    assertTrue(result.source().contains("return 0;"), result.source());
+    assertTrue(result.source().contains("continue;"), result.source());
+    assertTrue(result.source().contains("return 1;"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void treatsSwitchDefaultThatIsTheJoinAsContinuation() {
+    IrMethodModel method = new IrMethodModel("trim", "()V", List.of(
+        new IrOperationModel("LOCAL_READ", List.of("size"), 0),
+        new IrOperationModel("TABLE_SWITCH",
+            List.of("size", "0", "2", "Ljoin", "Lempty", "Lsingle", "Lmany"), 1),
+        new IrOperationModel("LABEL", List.of("Lempty"), 2),
+        new IrOperationModel("METHOD_CALL", List.of("emptyMap()"), 3),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 4),
+        new IrOperationModel("LABEL", List.of("Lsingle"), 5),
+        new IrOperationModel("METHOD_CALL", List.of("singletonMap()"), 6),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 7),
+        new IrOperationModel("LABEL", List.of("Lmany"), 8),
+        new IrOperationModel("METHOD_CALL", List.of("copyMap()"), 9),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 10),
+        new IrOperationModel("RETURN", List.of(), 11)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("switch (size)"), result.source());
+    assertTrue(result.source().contains("case 0:"), result.source());
+    assertTrue(result.source().contains("default:") == false, result.source());
+    assertTrue(result.source().contains("emptyMap();"), result.source());
+    assertTrue(result.source().contains("singletonMap();"), result.source());
+    assertTrue(result.source().contains("copyMap();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void prioritizesOuterForwardExitOverInnerContinueBranch() {
+    IrMethodModel method = new IrMethodModel("loopWithContinue", "()V", List.of(
+        new IrOperationModel("LABEL", List.of("Lloop"), 0),
+        new IrOperationModel("CALL_VALUE", List.of("hasNext()"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("hasNext() == 0", "Lend"), 2),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("skipItem", "Lloop"), 3),
+        new IrOperationModel("METHOD_CALL", List.of("processItem()"), 4),
+        new IrOperationModel("JUMP", List.of("Lloop"), 5),
+        new IrOperationModel("LABEL", List.of("Lend"), 6),
+        new IrOperationModel("RETURN", List.of(), 7)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("if (skipItem) continue;"), result.source());
+    assertTrue(result.source().contains("processItem();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void lowersMultiConditionBooleanReturnChain() {
+    IrMethodModel method = new IrMethodModel("isMouseOver", "()Z", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("rectangle.contains(x, y) != 0", "Ltrue"), 0),
+        new IrOperationModel("FIELD_READ", List.of("recipeTransferButton"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("recipeTransferButton == null", "Lfalse"), 2),
+        new IrOperationModel("FIELD_READ", List.of("recipeTransferButton"), 3),
+        new IrOperationModel("CALL_VALUE", List.of("recipeTransferButton.isHovered()"), 4),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("recipeTransferButton.isHovered() == 0", "Lfalse"), 5),
+        new IrOperationModel("LABEL", List.of("Ltrue"), 6),
+        new IrOperationModel("CONSTANT", List.of("1"), 7),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 8),
+        new IrOperationModel("LABEL", List.of("Lfalse"), 9),
+        new IrOperationModel("CONSTANT", List.of("0"), 10),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 11),
+        new IrOperationModel("RETURN", List.of("<unknown>"), 12)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (rectangle.contains(x, y) != 0)"), result.source());
+    assertTrue(result.source().contains("if (recipeTransferButton == null)"), result.source());
+    assertTrue(result.source().contains("if (recipeTransferButton.isHovered() == 0)"), result.source());
+    assertTrue(result.source().contains("return 1;"), result.source());
+    assertTrue(result.source().contains("return 0;"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void structuresContinueDiamondWithoutLeavingGoto() {
+    IrMethodModel method = new IrMethodModel("loopWithConditionalContinue", "()V", List.of(
+        new IrOperationModel("LABEL", List.of("Lloop"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("done", "Lend"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("skipItem", "Lcontinue"), 2),
+        new IrOperationModel("METHOD_CALL", List.of("processItem()"), 3),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 4),
+        new IrOperationModel("LABEL", List.of("Lcontinue"), 5),
+        new IrOperationModel("JUMP", List.of("Lloop"), 6),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 7),
+        new IrOperationModel("JUMP", List.of("Lloop"), 8),
+        new IrOperationModel("LABEL", List.of("Lend"), 9),
+        new IrOperationModel("RETURN", List.of(), 10)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (skipItem) continue;"), result.source());
+    assertTrue(result.source().contains("processItem();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void structuresConditionalAssignmentChainWithSharedJoin() {
+    IrMethodModel method = new IrMethodModel("chooseDimension", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("direction == TOP", "Lheight"), 0),
+        new IrOperationModel("FIELD_READ", List.of("direction"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("direction != BOTTOM", "Lwidth"), 2),
+        new IrOperationModel("LABEL", List.of("Lheight"), 3),
+        new IrOperationModel("CALL_VALUE", List.of("drawable.getHeight()"), 4),
+        new IrOperationModel("LOCAL_WRITE", List.of("local6", "drawable.getHeight()"), 5),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 6),
+        new IrOperationModel("LABEL", List.of("Lwidth"), 7),
+        new IrOperationModel("CALL_VALUE", List.of("drawable.getWidth()"), 8),
+        new IrOperationModel("LOCAL_WRITE", List.of("local6", "drawable.getWidth()"), 9),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 10),
+        new IrOperationModel("RETURN", List.of("local6"), 11)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (direction == TOP)"), result.source());
+    assertTrue(result.source().contains("if (direction != BOTTOM)"), result.source());
+    assertTrue(result.source().contains("drawable.getHeight()"), result.source());
+    assertTrue(result.source().contains("drawable.getWidth()"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void structuresCatchHandlerLoopUntilItsSharedJoin() {
+    List<String> region = List.of("Ltry", "Lend", "Lhandler", "java.lang.RuntimeException");
+    IrMethodModel method = new IrMethodModel("readWithRecovery", "()V", List.of(
+        new IrOperationModel("TRY_BEGIN", region, 0),
+        new IrOperationModel("LABEL", List.of("Ltry"), 1),
+        new IrOperationModel("METHOD_CALL", List.of("protectedWork()"), 2),
+        new IrOperationModel("TRY_END", region, 3),
+        new IrOperationModel("LABEL", List.of("Lend"), 4),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 5),
+        new IrOperationModel("CATCH_BEGIN", region, 6),
+        new IrOperationModel("LABEL", List.of("Lhandler"), 7),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 8),
+        new IrOperationModel("LABEL", List.of("Lloop"), 9),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local1.isDone() != 0", "LafterLoop"), 10),
+        new IrOperationModel("METHOD_CALL", List.of("recoverStep()"), 11),
+        new IrOperationModel("JUMP", List.of("Lloop"), 12),
+        new IrOperationModel("LABEL", List.of("LafterLoop"), 13),
+        new IrOperationModel("METHOD_CALL", List.of("afterCatch()"), 14),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 15),
+        new IrOperationModel("RETURN", List.of(), 16)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains("catch (java.lang.RuntimeException local1)"), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("recoverStep();"), result.source());
+    assertTrue(result.source().contains("afterCatch();"), result.source());
+    assertTrue(!result.source().contains("<exception>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void earlyReturnBranchConsumesSkipGotoToSharedJoin() {
+    IrMethodModel method = new IrMethodModel("findOrNull", "()Ljava/lang/Object;", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("alreadyFound != 0", "LreturnNull"), 0),
+        new IrOperationModel("METHOD_CALL", List.of("scanNext()"), 1),
+        new IrOperationModel("LOCAL_WRITE", List.of("local2", "scanNext()"), 2),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 3),
+        new IrOperationModel("LABEL", List.of("LreturnNull"), 4),
+        new IrOperationModel("CONSTANT", List.of("null"), 5),
+        new IrOperationModel("RETURN", List.of("null"), 6),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 7),
+        new IrOperationModel("RETURN", List.of("local2"), 8)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (alreadyFound != 0)"), result.source());
+    assertTrue(result.source().contains("return null;"), result.source());
+    assertTrue(result.source().contains("local2 = scanNext();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void keepsTryStartAndNormalReturnWhenBranchTargetsProtectedRegion() {
+    List<String> region = List.of("Ltry", "Lend", "Lhandler", "java.lang.RuntimeException");
+    IrMethodModel method = new IrMethodModel("safeToString", "()Ljava/lang/String;", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("isNotRegistryEntry != 0", "Ltry"), 0),
+        new IrOperationModel("CONSTANT", List.of("\"fallback\""), 1),
+        new IrOperationModel("RETURN", List.of("\"fallback\""), 2),
+        new IrOperationModel("TRY_BEGIN", region, 3),
+        new IrOperationModel("LABEL", List.of("Ltry"), 4),
+        new IrOperationModel("CALL_VALUE", List.of("local0.toString()"), 5),
+        new IrOperationModel("TRY_END", region, 6),
+        new IrOperationModel("LABEL", List.of("Lend"), 7),
+        new IrOperationModel("RETURN", List.of("local0.toString()"), 8),
+        new IrOperationModel("CATCH_BEGIN", region, 9),
+        new IrOperationModel("LABEL", List.of("Lhandler"), 10),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 11),
+        new IrOperationModel("METHOD_CALL", List.of("logFailure(local1)"), 12),
+        new IrOperationModel("RETURN", List.of("local0.getClass().toString()"), 13)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (isNotRegistryEntry == 0)"), result.source());
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains("return local0.toString();"), result.source());
+    assertTrue(result.source().contains("catch (java.lang.RuntimeException local1)"), result.source());
+    assertTrue(result.source().contains("return local0.getClass().toString();"), result.source());
+    assertTrue(!result.source().contains("<exception>"), result.source());
+  }
+
+  @Test
+  void processesLoopHeaderAfterConditionalJoin() {
+    IrMethodModel method = new IrMethodModel("chooseThenLoop", "()V", List.of(
+        new IrOperationModel("LABEL", List.of("Lentry"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("useElse", "Lelse"), 1),
+        new IrOperationModel("METHOD_CALL", List.of("thenBranch()"), 2),
+        new IrOperationModel("JUMP", List.of("Lloop"), 3),
+        new IrOperationModel("LABEL", List.of("Lelse"), 4),
+        new IrOperationModel("METHOD_CALL", List.of("elseBranch()"), 5),
+        new IrOperationModel("LABEL", List.of("Lloop"), 6),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("done", "Lend"), 7),
+        new IrOperationModel("METHOD_CALL", List.of("loopStep()"), 8),
+        new IrOperationModel("JUMP", List.of("Lloop"), 9),
+        new IrOperationModel("LABEL", List.of("Lend"), 10),
+        new IrOperationModel("RETURN", List.of(), 11)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("thenBranch();"), result.source());
+    assertTrue(result.source().contains("elseBranch();"), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("loopStep();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void preservesTryRegionAtSharedConditionalJoin() {
+    List<String> protectedRegion =
+        List.of("Lprotected", "LprotectedEnd", "LprotectedCatch", "java.lang.RuntimeException");
+    List<String> joinRegion =
+        List.of("Ljoin", "LjoinEnd", "LjoinCatch", "java.lang.RuntimeException");
+    IrMethodModel method = new IrMethodModel("branchIntoProtectedWork", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("useProtected != 0", "Lprotected"), 0),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 1),
+        new IrOperationModel("TRY_BEGIN", protectedRegion, 2),
+        new IrOperationModel("LABEL", List.of("Lprotected"), 3),
+        new IrOperationModel("METHOD_CALL", List.of("protectedWork()"), 4),
+        new IrOperationModel("TRY_END", protectedRegion, 5),
+        new IrOperationModel("LABEL", List.of("LprotectedEnd"), 6),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 7),
+        new IrOperationModel("CATCH_BEGIN", protectedRegion, 8),
+        new IrOperationModel("LABEL", List.of("LprotectedCatch"), 9),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 10),
+        new IrOperationModel("METHOD_CALL", List.of("recoverProtected(local1)"), 11),
+        new IrOperationModel("RETURN", List.of(), 12),
+        new IrOperationModel("TRY_BEGIN", joinRegion, 13),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 14),
+        new IrOperationModel("METHOD_CALL", List.of("afterJoin()"), 15),
+        new IrOperationModel("TRY_END", joinRegion, 16),
+        new IrOperationModel("LABEL", List.of("LjoinEnd"), 17),
+        new IrOperationModel("RETURN", List.of(), 18),
+        new IrOperationModel("CATCH_BEGIN", joinRegion, 19),
+        new IrOperationModel("LABEL", List.of("LjoinCatch"), 20),
+        new IrOperationModel("LOCAL_WRITE", List.of("local2", "<exception>"), 21),
+        new IrOperationModel("THROW", List.of("local2"), 22)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (useProtected != 0)"), result.source());
+    assertTrue(result.source().contains("protectedWork();"), result.source());
+    assertTrue(result.source().contains("afterJoin();"), result.source());
+    assertTrue(result.source().contains("catch (java.lang.RuntimeException local1)"), result.source());
+    assertTrue(!result.source().contains("<exception>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
 }

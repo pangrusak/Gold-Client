@@ -1,0 +1,45 @@
+name: JEI translation benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Build Gold Client
+        run: mvn --batch-mode --no-transfer-progress clean package
+      - name: Export JEI 1.12.2 and regenerate diagnostics
+        run: java -jar target/gold-client-0.1.0-SNAPSHOT.jar test-mods/jei1.12.2.jar --translate-js output/jei-js
+      - name: Print compatibility summary
+        if: always()
+        run: |
+          if [ -f output/jei-js/javascript-report.txt ]; then cat output/jei-js/javascript-report.txt; fi
+          if [ -f output/jei-js/incomplete-diagnostics.txt ]; then cat output/jei-js/incomplete-diagnostics.txt; fi
+      - name: Upload JEI translation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jei-translation-diagnostics
+          path: |
+            output/jei-js/javascript-report.txt
+            output/jei-js/incomplete-diagnostics.txt
+            output/jei-js/javascript-report.json
+            output/jei-js/incomplete-method-details.json
+          if-no-files-found: warn
+          retention-days: 14

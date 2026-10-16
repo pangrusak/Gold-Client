@@ -563,7 +563,48 @@ public final class IntermediateRepresentationAnalyzer {
 
     List<String> callArguments = new ArrayList<>();
     String call;
-    if (tag == Opcodes.H_INVOKESTATIC) {
+    if (tag == Opcodes.H_GETSTATIC) {
+      // Static field method references (Owner::FIELD) are valid LambdaMetafactory
+      // targets too. Route them through the runtime's static-field bridge so
+      // translated classes and native compatibility classes share one lookup path.
+      call = "GoldClientRuntime.getStaticField(\"" + owner + "\", \""
+          + implementationName + "\")";
+    } else if (tag == Opcodes.H_GETFIELD) {
+      // Owner::field receives the instance as its first SAM argument, while
+      // instance::field captures the receiver at the call site.
+      String receiver = !capturedNames.isEmpty() ? capturedNames.get(0)
+          : (!lambdaArguments.isEmpty() ? lambdaArguments.get(0) : null);
+      if (receiver == null) {
+        String detail = "field getter has no receiver for " + owner + "." + implementationName;
+        call = "GoldClientRuntime.unsupported(\"lambda-field-getter\", \"" + detail + "\")";
+        operations.add(op("UNSUPPORTED_DYNAMIC", List.of(name, detail), sourceInstruction));
+      } else {
+        call = receiver + "[\"" + implementationName + "\"]";
+      }
+    } else if (tag == Opcodes.H_PUTSTATIC) {
+      if (lambdaArguments.isEmpty()) {
+        String detail = "static field setter has no value for " + owner + "." + implementationName;
+        call = "GoldClientRuntime.unsupported(\"lambda-field-setter\", \"" + detail + "\")";
+        operations.add(op("UNSUPPORTED_DYNAMIC", List.of(name, detail), sourceInstruction));
+      } else {
+        call = "GoldClientRuntime.setStaticField(\"" + owner + "\", \""
+            + implementationName + "\", " + lambdaArguments.get(lambdaArguments.size() - 1) + ")";
+      }
+    } else if (tag == Opcodes.H_PUTFIELD) {
+      boolean boundReceiver = !capturedNames.isEmpty();
+      String receiver = boundReceiver ? capturedNames.get(0)
+          : (!lambdaArguments.isEmpty() ? lambdaArguments.get(0) : null);
+      int valueIndex = boundReceiver ? 0 : 1;
+      if (receiver == null || lambdaArguments.size() <= valueIndex) {
+        String detail = "instance field setter has incomplete arguments for "
+            + owner + "." + implementationName;
+        call = "GoldClientRuntime.unsupported(\"lambda-field-setter\", \"" + detail + "\")";
+        operations.add(op("UNSUPPORTED_DYNAMIC", List.of(name, detail), sourceInstruction));
+      } else {
+        call = "(" + receiver + "[\"" + implementationName + "\"] = "
+            + lambdaArguments.get(valueIndex) + ")";
+      }
+    } else if (tag == Opcodes.H_INVOKESTATIC) {
       callArguments.addAll(capturedNames);
       callArguments.addAll(lambdaArguments);
       String helperName = owner.startsWith("java.") ? "invokeJavaStatic" : "invokeStaticClass";
