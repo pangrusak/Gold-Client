@@ -2247,23 +2247,100 @@ public final class JavaScriptModTranslationExporter {
             }
             return method.apply(receiver, args);
           },
-          resolveInterfaceMethod(className, name, arity, isStatic, visited = new Set()) {
+          descriptorScore(descriptor, args) {
+            if (typeof descriptor !== "string" || descriptor[0] !== "(") return -1;
+            const parameters = [];
+            let index = 1;
+            while (index < descriptor.length && descriptor[index] !== ")") {
+              const start = index;
+              while (descriptor[index] === "[") index++;
+              if (descriptor[index] === "L") {
+                const end = descriptor.indexOf(";", index);
+                if (end < 0) return -1;
+                index = end + 1;
+              } else {
+                if (!"ZBCSIJFD".includes(descriptor[index] ?? "")) return -1;
+                index++;
+              }
+              parameters.push(descriptor.slice(start, index));
+            }
+            if (descriptor[index] !== ")" || parameters.length !== args.length) return -1;
+            let score = 0;
+            for (let i = 0; i < parameters.length; i++) {
+              const type = parameters[i];
+              const value = args[i];
+              const reference = type[0] === "L" || type[0] === "[";
+              if (value == null) {
+                if (!reference) return -1;
+                score += 1;
+                continue;
+              }
+              if (type[0] === "[") {
+                if (!Array.isArray(value) && !ArrayBuffer.isView(value)) return -1;
+                score += 8;
+                continue;
+              }
+              if (type[0] === "L") {
+                const className = type.slice(1, -1);
+                if (className === "java/lang/String") {
+                  if (typeof value !== "string") return -1;
+                  score += 8;
+                } else if (className === "java/lang/Object") {
+                  score += 2;
+                } else {
+                  const actualName = value?.constructor?.__goldClassName;
+                  if (actualName === className.split("/").join(".")) score += 10;
+                  else if (typeof value === "object") score += 2;
+                  else return -1;
+                }
+                continue;
+              }
+              if (type === "Z") {
+                if (typeof value !== "boolean") return -1;
+                score += 8;
+              } else if (type === "C") {
+                if (typeof value === "string" && value.length === 1) score += 8;
+                else if (typeof value === "number") score += 3;
+                else return -1;
+              } else if ("BSIJFD".includes(type)) {
+                if (typeof value !== "number") return -1;
+                score += 6;
+              } else {
+                return -1;
+              }
+            }
+            return score;
+          },
+          bestMethod(candidates, args, isStatic) {
+            let best = null;
+            let bestScore = -1;
+            for (const method of candidates) {
+              if (method.isAbstract || method.isStatic !== isStatic
+                  || method.arity !== args.length) continue;
+              const score = this.descriptorScore(method.descriptor, args);
+              if (score > bestScore) {
+                best = method;
+                bestScore = score;
+              }
+            }
+            return best;
+          },
+          resolveInterfaceMethod(className, name, args, isStatic, visited = new Set()) {
             if (!className || visited.has(className)) return null;
             visited.add(className);
             const current = this.classes.get(className);
             if (!current) return null;
             const candidates = current.__goldMethods?.get(name) ?? [];
-            const target = candidates.find(method => !method.isAbstract
-              && method.isStatic === isStatic && method.arity === arity);
+            const target = this.bestMethod(candidates, args, isStatic);
             if (target) return target;
             for (const parentInterface of current.__goldInterfaces ?? []) {
               const inherited = this.resolveInterfaceMethod(
-                parentInterface, name, arity, isStatic, visited);
+                parentInterface, name, args, isStatic, visited);
               if (inherited) return inherited;
             }
             return null;
           },
-          resolveClassMethod(className, name, arity, isStatic) {
+          resolveClassMethod(className, name, args, isStatic) {
             let currentName = className;
             const visitedClasses = new Set();
             const interfaces = [];
@@ -2273,20 +2350,19 @@ public final class JavaScriptModTranslationExporter {
               if (!current) break;
               interfaces.push(...(current.__goldInterfaces ?? []));
               const candidates = current.__goldMethods?.get(name) ?? [];
-              const target = candidates.find(method => !method.isAbstract
-                && method.isStatic === isStatic && method.arity === arity);
+              const target = this.bestMethod(candidates, args, isStatic);
               if (target) return target;
               currentName = current.__goldSuperName;
             }
             for (const interfaceName of interfaces) {
-              const target = this.resolveInterfaceMethod(interfaceName, name, arity, isStatic);
+              const target = this.resolveInterfaceMethod(interfaceName, name, args, isStatic);
               if (target) return target;
             }
             return null;
           },
           invoke(receiver, methods, name, args, optional = false) {
             const className = receiver?.constructor?.__goldClassName;
-            const target = this.resolveClassMethod(className, name, args.length, false);
+            const target = this.resolveClassMethod(className, name, args, false);
             if (target) return target.fn.apply(receiver, args);
             const declaration = (methods.get(name) ?? []).find(method =>
               method.isAdapterRequired && !method.isStatic && method.arity === args.length);
@@ -2298,7 +2374,7 @@ public final class JavaScriptModTranslationExporter {
             this.ensureInitialized(receiver);
             const className = typeof receiver === "function"
               ? receiver.__goldClassName : receiver?.constructor?.__goldClassName;
-            const target = this.resolveClassMethod(className, name, args.length, true);
+            const target = this.resolveClassMethod(className, name, args, true);
             if (target) return target.fn.apply(receiver, args);
             const declaration = (methods.get(name) ?? []).find(method =>
               method.isAdapterRequired && method.isStatic && method.arity === args.length);
