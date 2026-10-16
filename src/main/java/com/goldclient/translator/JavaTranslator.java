@@ -127,6 +127,14 @@ public final class JavaTranslator {
           i = booleanReturn.lastIndex();
           continue;
         }
+        ConditionalRender ternaryValue = renderTernaryValueMerge(
+            operations, i, end, indent, context, labels);
+        if (ternaryValue != null) {
+          source.append(ternaryValue.source());
+          complete &= ternaryValue.complete();
+          i = ternaryValue.lastIndex();
+          continue;
+        }
         ConditionalRender branch = renderConditional(
             operations, i, end, indent, context, labels);
 
@@ -635,28 +643,49 @@ public final class JavaTranslator {
     for (int i = falseConstantIndex + 1; i < joinIndex; i++) {
       if (!isLoopExitMetadata(operations.get(i))) return null;
     }
-    int returnIndex = nextExecutableIndex(operations, joinIndex + 1, end);
-    if (returnIndex < 0 || !"RETURN".equals(operations.get(returnIndex).kind())
-        || operations.get(returnIndex).operands().isEmpty()
-        || !"<unknown>".equals(operations.get(returnIndex).operands().get(0))) return null;
+    int sinkIndex = nextExecutableIndex(operations, joinIndex + 1, end);
+    if (sinkIndex < 0 || operations.get(sinkIndex).operands().isEmpty()
+        || !"<unknown>".equals(operations.get(sinkIndex).operands().get(
+            operations.get(sinkIndex).operands().size() - 1))) return null;
 
     RenderResult prefix = renderRange(
         operations, branchIndex + 1, secondBranchIndex, indent, context, labels);
     String trueValue = operations.get(trueConstantIndex).operands().get(0);
     String falseValue = operations.get(falseConstantIndex).operands().get(0);
     StringBuilder source = new StringBuilder();
+    if ("RETURN".equals(operations.get(sinkIndex).kind())) {
+      source.append(indent(indent)).append("if (")
+          .append(normalizeCondition(firstBranch.operands().get(0))).append(") {\n")
+          .append(indent(indent + 1)).append("return ").append(trueValue).append(";\n")
+          .append(indent(indent)).append("}\n")
+          .append(prefix.source())
+          .append(indent(indent)).append("if (")
+          .append(normalizeCondition(operations.get(secondBranchIndex).operands().get(0)))
+          .append(") {\n")
+          .append(indent(indent + 1)).append("return ").append(falseValue).append(";\n")
+          .append(indent(indent)).append("}\n")
+          .append(indent(indent)).append("return ").append(trueValue).append(";\n");
+      return new ConditionalRender(source.toString(), prefix.complete(), sinkIndex);
+    }
+    if (!"LOCAL_WRITE".equals(operations.get(sinkIndex).kind())
+        || operations.get(sinkIndex).operands().size() < 2) return null;
+    String local = operations.get(sinkIndex).operands().get(0);
+    boolean declare = context.declareLocal(local);
+    if (declare) source.append(indent(indent)).append("var ").append(local).append(";\n");
     source.append(indent(indent)).append("if (")
         .append(normalizeCondition(firstBranch.operands().get(0))).append(") {\n")
-        .append(indent(indent + 1)).append("return ").append(trueValue).append(";\n")
-        .append(indent(indent)).append("}\n")
+        .append(indent(indent + 1)).append(local).append(" = ").append(trueValue).append(";\n")
+        .append(indent(indent)).append("} else {\n")
         .append(prefix.source())
-        .append(indent(indent)).append("if (")
+        .append(indent(indent + 1)).append("if (")
         .append(normalizeCondition(operations.get(secondBranchIndex).operands().get(0)))
         .append(") {\n")
-        .append(indent(indent + 1)).append("return ").append(falseValue).append(";\n")
-        .append(indent(indent)).append("}\n")
-        .append(indent(indent)).append("return ").append(trueValue).append(";\n");
-    return new ConditionalRender(source.toString(), prefix.complete(), returnIndex);
+        .append(indent(indent + 2)).append(local).append(" = ").append(falseValue).append(";\n")
+        .append(indent(indent + 1)).append("} else {\n")
+        .append(indent(indent + 2)).append(local).append(" = ").append(trueValue).append(";\n")
+        .append(indent(indent + 1)).append("}\n")
+        .append(indent(indent)).append("}\n");
+    return new ConditionalRender(source.toString(), prefix.complete(), sinkIndex);
   }
 
   private static int nextExecutableIndex(
@@ -676,6 +705,109 @@ public final class JavaTranslator {
   private static boolean isFalseLikeConstant(IrOperationModel operation) {
     return !operation.operands().isEmpty()
         && ("0".equals(operation.operands().get(0)) || "false".equals(operation.operands().get(0)));
+  }
+
+  /**
+   * Reconstructs a stack phi used by a local write, return, or the first
+   * side-effecting consumer after a simple conditional expression. Both paths
+   * must be expression-only; control flow or side effects in the paths are
+   * deliberately rejected rather than dropped.
+   */
+  private static ConditionalRender renderTernaryValueMerge(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    IrOperationModel branch = operations.get(branchIndex);
+    if (branch.operands().size() < 2) return null;
+    String condition = branch.operands().get(0);
+    String target = branch.operands().get(1);
+    Integer targetIndex = labels.get(labelKey(target));
+    if (targetIndex == null || targetIndex <= branchIndex || targetIndex >= end) return null;
+
+    int jumpIndex = findForwardJoinJump(
+        operations, branchIndex + 1, targetIndex, end, labels);
+    if (jumpIndex < 0 || jumpIndex >= targetIndex) return null;
+    IrOperationModel jump = operations.get(jumpIndex);
+    if (jump.operands().isEmpty()) return null;
+    Integer joinIndex = labels.get(labelKey(jump.operands().get(0)));
+    if (joinIndex == null || joinIndex <= targetIndex || joinIndex >= end) return null;
+
+    String fallthroughValue = lastExpressionFromRange(
+        operations, branchIndex + 1, jumpIndex);
+    String targetValue = lastExpressionFromRange(
+        operations, targetIndex + 1, joinIndex);
+    if (fallthroughValue == null || targetValue == null) return null;
+
+    int sinkIndex = findValueMergeSink(operations, joinIndex + 1, end);
+    if (sinkIndex < 0) return null;
+    IrOperationModel sink = operations.get(sinkIndex);
+    if (sink.operands().stream().noneMatch(value -> value.contains("<unknown>"))) return null;
+
+    String ternary = "(" + normalizeCondition(condition) + " ? "
+        + targetValue + " : " + fallthroughValue + ")";
+    StringBuilder source = new StringBuilder();
+    if ("LOCAL_WRITE".equals(sink.kind()) && sink.operands().size() >= 2
+        && "<unknown>".equals(sink.operands().get(1))) {
+      String local = sink.operands().get(0);
+      String assignment = context.declareLocal(local) ? "var " + local : local;
+      source.append(indent(indent)).append(assignment).append(" = ").append(ternary).append(";\n");
+      return new ConditionalRender(source.toString(), true, sinkIndex);
+    }
+    if (!List.of("FIELD_WRITE", "METHOD_CALL", "RETURN").contains(sink.kind())) return null;
+    List<String> replacedOperands = sink.operands().stream()
+        .map(value -> value.replace("<unknown>", ternary)).toList();
+    IrOperationModel replaced = new IrOperationModel(
+        sink.kind(), replacedOperands, sink.sourceInstruction());
+    String lowered = translateOperation(replaced, context);
+    if (lowered == null || lowered.isBlank()) return null;
+    source.append(indent(indent)).append(lowered).append("\n");
+    return new ConditionalRender(source.toString(), true, sinkIndex);
+  }
+
+  private static int findValueMergeSink(
+      List<IrOperationModel> operations, int start, int end) {
+    for (int i = start; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (isBranchValueMetadata(operation) || isExpressionOnly(operation)) continue;
+      return i;
+    }
+    return -1;
+  }
+
+  private static String lastExpressionFromRange(
+      List<IrOperationModel> operations, int start, int end) {
+    String expression = null;
+    for (int i = start; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (isBranchValueMetadata(operation)) continue;
+      if (!isExpressionOnly(operation) || "DROP".equals(operation.kind())
+          || "STACK_OPERATION".equals(operation.kind()) || "DUP".equals(operation.kind())
+          || "SWAP".equals(operation.kind())) return null;
+      if (operation.operands().stream().anyMatch(value ->
+          value.contains("<unknown>") || value.contains("<exception>"))) return null;
+      String candidate = expressionFromOperation(operation);
+      if (candidate != null) expression = candidate;
+    }
+    return expression;
+  }
+
+  private static String expressionFromOperation(IrOperationModel operation) {
+    List<String> operands = operation.operands();
+    if (operands.isEmpty()) return null;
+    return switch (operation.kind()) {
+      case "CONSTANT", "LOCAL_READ", "OBJECT_CREATE", "ARRAY_CREATE", "CALL_VALUE",
+          "ARRAY_READ", "ARRAY_LENGTH", "ARITHMETIC", "TYPE_CONVERSION" -> operands.get(0);
+      case "FIELD_READ", "TYPE_CHECK" -> operands.get(operands.size() - 1);
+      default -> null;
+    };
+  }
+
+  private static boolean isBranchValueMetadata(IrOperationModel operation) {
+    return "LABEL".equals(operation.kind()) || "TRY_BEGIN".equals(operation.kind())
+        || "TRY_END".equals(operation.kind()) || "CATCH_BEGIN".equals(operation.kind());
   }
 
   private static ConditionalRender renderConditional(
