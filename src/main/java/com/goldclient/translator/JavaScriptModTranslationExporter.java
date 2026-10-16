@@ -206,13 +206,13 @@ public final class JavaScriptModTranslationExporter {
     }
     module.append("GoldClientRuntime.registerClass(")
         .append(quote(clazz.name().replace('/', '.'))).append(", ")
-        .append(className).append(", (__goldMethods.get(\\\"<clinit>\\\") ?? [])")
+        .append(className).append(", (__goldMethods.get(\"<clinit>\") ?? [])")
         .append(".find(method => method.isStatic)?.fn ?? null, { superName: ")
         .append(clazz.superName() == null ? "null" : quote(clazz.superName().replace('/', '.')))
         .append(", interfaces: [")
         .append(String.join(", ", clazz.interfaces().stream()
             .map(name -> quote(name.replace('/', '.'))).toList()))
-        .append("], methods: __goldMethods });\\n");
+        .append("], methods: __goldMethods });\n");
   }
 
   private static String fieldInitializer(FieldModel field, boolean useConstant) {
