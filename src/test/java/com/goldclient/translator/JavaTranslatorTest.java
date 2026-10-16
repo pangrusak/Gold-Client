@@ -814,7 +814,7 @@ class JavaTranslatorTest {
     assertTrue(result.source().contains("if (innerHasNext() == 0) break;"), result.source());
     assertTrue(result.source().contains("outerWork();"), result.source());
     assertTrue(result.source().contains("innerWork();"), result.source());
-    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
 }
