@@ -825,13 +825,18 @@ public final class JavaScriptModTranslationExporter {
           set(index, value) { this.#checkIndex(index); const old = this.items[index]; this.items[index] = value; return old; }
           size() { return this.items.length; }
           isEmpty() { return this.items.length === 0; }
-          contains(value) { return this.items.some(item => Object.is(item, value)); }
+          contains(value) { return this.items.some(item => GoldClientRuntime.javaEquals(item, value)); }
           containsAll(values) { return Array.from(values?.items ?? values ?? []).every(value => this.contains(value)); }
-          indexOf(value) { return this.items.findIndex(item => Object.is(item, value)); }
-          lastIndexOf(value) { return this.items.findLastIndex ? this.items.findLastIndex(item => Object.is(item, value)) : this.items.map(item => Object.is(item, value)).lastIndexOf(true); }
+          indexOf(value) { return this.items.findIndex(item => GoldClientRuntime.javaEquals(item, value)); }
+          lastIndexOf(value) {
+            for (let i = this.items.length - 1; i >= 0; i--) {
+              if (GoldClientRuntime.javaEquals(this.items[i], value)) return i;
+            }
+            return -1;
+          }
           clear() { this.items.length = 0; }
           remove(value) {
-            const index = typeof value === "number" ? value : this.indexOf(value);
+            const index = Number.isInteger(value) ? value : this.indexOf(value);
             if (index < 0 || index >= this.items.length) return false;
             this.items.splice(index, 1); return true;
           }
@@ -839,13 +844,13 @@ public final class JavaScriptModTranslationExporter {
           removeAll(values) {
             const candidates = Array.from(values?.items ?? values ?? []);
             const before = this.items.length;
-            this.items = this.items.filter(item => !candidates.some(value => Object.is(value, item)));
+            this.items = this.items.filter(item => !candidates.some(value => GoldClientRuntime.javaEquals(item, value)));
             return before !== this.items.length;
           }
           retainAll(values) {
             const candidates = Array.from(values?.items ?? values ?? []);
             const before = this.items.length;
-            this.items = this.items.filter(item => candidates.some(value => Object.is(value, item)));
+            this.items = this.items.filter(item => candidates.some(value => GoldClientRuntime.javaEquals(item, value)));
             return before !== this.items.length;
           }
           replaceAll(callback) { this.items = this.items.map((value, index) => callback(value, index)); }
@@ -859,7 +864,7 @@ public final class JavaScriptModTranslationExporter {
             return new GoldClientJavaList(this.items.slice(from, to));
           }
           toArray() { return this.items.slice(); }
-          sort(comparator) { this.items.sort(comparator ?? ((a, b) => String(a).localeCompare(String(b)))); }
+          sort(comparator) { this.items.sort((a, b) => GoldClientRuntime.compareJava(a, b, comparator ?? null)); }
           replace(index, value) { return this.set(index, value); }
           iterator() { return this.items[Symbol.iterator](); }
           listIterator(index = 0) {
