@@ -402,8 +402,31 @@ public final class JavaTranslator {
     while (bodyStart < tryEnd
         && ("LABEL".equals(operations.get(bodyStart).kind())
             || "TRY_BEGIN".equals(operations.get(bodyStart).kind()))) bodyStart++;
-    RenderResult tryBody = renderRange(
+    RenderResult tryBodyCore = renderRange(
         operations, bodyStart, tryEnd, indent + 1, context, labels);
+    StringBuilder tryBodySource = new StringBuilder(tryBodyCore.source());
+    boolean tryBodyComplete = tryBodyCore.complete();
+    // The normal path often contains its return/cleanup immediately after
+    // TRY_END. Keep that path inside the generated try block instead of
+    // skipping it when the catch handler is consumed.
+    if (regionHandlerLabels.size() == 1) {
+      int normalCompletionEnd = catchBegin;
+      if (normalJoinLabel != null) {
+        for (int i = tryEnd + 1; i < catchBegin; i++) {
+          IrOperationModel operation = operations.get(i);
+          if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+              && labelKey(normalJoinLabel).equals(labelKey(operation.operands().get(0)))) {
+            normalCompletionEnd = i;
+          }
+        }
+      }
+      if (normalCompletionEnd > tryEnd + 1) {
+        RenderResult normalCompletion = renderRange(
+            operations, tryEnd + 1, normalCompletionEnd, indent + 1, context, labels);
+        tryBodySource.append(normalCompletion.source());
+        tryBodyComplete &= normalCompletion.complete();
+      }
+    }
 
     int catchBodyStart = catchBegin + 1;
     String exceptionVariable = "caughtException";
@@ -425,7 +448,7 @@ public final class JavaTranslator {
         operations, catchBodyStart, handlerEnd, indent + 1, context, labels);
 
     StringBuilder source = new StringBuilder();
-    source.append(indent(indent)).append("try {\n").append(tryBody.source());
+    source.append(indent(indent)).append("try {\n").append(tryBodySource);
     if (exceptionTypes.size() > 1) {
       // JVM multi-catch shares one handler for several exception-table entries.
       // JavaScript has one catch clause, so dispatch by runtime type and rethrow
@@ -450,7 +473,7 @@ public final class JavaTranslator {
           .append(catchBody.source());
     }
     source.append(indent(indent)).append("}\n");
-    boolean complete = tryBody.complete() && catchBody.complete();
+    boolean complete = tryBodyComplete && catchBody.complete();
     // A handler may legitimately terminate with return/throw instead of
     // jumping to a shared continuation. That is structured control flow, not
     // evidence that the exception region was only partially rendered.
