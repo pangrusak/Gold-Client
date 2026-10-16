@@ -64,7 +64,7 @@ public final class JavaScriptModTranslationExporter {
           String why = (method.access() & Opcodes.ACC_NATIVE) != 0 ? "native method"
               : (method.access() & Opcodes.ACC_ABSTRACT) != 0 ? "abstract method"
               : "semantic IR was not recovered";
-          result = translator.translateAdapter(method.name(), method.descriptor(), why,
+          result = translator.translateAdapter(clazz.name(), method.name(), method.descriptor(), why,
               (method.access() & Opcodes.ACC_STATIC) != 0);
           status = "adapter-required";
           reason = why;
