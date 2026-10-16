@@ -819,4 +819,29 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
+  @Test
+  void lowersShortCircuitBooleanReturnMergeWithoutUnknownStackValue() {
+    IrMethodModel method = new IrMethodModel("isEnabled", "()Z", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("primaryEnabled != 0", "Ltrue"), 0),
+        new IrOperationModel("CALL_VALUE", List.of("toggleKey.isPressed()"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("toggleKey.isPressed() != 0", "Lfalse"), 2),
+        new IrOperationModel("LABEL", List.of("Ltrue"), 3),
+        new IrOperationModel("CONSTANT", List.of("1"), 4),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 5),
+        new IrOperationModel("LABEL", List.of("Lfalse"), 6),
+        new IrOperationModel("CONSTANT", List.of("0"), 7),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 8),
+        new IrOperationModel("RETURN", List.of("<unknown>"), 9)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (primaryEnabled != 0)"), result.source());
+    assertTrue(result.source().contains("return 1;"), result.source());
+    assertTrue(result.source().contains("if (toggleKey.isPressed() != 0)"), result.source());
+    assertTrue(result.source().contains("return 0;"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
 }
