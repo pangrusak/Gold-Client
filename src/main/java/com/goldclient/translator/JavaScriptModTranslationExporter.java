@@ -2001,11 +2001,14 @@ public final class JavaScriptModTranslationExporter {
               }
               if (method === "reverse") { if (args[0]?.items) args[0].items.reverse(); else args[0]?.reverse?.(); return; }
               if (method === "sort") { if (args[0]?.items) args[0].items.sort(args[1]); else args[0]?.sort?.(args[1]); return; }
-              if (method === "frequency") { const values = args[0]?.items ?? args[0] ?? []; return Array.from(values).filter(value => Object.is(value, args[1])).length; }
+              if (method === "frequency") {
+                const values = args[0]?.items ?? args[0] ?? [];
+                return Array.from(values).filter(value => this.javaEquals(value, args[1])).length;
+              }
               if (method === "disjoint") {
                 const left = Array.from(args[0]?.items ?? args[0] ?? []);
-                const right = new Set(args[1]?.items ?? args[1] ?? []);
-                return !left.some(value => right.has(value));
+                const right = Array.from(args[1]?.items ?? args[1] ?? []);
+                return !left.some(value => right.some(candidate => this.javaEquals(value, candidate)));
               }
               if (method === "min" || method === "max") {
                 const values = Array.from(args[0]?.items ?? args[0] ?? []);
@@ -2018,8 +2021,8 @@ public final class JavaScriptModTranslationExporter {
               }
               if (method === "replaceAll") {
                 const collection = args[0], oldValue = args[1], newValue = args[2];
-                if (collection?.items) collection.items = collection.items.map(value => Object.is(value, oldValue) ? newValue : value);
-                else if (Array.isArray(collection)) for (let i = 0; i < collection.length; i++) if (Object.is(collection[i], oldValue)) collection[i] = newValue;
+                if (collection?.items) collection.items = collection.items.map(value => this.javaEquals(value, oldValue) ? newValue : value);
+                else if (Array.isArray(collection)) for (let i = 0; i < collection.length; i++) if (this.javaEquals(collection[i], oldValue)) collection[i] = newValue;
                 return;
               }
               if (method === "rotate") {
@@ -2031,9 +2034,15 @@ public final class JavaScriptModTranslationExporter {
               }
               if (method === "shuffle") {
                 const collection = args[0]?.items ?? args[0];
-                for (let i = collection.length - 1; i > 0; i--) {
-                  const j = Math.floor(Math.random() * (i + 1));
-                  [collection[i], collection[j]] = [collection[j], collection[i]];
+                if (collection == null || typeof collection.length !== "number") {
+                  throw new TypeError("NullPointerException: collection");
+                }
+                // java.util.Collections uses the supplied Random (when present) and
+                // walks backwards, selecting each swap with nextInt(i + 1).
+                const random = args[1] ?? new GoldClientJavaRandom();
+                for (let i = collection.length; i > 1; i--) {
+                  const j = random.nextInt(i);
+                  [collection[i - 1], collection[j]] = [collection[j], collection[i - 1]];
                 }
                 return;
               }
