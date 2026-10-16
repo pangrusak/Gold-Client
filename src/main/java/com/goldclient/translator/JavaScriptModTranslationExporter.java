@@ -172,6 +172,9 @@ public final class JavaScriptModTranslationExporter {
             .append(", descriptor: ").append(quote(method.descriptor()))
             .append(", isStatic: ").append((method.access() & Opcodes.ACC_STATIC) != 0)
             .append(", isAbstract: ").append((method.access() & Opcodes.ACC_ABSTRACT) != 0)
+            .append(", isAdapterRequired: ")
+            .append((method.access() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0
+                || method.intermediateRepresentation().operations().isEmpty())
             .append(", fn: ").append(exportedName(method.name(), method.descriptor())).append(" }");
       }
       module.append("]]");
@@ -2277,7 +2280,7 @@ public final class JavaScriptModTranslationExporter {
             const target = this.resolveClassMethod(className, name, args.length, false);
             if (target) return target.fn.apply(receiver, args);
             const declaration = (methods.get(name) ?? []).find(method =>
-              method.isAbstract && !method.isStatic && method.arity === args.length);
+              method.isAdapterRequired && !method.isStatic && method.arity === args.length);
             if (declaration) return declaration.fn.apply(receiver, args);
             if (optional) return undefined;
             return this.unsupported("missing-instance-method", name + "/" + args.length);
@@ -2289,7 +2292,7 @@ public final class JavaScriptModTranslationExporter {
             const target = this.resolveClassMethod(className, name, args.length, true);
             if (target) return target.fn.apply(receiver, args);
             const declaration = (methods.get(name) ?? []).find(method =>
-              method.isAbstract && method.isStatic && method.arity === args.length);
+              method.isAdapterRequired && method.isStatic && method.arity === args.length);
             if (declaration) return declaration.fn.apply(receiver, args);
             return this.unsupported("missing-static-method", name + "/" + args.length);
           },
