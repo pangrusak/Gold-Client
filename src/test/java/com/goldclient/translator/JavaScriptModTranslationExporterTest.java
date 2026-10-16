@@ -687,6 +687,17 @@ class JavaScriptModTranslationExporterTest {
         const packed = pos.toLong();
         const unpacked = r.invokePlatformStatic("net.minecraft.util.math.BlockPos", "fromLong", packed);
         if (!pos.equals(unpacked)) throw new Error("BlockPos packed coordinate round-trip");
+        const north = r.getStaticField("net.minecraft.util.EnumFacing", "NORTH");
+        if (north.getZOffset() !== -1 || north.getOpposite().getName() !== "south") {
+          throw new Error("EnumFacing direction behavior");
+        }
+        if (!pos.offset(north, 2).equals(pos.add(0, 0, -2))) throw new Error("BlockPos.offset(EnumFacing)");
+        if (r.invokePlatformStatic("net.minecraft.util.EnumFacing", "values").length !== 6) {
+          throw new Error("EnumFacing.values should expose six directions");
+        }
+        if (r.invokePlatformStatic("net.minecraft.util.EnumFacing", "getHorizontal", 0).getName() !== "south") {
+          throw new Error("EnumFacing horizontal ordering");
+        }
         const vector = r.create("net.minecraft.util.math.Vec3d", 3, 0, 4);
         if (vector.lengthVector() !== 5 || vector.dotProduct(r.create("net.minecraft.util.math.Vec3d", 1, 2, 3)) !== 15) {
           throw new Error("Vec3d length/dot product");
