@@ -961,6 +961,20 @@ public final class JavaTranslator {
 
     int continueJump = findContinueJumpAtTarget(operations, targetIndex, context);
     if (continueJump >= 0) {
+      int skipJoinJump = findForwardJoinJump(
+          operations, branchIndex + 1, targetIndex, end, labels);
+      if (skipJoinJump >= 0) {
+        // The false path jumps around a block whose only action is continuing
+        // the active loop. Replace that diamond with a conditional continue.
+        RenderResult fallthrough = renderRange(
+            operations, branchIndex + 1, skipJoinJump, indent, context, labels);
+        StringBuilder source = new StringBuilder();
+        source.append(indent(indent)).append("if (")
+            .append(normalizeCondition(condition)).append(") continue;\n")
+            .append(fallthrough.source());
+        int lastIndex = targetIndex >= end ? end - 1 : continueJump;
+        return new ConditionalRender(source.toString(), fallthrough.complete(), lastIndex);
+      }
       int fallthroughEnd = Math.min(targetIndex, end);
       RenderResult fallthrough = renderRange(
           operations, branchIndex + 1, fallthroughEnd, indent, context, labels);
