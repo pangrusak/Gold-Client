@@ -2031,11 +2031,9 @@ public final class JavaScriptModTranslationExporter {
                 return bound === 0 ? 0 : ((value % bound) + bound) % bound;
               }
               if (method === "denormalizeClamp") {
-                const start = Number(args[0]), end = Number(args[1]), amount = Number(args[2]);
-                const delta = end - start;
-                if (delta < -180) return start + (360 + delta) * amount;
-                if (delta > 180) return start + (delta - 360) * amount;
-                return start + delta * amount;
+                const start = Number(args[0]), end = Number(args[1]);
+                const amount = Math.max(0, Math.min(1, Number(args[2])));
+                return start + (end - start) * amount;
               }
               if (method === "pct") return Number(args[0]) / Number(args[1]);
               if (method === "average") {
@@ -2052,13 +2050,14 @@ public final class JavaScriptModTranslationExporter {
               }
               if (method === "hsvToRGB") {
                 const hue = Number(args[0]), saturation = Number(args[1]), brightness = Number(args[2]);
-                const sector = Math.floor(hue * 6) % 6;
-                const fraction = hue * 6 - Math.floor(hue * 6);
+                const rawSector = Math.floor(hue * 6);
+                const sector = ((rawSector % 6) + 6) % 6;
+                const fraction = hue * 6 - rawSector;
                 const p = brightness * (1 - saturation);
                 const q = brightness * (1 - fraction * saturation);
                 const t = brightness * (1 - (1 - fraction) * saturation);
                 const rgb = [[brightness,t,p],[q,brightness,p],[p,brightness,t],[p,q,brightness],[t,p,brightness],[brightness,p,q]][sector];
-                return (Math.round(rgb[0] * 255) << 16) | (Math.round(rgb[1] * 255) << 8) | Math.round(rgb[2] * 255);
+                return (Math.trunc(rgb[0] * 255) << 16) | (Math.trunc(rgb[1] * 255) << 8) | Math.trunc(rgb[2] * 255);
               }
             }
             if (owner === "net.minecraft.util.EnumFacing") {
