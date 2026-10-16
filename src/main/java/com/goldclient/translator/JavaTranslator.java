@@ -602,11 +602,16 @@ public final class JavaTranslator {
       IrOperationModel jump = operations.get(jumpIndex);
       if (!jump.operands().isEmpty()) {
         Integer endIndex = labels.get(labelKey(jump.operands().get(0)));
-        if (endIndex != null && endIndex > targetIndex && endIndex <= end) {
+        if (endIndex != null && endIndex > targetIndex) {
+          // A nested if may join at a label outside the current render range
+          // (for example, both arms exit to an enclosing if/loop join). Render
+          // only the portion owned by this range, leaving the enclosing renderer
+          // to consume the shared continuation.
+          int structuredEnd = Math.min(endIndex, end);
           RenderResult fallthroughBody = renderRange(
               operations, branchIndex + 1, jumpIndex, indent + 1, context, labels);
           RenderResult targetBody = renderRange(
-              operations, targetIndex + 1, endIndex, indent + 1, context, labels);
+              operations, targetIndex + 1, structuredEnd, indent + 1, context, labels);
 
           StringBuilder source = new StringBuilder();
           source.append(indent(indent))
@@ -621,7 +626,7 @@ public final class JavaTranslator {
           return new ConditionalRender(
               source.toString(),
               fallthroughBody.complete() && targetBody.complete(),
-              endIndex);
+              endIndex > end ? end - 1 : endIndex);
         }
       }
     }
@@ -728,7 +733,7 @@ public final class JavaTranslator {
       IrOperationModel operation = operations.get(i);
       if (!"JUMP".equals(operation.kind()) || operation.operands().isEmpty()) continue;
       Integer joinIndex = labels.get(labelKey(operation.operands().get(0)));
-      if (joinIndex != null && joinIndex > branchTargetIndex && joinIndex <= end) return i;
+      if (joinIndex != null && joinIndex > branchTargetIndex) return i;
     }
     return -1;
   }
