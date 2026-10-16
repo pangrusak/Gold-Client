@@ -1262,7 +1262,7 @@ public final class JavaTranslator {
           return new ConditionalRender(
               source.toString(),
               fallthroughBody.complete() && targetBody.complete(),
-              endIndex - 1);
+              structuredEnd - 1);
         }
       }
     }
