@@ -383,6 +383,41 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void arraysEqualsAndDeepEqualsFollowJavaArraySemantics() throws Exception {
+    Path output = tempDir.resolve("java-arrays-equality-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("arrays-equality-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const call = (method, a, b) => r.invokeJavaStatic("java.util.Arrays", method, a, b);
+        const makeValue = value => ({ value, equals(other) { return other != null && other.value === this.value; } });
+        if (!call("equals", null, null)) throw new Error("Arrays.equals(null, null) should be true");
+        if (call("equals", null, [])) throw new Error("Arrays.equals(null, array) should be false");
+        if (!call("equals", [makeValue(1)], [makeValue(1)])) throw new Error("object arrays should use Java equals");
+        if (call("equals", [[1, 2]], [[1, 2]])) throw new Error("Arrays.equals must not recursively compare nested arrays");
+        if (!call("deepEquals", [[1, 2]], [[1, 2]])) throw new Error("Arrays.deepEquals should compare nested arrays");
+        if (!call("equals", new Int32Array([1, 2]), new Int32Array([1, 2]))) {
+          throw new Error("primitive array values should be compared");
+        }
+        if (call("equals", new Int32Array([1, 2]), new Int32Array([1, 3]))) {
+          throw new Error("primitive array mismatch was missed");
+        }
+        console.log("java-arrays-equality-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Arrays equality runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-arrays-equality-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
