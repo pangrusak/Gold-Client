@@ -224,6 +224,17 @@ public final class JavaTranslator {
     String endLabel = metadata.get(1);
     String handlerLabel = metadata.get(2);
     String exceptionType = metadata.get(3);
+    Set<String> exceptionTypes = new java.util.LinkedHashSet<>();
+    for (IrOperationModel candidate : operations) {
+      if (!"TRY_BEGIN".equals(candidate.kind()) || candidate.operands().size() < 4) continue;
+      List<String> candidateMetadata = candidate.operands();
+      if (labelKey(startLabel).equals(labelKey(candidateMetadata.get(0)))
+          && labelKey(endLabel).equals(labelKey(candidateMetadata.get(1)))
+          && labelKey(handlerLabel).equals(labelKey(candidateMetadata.get(2)))) {
+        exceptionTypes.add(candidateMetadata.get(3));
+      }
+    }
+    if (exceptionTypes.isEmpty()) exceptionTypes.add(exceptionType);
     int tryEnd = -1;
     int catchBegin = -1;
     for (int i = begin + 1; i < end; i++) {
@@ -289,8 +300,14 @@ public final class JavaTranslator {
     }
     if (handlerEnd <= catchBegin + 1) return null;
 
-    int bodyStart = begin + 1;
-    while (bodyStart < tryEnd && "LABEL".equals(operations.get(bodyStart).kind())) bodyStart++;
+    // Multiple exception-table entries can share a protected range and handler
+    // (Java multi-catch). Start after the actual start label so adjacent
+    // TRY_BEGIN metadata records are never mistaken for executable nested regions.
+    Integer startIndex = labels.get(labelKey(startLabel));
+    int bodyStart = startIndex == null ? begin + 1 : startIndex + 1;
+    while (bodyStart < tryEnd
+        && ("LABEL".equals(operations.get(bodyStart).kind())
+            || "TRY_BEGIN".equals(operations.get(bodyStart).kind()))) bodyStart++;
     RenderResult tryBody = renderRange(
         operations, bodyStart, tryEnd, indent + 1, context, labels);
 
@@ -315,9 +332,29 @@ public final class JavaTranslator {
 
     StringBuilder source = new StringBuilder();
     source.append(indent(indent)).append("try {\n").append(tryBody.source());
-    source.append(indent(indent)).append("} catch (")
-        .append(exceptionType).append(" ").append(exceptionVariable).append(") {\n")
-        .append(catchBody.source());
+    if (exceptionTypes.size() > 1) {
+      // JVM multi-catch shares one handler for several exception-table entries.
+      // JavaScript has one catch clause, so dispatch by runtime type and rethrow
+      // exceptions that do not match any listed alternative.
+      source.append(indent(indent)).append("} catch (caughtException) {\n");
+      source.append(indent(indent + 1)).append("if (!(");
+      int typeIndex = 0;
+      for (String type : exceptionTypes) {
+        if (typeIndex++ > 0) source.append(" || ");
+        source.append("GoldClientRuntime.instanceOf(caughtException, \"")
+            .append(escapeJava(type)).append("\")");
+      }
+      source.append(")) throw caughtException;\n");
+      if (!"caughtException".equals(exceptionVariable)) {
+        source.append(indent(indent + 1)).append("var ").append(exceptionVariable)
+            .append(" = caughtException;\n");
+      }
+      source.append(catchBody.source());
+    } else {
+      source.append(indent(indent)).append("} catch (")
+          .append(exceptionType).append(" ").append(exceptionVariable).append(") {\n")
+          .append(catchBody.source());
+    }
     source.append(indent(indent)).append("}\n");
     boolean complete = tryBody.complete() && catchBody.complete();
     // A handler may legitimately terminate with return/throw instead of
