@@ -755,4 +755,38 @@ class JavaTranslatorTest {
     assertTrue(result.source().contains("} else {"), result.source());
   }
 
+  @Test
+  void lowersMultiCatchWithOneRuntimeDispatchAndSharedHandler() {
+    List<String> io = List.of("Ltry", "LafterTry", "Lhandler", "java.io.IOException");
+    List<String> sql = List.of("Ltry", "LafterTry", "Lhandler", "java.sql.SQLException");
+    IrMethodModel method = new IrMethodModel("test", "()V", List.of(
+        new IrOperationModel("TRY_BEGIN", io, 0),
+        new IrOperationModel("TRY_BEGIN", sql, 1),
+        new IrOperationModel("LABEL", List.of("Ltry"), 2),
+        new IrOperationModel("METHOD_CALL", List.of("work()"), 3),
+        new IrOperationModel("TRY_END", io, 4),
+        new IrOperationModel("TRY_END", sql, 5),
+        new IrOperationModel("LABEL", List.of("LafterTry"), 6),
+        new IrOperationModel("CATCH_BEGIN", io, 7),
+        new IrOperationModel("CATCH_BEGIN", sql, 8),
+        new IrOperationModel("LABEL", List.of("Lhandler"), 9),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 10),
+        new IrOperationModel("METHOD_CALL", List.of("recover(local1)"), 11),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 12),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 13),
+        new IrOperationModel("RETURN", List.of(), 14)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("catch (caughtException)"), result.source());
+    assertTrue(result.source().contains(
+        "GoldClientRuntime.instanceOf(caughtException, \"java.io.IOException\")"), result.source());
+    assertTrue(result.source().contains(
+        "GoldClientRuntime.instanceOf(caughtException, \"java.sql.SQLException\")"), result.source());
+    assertTrue(result.source().contains("var local1 = caughtException;"), result.source());
+    assertTrue(result.source().contains("recover(local1);"), result.source());
+    assertTrue(!result.source().contains("<exception>"), result.source());
+  }
+
 }
