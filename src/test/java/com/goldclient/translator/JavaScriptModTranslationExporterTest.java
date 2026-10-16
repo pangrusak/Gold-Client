@@ -436,6 +436,8 @@ class JavaScriptModTranslationExporterTest {
         const natural = [10, 2, -1];
         r.invokeJavaStatic("java.util.Arrays", "sort", natural);
         if (natural.join(",") !== "-1,2,10") throw new Error("numeric natural ordering mismatch");
+        const streamSorted = r.createJava("java.util.ArrayList", [1, 4, 2, 3]).stream().sorted(reverse).toArray();
+        if (streamSorted.join(",") !== "4,3,2,1") throw new Error("Stream.sorted ignored Comparator.compare");
         const min = r.invokeJavaStatic("java.util.Collections", "min", [8, 2, 5]);
         if (min !== 2) throw new Error("Collections.min natural ordering mismatch");
         console.log("java-comparator-ok");
