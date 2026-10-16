@@ -777,8 +777,15 @@ public final class JavaTranslator {
       }
     }
 
+    // Exception-region markers are inserted immediately before their start
+    // label. If that label is this branch's destination, keep those markers out
+    // of the fall-through block so the enclosing range can structure the try
+    // region with its full extent rather than clipping it at the label.
+    int fallthroughEnd = findTryBeginBeforeTarget(
+        operations, branchIndex + 1, targetIndex, target, labels);
+    if (fallthroughEnd < 0) fallthroughEnd = targetIndex;
     RenderResult body = renderRange(
-        operations, branchIndex + 1, targetIndex, indent + 1, context, labels);
+        operations, branchIndex + 1, fallthroughEnd, indent + 1, context, labels);
 
     StringBuilder source = new StringBuilder();
     source.append(indent(indent))
@@ -788,7 +795,23 @@ public final class JavaTranslator {
     source.append(body.source());
     source.append(indent(indent)).append("}\n");
 
-    return new ConditionalRender(source.toString(), body.complete(), targetIndex);
+    int lastIndex = fallthroughEnd < targetIndex ? fallthroughEnd - 1 : targetIndex;
+    return new ConditionalRender(source.toString(), body.complete(), lastIndex);
+  }
+
+  private static int findTryBeginBeforeTarget(
+      List<IrOperationModel> operations,
+      int start,
+      int targetIndex,
+      String targetLabel,
+      Map<String, Integer> labels) {
+    if (labels.getOrDefault(labelKey(targetLabel), -1) != targetIndex) return -1;
+    for (int i = start; i < targetIndex; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (!"TRY_BEGIN".equals(operation.kind()) || operation.operands().isEmpty()) continue;
+      if (labelKey(targetLabel).equals(labelKey(operation.operands().get(0)))) return i;
+    }
+    return -1;
   }
 
   private static ConditionalRender renderBackwardLoop(
