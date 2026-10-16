@@ -64,7 +64,7 @@ public final class JavaScriptModTranslationExporter {
           String why = (method.access() & Opcodes.ACC_NATIVE) != 0 ? "native method"
               : (method.access() & Opcodes.ACC_ABSTRACT) != 0 ? "abstract method"
               : "semantic IR was not recovered";
-          result = translator.translateAdapter(method.name(), method.descriptor(), why,
+          result = translator.translateAdapter(clazz.name(), method.name(), method.descriptor(), why,
               (method.access() & Opcodes.ACC_STATIC) != 0);
           status = "adapter-required";
           reason = why;
@@ -77,7 +77,7 @@ public final class JavaScriptModTranslationExporter {
         statuses.add(new MethodStatus(clazz.name(), method.name(), method.descriptor(), status, reason));
         module.append(result.source()).append("\n");
       }
-      appendExecutableClassWrapper(module, clazz);
+      appendExecutableClassWrapper(module, clazz, classes);
       Files.writeString(destination, module, StandardCharsets.UTF_8);
       filesWritten++;
     }
@@ -102,6 +102,7 @@ public final class JavaScriptModTranslationExporter {
         StandardCharsets.UTF_8);
     Files.writeString(root.resolve("javascript-report.txt"), summary(report), StandardCharsets.UTF_8);
     writeIncompleteDiagnostics(root, statuses, classes);
+    writeDeclarationAdapterManifest(root, statuses, classes);
     return report;
   }
 
@@ -110,7 +111,47 @@ public final class JavaScriptModTranslationExporter {
    * Method bodies stay independently exportable, while callers get Java-like
    * instance/static dispatch and constructors that execute the recovered body.
    */
-  private static void appendExecutableClassWrapper(StringBuilder module, ClassModel clazz) {
+  /** Exports exact stable keys needed to bind abstract/native declarations to target adapters. */
+  private static void writeDeclarationAdapterManifest(
+      Path root, List<MethodStatus> statuses, List<ClassModel> classes) throws IOException {
+    java.util.Map<String, ClassModel> classByName = new java.util.HashMap<>();
+    for (ClassModel clazz : classes) classByName.put(clazz.name(), clazz);
+    List<DeclarationAdapter> adapters = new ArrayList<>();
+    for (MethodStatus status : statuses) {
+      if (!"adapter-required".equals(status.status())) continue;
+      ClassModel clazz = classByName.get(status.className());
+      if (clazz == null) continue;
+      MethodModel method = clazz.methods().stream()
+          .filter(candidate -> candidate.name().equals(status.methodName())
+              && candidate.descriptor().equals(status.descriptor()))
+          .findFirst().orElse(null);
+      if (method == null) continue;
+      String owner = clazz.name().replace('/', '.');
+      String reason = status.reason() == null ? "declaration" : status.reason();
+      adapters.add(new DeclarationAdapter(owner, method.name(), method.descriptor(),
+          (method.access() & Opcodes.ACC_STATIC) != 0,
+          (method.access() & Opcodes.ACC_ABSTRACT) != 0,
+          descriptorArity(method.descriptor()),
+          owner + "#" + method.name() + method.descriptor() + ": " + reason, reason));
+    }
+    DeclarationAdapterManifest manifest = new DeclarationAdapterManifest(
+        "gold-client-declaration-adapters-v1", adapters.size(), List.copyOf(adapters));
+    Files.writeString(root.resolve("declaration-adapters.json"),
+        new GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create().toJson(manifest)
+            + System.lineSeparator(), StandardCharsets.UTF_8);
+  }
+
+  public record DeclarationAdapterManifest(
+      String formatVersion, int adapterRequiredCount, List<DeclarationAdapter> adapters) {
+    public DeclarationAdapterManifest { adapters = List.copyOf(adapters); }
+  }
+
+  public record DeclarationAdapter(
+      String owner, String methodName, String descriptor, boolean isStatic,
+      boolean isAbstract, int arity, String adapterKey, String reason) {}
+
+  private static void appendExecutableClassWrapper(
+      StringBuilder module, ClassModel clazz, List<ClassModel> allClasses) {
     String className = "Translated_" + safeIdentifier(clazz.name().replace('/', '_').replace('.', '_'));
     List<MethodModel> methods = clazz.methods().stream()
         .sorted(Comparator.comparing(MethodModel::name).thenComparing(MethodModel::descriptor))
@@ -128,7 +169,12 @@ public final class JavaScriptModTranslationExporter {
         MethodModel method = entry.getValue().get(i);
         if (i > 0) module.append(", ");
         module.append("{ arity: ").append(descriptorArity(method.descriptor()))
+            .append(", descriptor: ").append(quote(method.descriptor()))
             .append(", isStatic: ").append((method.access() & Opcodes.ACC_STATIC) != 0)
+            .append(", isAbstract: ").append((method.access() & Opcodes.ACC_ABSTRACT) != 0)
+            .append(", isAdapterRequired: ")
+            .append((method.access() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0
+                || method.intermediateRepresentation().operations().isEmpty())
             .append(", fn: ").append(exportedName(method.name(), method.descriptor())).append(" }");
       }
       module.append("]]");
@@ -165,6 +211,35 @@ public final class JavaScriptModTranslationExporter {
             .append(quote(name)).append(", args); }\n");
       }
     }
+    // Add facade methods for inherited Java methods; runtime dispatch resolves the real body.
+    java.util.Map<String, ClassModel> classByName = new java.util.HashMap<>();
+    for (ClassModel candidate : allClasses) classByName.put(candidate.name(), candidate);
+    java.util.Set<String> inheritedInstance = new java.util.TreeSet<>();
+    java.util.Set<String> inheritedStatic = new java.util.TreeSet<>();
+    java.util.Set<String> visitedParents = new java.util.HashSet<>();
+    String parentName = clazz.superName();
+    while (parentName != null && visitedParents.add(parentName)) {
+      ClassModel parent = classByName.get(parentName);
+      if (parent == null) break;
+      for (MethodModel method : parent.methods()) {
+        String name = method.name();
+        if ("<init>".equals(name) || "<clinit>".equals(name) || "constructor".equals(name)
+            || !isJavaScriptIdentifier(name) || byName.containsKey(name)) continue;
+        if ((method.access() & Opcodes.ACC_STATIC) != 0) inheritedStatic.add(name);
+        else inheritedInstance.add(name);
+      }
+      parentName = parent.superName();
+    }
+    for (String name : inheritedInstance) {
+      module.append("  ").append(name)
+          .append("(...args) { return GoldClientRuntime.invoke(this, __goldMethods, ")
+          .append(quote(name)).append(", args); }\n");
+    }
+    for (String name : inheritedStatic) {
+      module.append("  static ").append(name)
+          .append("(...args) { return GoldClientRuntime.invokeStatic(this, __goldMethods, ")
+          .append(quote(name)).append(", args); }\n");
+    }
     module.append("}\n");
     for (var field : clazz.fields()) {
       if ((field.access() & Opcodes.ACC_STATIC) != 0) {
@@ -175,7 +250,12 @@ public final class JavaScriptModTranslationExporter {
     module.append("GoldClientRuntime.registerClass(")
         .append(quote(clazz.name().replace('/', '.'))).append(", ")
         .append(className).append(", (__goldMethods.get(\"<clinit>\") ?? [])")
-        .append(".find(method => method.isStatic)?.fn ?? null);\n");
+        .append(".find(method => method.isStatic)?.fn ?? null, { superName: ")
+        .append(clazz.superName() == null ? "null" : quote(clazz.superName().replace('/', '.')))
+        .append(", interfaces: [")
+        .append(String.join(", ", clazz.interfaces().stream()
+            .map(name -> quote(name.replace('/', '.'))).toList()))
+        .append("], methods: __goldMethods });\n");
   }
 
   private static String fieldInitializer(FieldModel field, boolean useConstant) {
@@ -1487,10 +1567,13 @@ public final class JavaScriptModTranslationExporter {
             });
           },
           classes: new Map(),
-          registerClass(name, constructor, staticInitializer = null) {
+          registerClass(name, constructor, staticInitializer = null, metadata = {}) {
             constructor.__goldClassName = name;
             constructor.__goldStaticInitializer = staticInitializer;
             constructor.__goldInitialized = false;
+            constructor.__goldSuperName = metadata.superName ?? null;
+            constructor.__goldInterfaces = Array.from(metadata.interfaces ?? []);
+            constructor.__goldMethods = metadata.methods ?? new Map();
             this.classes.set(name, constructor);
             return constructor;
           },
@@ -2155,21 +2238,63 @@ public final class JavaScriptModTranslationExporter {
             }
             return method.apply(receiver, args);
           },
-          invoke(receiver, methods, name, args, optional = false) {
-            const candidates = methods.get(name) ?? [];
-            const target = candidates.find(method => !method.isStatic && method.arity === args.length);
-            if (!target) {
-              if (optional) return undefined;
-              return this.unsupported("missing-instance-method", name + "/" + args.length);
+          resolveInterfaceMethod(className, name, arity, isStatic, visited = new Set()) {
+            if (!className || visited.has(className)) return null;
+            visited.add(className);
+            const current = this.classes.get(className);
+            if (!current) return null;
+            const candidates = current.__goldMethods?.get(name) ?? [];
+            const target = candidates.find(method => !method.isAbstract
+              && method.isStatic === isStatic && method.arity === arity);
+            if (target) return target;
+            for (const parentInterface of current.__goldInterfaces ?? []) {
+              const inherited = this.resolveInterfaceMethod(
+                parentInterface, name, arity, isStatic, visited);
+              if (inherited) return inherited;
             }
-            return target.fn.apply(receiver, args);
+            return null;
+          },
+          resolveClassMethod(className, name, arity, isStatic) {
+            let currentName = className;
+            const visitedClasses = new Set();
+            const interfaces = [];
+            while (currentName && !visitedClasses.has(currentName)) {
+              visitedClasses.add(currentName);
+              const current = this.classes.get(currentName);
+              if (!current) break;
+              interfaces.push(...(current.__goldInterfaces ?? []));
+              const candidates = current.__goldMethods?.get(name) ?? [];
+              const target = candidates.find(method => !method.isAbstract
+                && method.isStatic === isStatic && method.arity === arity);
+              if (target) return target;
+              currentName = current.__goldSuperName;
+            }
+            for (const interfaceName of interfaces) {
+              const target = this.resolveInterfaceMethod(interfaceName, name, arity, isStatic);
+              if (target) return target;
+            }
+            return null;
+          },
+          invoke(receiver, methods, name, args, optional = false) {
+            const className = receiver?.constructor?.__goldClassName;
+            const target = this.resolveClassMethod(className, name, args.length, false);
+            if (target) return target.fn.apply(receiver, args);
+            const declaration = (methods.get(name) ?? []).find(method =>
+              method.isAdapterRequired && !method.isStatic && method.arity === args.length);
+            if (declaration) return declaration.fn.apply(receiver, args);
+            if (optional) return undefined;
+            return this.unsupported("missing-instance-method", name + "/" + args.length);
           },
           invokeStatic(receiver, methods, name, args) {
             this.ensureInitialized(receiver);
-            const candidates = methods.get(name) ?? [];
-            const target = candidates.find(method => method.isStatic && method.arity === args.length);
-            if (!target) return this.unsupported("missing-static-method", name + "/" + args.length);
-            return target.fn.apply(receiver, args);
+            const className = typeof receiver === "function"
+              ? receiver.__goldClassName : receiver?.constructor?.__goldClassName;
+            const target = this.resolveClassMethod(className, name, args.length, true);
+            if (target) return target.fn.apply(receiver, args);
+            const declaration = (methods.get(name) ?? []).find(method =>
+              method.isAdapterRequired && method.isStatic && method.arity === args.length);
+            if (declaration) return declaration.fn.apply(receiver, args);
+            return this.unsupported("missing-static-method", name + "/" + args.length);
           },
           invokeDeclaration(detail, receiver, argsLike) {
             const adapter = globalThis.goldClientDeclarationAdapters?.[detail];
