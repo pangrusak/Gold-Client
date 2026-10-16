@@ -876,4 +876,72 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
+  @Test
+  void lowersConditionalStackMergeIntoLocalTernary() {
+    IrMethodModel method = new IrMethodModel("chooseMode", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("isOutput == 0", "Loutput"), 0),
+        new IrOperationModel("FIELD_READ", List.of("Focus.Mode.INPUT", "Focus.Mode.INPUT", "Focus.Mode.INPUT"), 1),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 2),
+        new IrOperationModel("LABEL", List.of("Loutput"), 3),
+        new IrOperationModel("FIELD_READ", List.of("Focus.Mode.OUTPUT", "Focus.Mode.OUTPUT", "Focus.Mode.OUTPUT"), 4),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 5),
+        new IrOperationModel("LOCAL_WRITE", List.of("local4", "<unknown>"), 6),
+        new IrOperationModel("RETURN", List.of("local4"), 7)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "var local4 = (isOutput == 0 ? Focus.Mode.OUTPUT : Focus.Mode.INPUT);"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void lowersConditionalStackMergeInsideConstructorArgument() {
+    IrMethodModel method = new IrMethodModel("createTimer", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("reverse != 0", "Lzero"), 0),
+        new IrOperationModel("CONSTANT", List.of("1"), 1),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 2),
+        new IrOperationModel("LABEL", List.of("Lzero"), 3),
+        new IrOperationModel("CONSTANT", List.of("0"), 4),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 5),
+        new IrOperationModel("CALL_VALUE", List.of("new Timer(local2, local6, <unknown>)"), 6),
+        new IrOperationModel("FIELD_WRITE", List.of("local0", "Example.timer", "new Timer(local2, local6, <unknown>)"), 7),
+        new IrOperationModel("RETURN", List.of(), 8)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "local0.timer = new Timer(local2, local6, (reverse != 0 ? 0 : 1));"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void lowersShortCircuitLocalValueMergeWithoutUnknown() {
+    IrMethodModel method = new IrMethodModel("chooseFlag", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("primary != 0", "Ltrue"), 0),
+        new IrOperationModel("CALL_VALUE", List.of("secondary()"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("secondary() != 0", "Lfalse"), 2),
+        new IrOperationModel("LABEL", List.of("Ltrue"), 3),
+        new IrOperationModel("CONSTANT", List.of("1"), 4),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 5),
+        new IrOperationModel("LABEL", List.of("Lfalse"), 6),
+        new IrOperationModel("CONSTANT", List.of("0"), 7),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 8),
+        new IrOperationModel("LOCAL_WRITE", List.of("local3", "<unknown>"), 9),
+        new IrOperationModel("RETURN", List.of("local3"), 10)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (primary != 0)"), result.source());
+    assertTrue(result.source().contains("local3 = 1;"), result.source());
+    assertTrue(result.source().contains("local3 = 0;"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
 }
