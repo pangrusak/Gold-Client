@@ -87,8 +87,12 @@ class JavaScriptModTranslationExporterTest {
     Path runner = output.resolve("run-generated-class.mjs");
     Files.writeString(runner, """
         import { Translated_example_Feature } from "./example/Feature.translated.js";
+        globalThis.goldClientDeclarationAdapters = {
+          "example.Feature#nativeCall()V: native method": () => "native-adapter-ok"
+        };
         const instance = new Translated_example_Feature();
         console.log(instance.isReady());
+        console.log(instance.nativeCall());
         """, StandardCharsets.UTF_8);
     Process node;
     try {
@@ -100,7 +104,7 @@ class JavaScriptModTranslationExporterTest {
     assertTrue(node.waitFor(10, TimeUnit.SECONDS), "generated class execution timed out");
     String nodeOutput = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
     assertEquals(0, node.exitValue(), nodeOutput);
-    assertEquals("true", nodeOutput);
+    assertEquals("true\nnative-adapter-ok", nodeOutput);
   }
 
   @Test
@@ -427,4 +431,73 @@ class JavaScriptModTranslationExporterTest {
   private static IrOperationModel op(String kind, String... operands) {
     return new IrOperationModel(kind, List.of(operands), 0);
   }
+  @Test
+  void resolvesInheritedConcreteMethodsForDeclarationImplementations() throws Exception {
+    ClassModel contract = new ClassModel("example/IValue", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, null, List.of(),
+        List.of(), List.of(method("getValue", "()Ljava/lang/String;",
+            Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, List.of())), List.of());
+    ClassModel parent = new ClassModel("example/Parent", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(),
+        List.of(method("getValue", "()Ljava/lang/String;", Opcodes.ACC_PUBLIC,
+            List.of(op("CONSTANT", "\"from-parent\""), op("RETURN", "\"from-parent\"")))),
+        List.of());
+    ClassModel child = new ClassModel("example/Child", "example/Parent", List.of("example/IValue"),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(), List.of(), List.of());
+
+    Path output = tempDir.resolve("inherited-declarations");
+    new JavaScriptModTranslationExporter().export(List.of(contract, parent, child), output);
+    Path runner = output.resolve("run-inherited.mjs");
+    Files.writeString(runner, """
+        import { Translated_example_Parent } from "./example/Parent.translated.js";
+        import { Translated_example_Child } from "./example/Child.translated.js";
+        const child = new Translated_example_Child();
+        if (child.getValue() !== "from-parent") throw new Error("inherited method dispatch failed");
+        console.log("inherited-dispatch-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "inherited method runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("inherited-dispatch-ok", outputText);
+  }
+
+  @Test
+  void declarationAdapterKeysIncludeTheirDeclaringOwner() {
+    JavaScriptTranslator translator = new JavaScriptTranslator();
+    String first = translator.translateAdapter("example/First", "getValue",
+        "()Ljava/lang/String;", "abstract method", false).source();
+    String second = translator.translateAdapter("example/Second", "getValue",
+        "()Ljava/lang/String;", "abstract method", false).source();
+
+    assertTrue(first.contains("example.First#getValue()Ljava/lang/String;: abstract method"));
+    assertTrue(second.contains("example.Second#getValue()Ljava/lang/String;: abstract method"));
+    assertFalse(first.contains("example.Second#"));
+  }
+
+  @Test
+  void exportsStableManifestForEveryDeclarationAdapter() throws Exception {
+    ClassModel contract = new ClassModel("example/IValue", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, null, List.of(),
+        List.of(), List.of(method("getValue", "()Ljava/lang/String;",
+            Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, List.of())), List.of());
+    Path output = tempDir.resolve("declaration-manifest");
+    var report = new JavaScriptModTranslationExporter().export(List.of(contract), output);
+
+    assertEquals(1, report.adapterRequiredCount());
+    String manifest = Files.readString(output.resolve("declaration-adapters.json"));
+    assertTrue(manifest.contains("\"formatVersion\": \"gold-client-declaration-adapters-v1\""));
+    assertTrue(manifest.contains("\"owner\": \"example.IValue\""));
+    assertTrue(manifest.contains("\"methodName\": \"getValue\""));
+    assertTrue(manifest.contains("\"descriptor\": \"()Ljava/lang/String;\""));
+    assertTrue(manifest.contains("\"isAbstract\": true"));
+    assertTrue(manifest.contains("example.IValue#getValue()Ljava/lang/String;: abstract method"));
+  }
+
 }

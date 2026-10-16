@@ -41,5 +41,6 @@ jobs:
             output/jei-js/incomplete-diagnostics.txt
             output/jei-js/javascript-report.json
             output/jei-js/incomplete-method-details.json
+            output/jei-js/declaration-adapters.json
           if-no-files-found: warn
           retention-days: 14
