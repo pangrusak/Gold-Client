@@ -119,6 +119,14 @@ public final class JavaTranslator {
 
       if ("CONDITIONAL_BRANCH".equals(operation.kind())
           && operation.operands().size() >= 2) {
+        ConditionalRender booleanReturn = renderBooleanReturnChain(
+            operations, i, end, indent, context, labels);
+        if (booleanReturn != null) {
+          source.append(booleanReturn.source());
+          complete &= booleanReturn.complete();
+          i = booleanReturn.lastIndex();
+          continue;
+        }
         ConditionalRender branch = renderConditional(
             operations, i, end, indent, context, labels);
 
@@ -577,6 +585,97 @@ public final class JavaTranslator {
   private static boolean isTerminal(IrOperationModel operation) {
     return "RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())
         || "TERMINATE".equals(operation.kind());
+  }
+
+  /**
+   * Lowers the common JVM short-circuit boolean/value-merge shape:
+   * branch-to-true, evaluate a second condition, branch-to-false, then join
+   * with an unknown stack phi. Early returns preserve branch order and side
+   * effects without emitting a fake unknown return value.
+   */
+  private static ConditionalRender renderBooleanReturnChain(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    IrOperationModel firstBranch = operations.get(branchIndex);
+    if (firstBranch.operands().size() < 2) return null;
+    Integer trueLabelIndex = labels.get(labelKey(firstBranch.operands().get(1)));
+    if (trueLabelIndex == null || trueLabelIndex <= branchIndex || trueLabelIndex >= end) return null;
+
+    int secondBranchIndex = -1;
+    Integer falseLabelIndex = null;
+    for (int i = branchIndex + 1; i < trueLabelIndex; i++) {
+      IrOperationModel candidate = operations.get(i);
+      if ("JUMP".equals(candidate.kind())) return null;
+      if ("CONDITIONAL_BRANCH".equals(candidate.kind())) {
+        if (secondBranchIndex >= 0 || candidate.operands().size() < 2) return null;
+        secondBranchIndex = i;
+        falseLabelIndex = labels.get(labelKey(candidate.operands().get(1)));
+      }
+    }
+    if (secondBranchIndex < 0 || falseLabelIndex == null
+        || falseLabelIndex <= trueLabelIndex || falseLabelIndex >= end) return null;
+
+    int trueConstantIndex = nextExecutableIndex(operations, trueLabelIndex + 1, end);
+    if (trueConstantIndex < 0 || !"CONSTANT".equals(operations.get(trueConstantIndex).kind())
+        || !isTrueLikeConstant(operations.get(trueConstantIndex))) return null;
+    int trueJumpIndex = nextExecutableIndex(operations, trueConstantIndex + 1, end);
+    if (trueJumpIndex < 0 || !"JUMP".equals(operations.get(trueJumpIndex).kind())
+        || operations.get(trueJumpIndex).operands().isEmpty()) return null;
+    String joinLabel = operations.get(trueJumpIndex).operands().get(0);
+    Integer joinIndex = labels.get(labelKey(joinLabel));
+    if (joinIndex == null || joinIndex <= falseLabelIndex || joinIndex >= end) return null;
+
+    int falseConstantIndex = nextExecutableIndex(operations, falseLabelIndex + 1, end);
+    if (falseConstantIndex < 0 || !"CONSTANT".equals(operations.get(falseConstantIndex).kind())
+        || !isFalseLikeConstant(operations.get(falseConstantIndex))) return null;
+    for (int i = falseConstantIndex + 1; i < joinIndex; i++) {
+      if (!isLoopExitMetadata(operations.get(i))) return null;
+    }
+    int returnIndex = nextExecutableIndex(operations, joinIndex + 1, end);
+    if (returnIndex < 0 || !"RETURN".equals(operations.get(returnIndex).kind())
+        || operations.get(returnIndex).operands().isEmpty()
+        || !"<unknown>".equals(operations.get(returnIndex).operands().get(0))) return null;
+
+    RenderResult prefix = renderRange(
+        operations, branchIndex + 1, secondBranchIndex, indent, context, labels);
+    String trueValue = operations.get(trueConstantIndex).operands().get(0);
+    String falseValue = operations.get(falseConstantIndex).operands().get(0);
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("if (")
+        .append(normalizeCondition(firstBranch.operands().get(0))).append(") {\n")
+        .append(indent(indent + 1)).append("return ").append(trueValue).append(";\n")
+        .append(indent(indent)).append("}\n")
+        .append(prefix.source())
+        .append(indent(indent)).append("if (")
+        .append(normalizeCondition(operations.get(secondBranchIndex).operands().get(0)))
+        .append(") {\n")
+        .append(indent(indent + 1)).append("return ").append(falseValue).append(";\n")
+        .append(indent(indent)).append("}\n")
+        .append(indent(indent)).append("return ").append(trueValue).append(";\n");
+    return new ConditionalRender(source.toString(), prefix.complete(), returnIndex);
+  }
+
+  private static int nextExecutableIndex(
+      List<IrOperationModel> operations, int start, int end) {
+    for (int i = start; i < end; i++) {
+      if (isLoopExitMetadata(operations.get(i))) continue;
+      return i;
+    }
+    return -1;
+  }
+
+  private static boolean isTrueLikeConstant(IrOperationModel operation) {
+    return !operation.operands().isEmpty()
+        && ("1".equals(operation.operands().get(0)) || "true".equals(operation.operands().get(0)));
+  }
+
+  private static boolean isFalseLikeConstant(IrOperationModel operation) {
+    return !operation.operands().isEmpty()
+        && ("0".equals(operation.operands().get(0)) || "false".equals(operation.operands().get(0)));
   }
 
   private static ConditionalRender renderConditional(
