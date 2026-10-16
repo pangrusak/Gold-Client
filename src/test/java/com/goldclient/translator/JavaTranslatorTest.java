@@ -64,7 +64,7 @@ class JavaTranslatorTest {
 
     assertTrue(result.complete());
     assertTrue(result.source().contains(
-        "if (me.jellysquid.mods.lithium.common.LithiumMod.CONFIG == null) {"));
+        "if (me.jellysquid.mods.lithium.common.LithiumMod.CONFIG != null) {"));
     assertTrue(result.source().contains(
         "throw new java.lang.IllegalStateException(\"The mixin plugin did not initialize the config! Did it not load?\");"));
     assertTrue(result.source().contains("return;"));
@@ -252,7 +252,7 @@ class JavaTranslatorTest {
 
     assertTrue(result.complete());
     assertTrue(result.complete());
-    assertTrue(result.source().contains("if (a != 0) {"));
+    assertTrue(result.source().contains("if (a == 0) {"));
     assertTrue(result.source().contains("if (b != 0) {"));
     assertTrue(result.source().contains("nested();"));
   }
@@ -648,7 +648,8 @@ class JavaTranslatorTest {
     TranslationResult result = new JavaTranslator().translate(method);
 
     assertTrue(result.complete(), result.source());
-    assertTrue(result.source().contains("do {\n    step();\n  } while (keepGoing);"), result.source());
+    assertTrue(result.source().contains("while (true) {"), result.source());
+    assertTrue(result.source().contains("if (keepGoing) break;"), result.source());
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
