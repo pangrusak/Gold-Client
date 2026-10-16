@@ -66,8 +66,14 @@ public final class JavaScriptModTranslationExporter {
               : "semantic IR was not recovered";
           result = translator.translateAdapter(clazz.name(), method.name(), method.descriptor(), why,
               (method.access() & Opcodes.ACC_STATIC) != 0);
-          status = (method.access() & Opcodes.ACC_ABSTRACT) != 0
-              ? "declaration-only" : "adapter-required";
+          boolean abstractDeclaration = (method.access() & Opcodes.ACC_ABSTRACT) != 0;
+          if (abstractDeclaration) {
+            result = new TranslationResult(result.source().replace(
+                "// Status: adapter-required; no JVM method body exists.",
+                "// Status: declaration-only; concrete implementations supply this method."),
+                result.complete());
+          }
+          status = abstractDeclaration ? "declaration-only" : "adapter-required";
           reason = why;
         } else {
           result = translator.translate(method.intermediateRepresentation(),
