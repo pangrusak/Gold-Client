@@ -87,8 +87,12 @@ class JavaScriptModTranslationExporterTest {
     Path runner = output.resolve("run-generated-class.mjs");
     Files.writeString(runner, """
         import { Translated_example_Feature } from "./example/Feature.translated.js";
+        globalThis.goldClientDeclarationAdapters = {
+          "example.Feature#nativeCall()V: native method": () => "native-adapter-ok"
+        };
         const instance = new Translated_example_Feature();
         console.log(instance.isReady());
+        console.log(instance.nativeCall());
         """, StandardCharsets.UTF_8);
     Process node;
     try {
@@ -100,7 +104,7 @@ class JavaScriptModTranslationExporterTest {
     assertTrue(node.waitFor(10, TimeUnit.SECONDS), "generated class execution timed out");
     String nodeOutput = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
     assertEquals(0, node.exitValue(), nodeOutput);
-    assertEquals("true", nodeOutput);
+    assertEquals("true\nnative-adapter-ok", nodeOutput);
   }
 
   @Test
