@@ -348,6 +348,41 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void objectsDeepEqualsRecursesThroughNestedAndPrimitiveArrays() throws Exception {
+    Path output = tempDir.resolve("java-deep-equals-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("deep-equals-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const deepEquals = (a, b) => r.invokeJavaStatic("java.util.Objects", "deepEquals", a, b);
+        if (!deepEquals([[1, 2], [3]], [[1, 2], [3]])) throw new Error("nested arrays should compare deeply");
+        if (deepEquals([[1, 2], [3]], [[1, 2], [4]])) throw new Error("nested array difference was missed");
+        if (!deepEquals(new Int32Array([1, 2, 3]), new Int32Array([1, 2, 3]))) {
+          throw new Error("primitive typed arrays should compare deeply");
+        }
+        if (deepEquals(new Int32Array([1, 2]), new Int32Array([1, 3]))) {
+          throw new Error("primitive typed-array difference was missed");
+        }
+        const equalA = { value: 7, equals(other) { return other != null && other.value === this.value; } };
+        const equalB = { value: 7, equals(other) { return other != null && other.value === this.value; } };
+        if (!deepEquals([equalA], [equalB])) throw new Error("object arrays should use Java equals for elements");
+        if (!deepEquals(null, null) || deepEquals(null, [])) throw new Error("null deep equality mismatch");
+        console.log("java-deep-equals-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Objects.deepEquals runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-deep-equals-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
