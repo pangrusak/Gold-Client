@@ -477,4 +477,23 @@ class JavaScriptModTranslationExporterTest {
     assertFalse(first.contains("example.Second#"));
   }
 
+  @Test
+  void exportsStableManifestForEveryDeclarationAdapter() throws Exception {
+    ClassModel contract = new ClassModel("example/IValue", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, null, List.of(),
+        List.of(), List.of(method("getValue", "()Ljava/lang/String;",
+            Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, List.of())), List.of());
+    Path output = tempDir.resolve("declaration-manifest");
+    var report = new JavaScriptModTranslationExporter().export(List.of(contract), output);
+
+    assertEquals(1, report.adapterRequiredCount());
+    String manifest = Files.readString(output.resolve("declaration-adapters.json"));
+    assertTrue(manifest.contains("\"formatVersion\": \"gold-client-declaration-adapters-v1\""));
+    assertTrue(manifest.contains("\"owner\": \"example.IValue\""));
+    assertTrue(manifest.contains("\"methodName\": \"getValue\""));
+    assertTrue(manifest.contains("\"descriptor\": \"()Ljava/lang/String;\""));
+    assertTrue(manifest.contains("\"isAbstract\": true"));
+    assertTrue(manifest.contains("example.IValue#getValue()Ljava/lang/String;: abstract method"));
+  }
+
 }
