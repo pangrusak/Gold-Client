@@ -1075,4 +1075,30 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
+  @Test
+  void structuresConditionalAssignmentChainWithSharedJoin() {
+    IrMethodModel method = new IrMethodModel("chooseDimension", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("direction == TOP", "Lheight"), 0),
+        new IrOperationModel("FIELD_READ", List.of("direction"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("direction != BOTTOM", "Lwidth"), 2),
+        new IrOperationModel("LABEL", List.of("Lheight"), 3),
+        new IrOperationModel("CALL_VALUE", List.of("drawable.getHeight()"), 4),
+        new IrOperationModel("LOCAL_WRITE", List.of("local6", "drawable.getHeight()"), 5),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 6),
+        new IrOperationModel("LABEL", List.of("Lwidth"), 7),
+        new IrOperationModel("CALL_VALUE", List.of("drawable.getWidth()"), 8),
+        new IrOperationModel("LOCAL_WRITE", List.of("local6", "drawable.getWidth()"), 9),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 10),
+        new IrOperationModel("RETURN", List.of("local6"), 11)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (direction == TOP)"), result.source());
+    assertTrue(result.source().contains("if (direction != BOTTOM)"), result.source());
+    assertTrue(result.source().contains("drawable.getHeight()"), result.source());
+    assertTrue(result.source().contains("drawable.getWidth()"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
 }
