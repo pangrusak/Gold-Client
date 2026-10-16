@@ -190,12 +190,12 @@ public final class JavaScriptModTranslationExporter {
     for (String name : inheritedInstance) {
       module.append("  ").append(name)
           .append("(...args) { return GoldClientRuntime.invoke(this, __goldMethods, ")
-          .append(quote(name)).append(", args); }\\n");
+          .append(quote(name)).append(", args); }\n");
     }
     for (String name : inheritedStatic) {
       module.append("  static ").append(name)
           .append("(...args) { return GoldClientRuntime.invokeStatic(this, __goldMethods, ")
-          .append(quote(name)).append(", args); }\\n");
+          .append(quote(name)).append(", args); }\n");
     }
     module.append("}\n");
     for (var field : clazz.fields()) {
