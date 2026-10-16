@@ -319,7 +319,6 @@ class JavaScriptModTranslationExporterTest {
         if (r.invokeJavaStatic("java.util.Collections", "disjoint", [oneA], [oneB])) {
           throw new Error("Collections.disjoint should use Java equals");
         }
-        r.invokeJavaStatic("java.util.Collections", "replaceAll", [oneA, two, oneB], makeValue(1), "replaced");
         const replaced = [oneA, two, oneB];
         r.invokeJavaStatic("java.util.Collections", "replaceAll", replaced, makeValue(1), "replaced");
         if (replaced.join(",") !== "replaced,[object Object],replaced") {
