@@ -494,10 +494,8 @@ class JavaScriptModTranslationExporterTest {
     assertTrue(report.methods().stream().anyMatch(item -> item.status().equals("declaration-only")));
     String manifest = Files.readString(output.resolve("declaration-adapters.json"));
     assertTrue(manifest.contains("\"formatVersion\": \"gold-client-declaration-adapters-v1\""));
-    assertTrue(manifest.contains("\"owner\": \"example.IValue\""));
-    assertTrue(manifest.contains("\"methodName\": \"getValue\""));
-    assertTrue(manifest.contains("\"descriptor\": \"()Ljava/lang/String;\""));
     assertTrue(manifest.contains("\"adapterRequiredCount\": 0"));
+    assertTrue(manifest.contains("\"adapters\": []"));
     assertFalse(manifest.contains("example.IValue#getValue()Ljava/lang/String;: abstract method"));
   }
 
@@ -513,7 +511,5 @@ class JavaScriptModTranslationExporterTest {
     assertFalse(module.contains("__goldMethods.get(\\\"<clinit>\\\")"));
     assertFalse(module.contains("methods: __goldMethods });\\n"));
   }
-
-}
 
 }
