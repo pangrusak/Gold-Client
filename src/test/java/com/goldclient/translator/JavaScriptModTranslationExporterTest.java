@@ -687,6 +687,15 @@ class JavaScriptModTranslationExporterTest {
         const packed = pos.toLong();
         const unpacked = r.invokePlatformStatic("net.minecraft.util.math.BlockPos", "fromLong", packed);
         if (!pos.equals(unpacked)) throw new Error("BlockPos packed coordinate round-trip");
+        const box = r.create("net.minecraft.util.math.AxisAlignedBB", 0, 0, 0, 1, 1, 1);
+        const touching = r.create("net.minecraft.util.math.AxisAlignedBB", 1, 0, 0, 2, 1, 1);
+        if (box.intersects(touching)) throw new Error("AxisAlignedBB should not intersect when only touching");
+        if (!box.grow(1).contains(r.create("net.minecraft.util.math.Vec3d", -0.5, 0.5, 0.5))) {
+          throw new Error("AxisAlignedBB.grow/contains");
+        }
+        const moving = r.create("net.minecraft.util.math.AxisAlignedBB", 2, 0, 0, 3, 1, 1);
+        if (box.calculateXOffset(moving, -5) !== -1) throw new Error("AxisAlignedBB collision offset clipping");
+        if (!box.offset(2, 0, 0).equals(moving)) throw new Error("AxisAlignedBB.offset");
         const north = r.getStaticField("net.minecraft.util.EnumFacing", "NORTH");
         if (north.getZOffset() !== -1 || north.getOpposite().getName() !== "south") {
           throw new Error("EnumFacing direction behavior");
