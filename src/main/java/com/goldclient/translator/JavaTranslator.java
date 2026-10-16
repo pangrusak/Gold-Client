@@ -91,6 +91,16 @@ public final class JavaTranslator {
             i = unconditionalBackEdge ? loopBranch + 1 : loop.lastIndex();
             continue;
           }
+          LoopShape forwardExitLoop = findForwardExitLoop(
+              operations, i, end, operations.get(i).operands().get(0), labels);
+          if (forwardExitLoop != null) {
+            ConditionalRender loop = renderForwardExitLoop(
+                operations, i, end, forwardExitLoop, indent, context, labels);
+            source.append(loop.source());
+            complete &= loop.complete();
+            i = loop.lastIndex();
+            continue;
+          }
         }
         continue;
       }
@@ -713,6 +723,86 @@ public final class JavaTranslator {
     return new ConditionalRender(source.toString(), body.complete(), branchIndex);
   }
 
+  /**
+   * Recognizes a loop whose condition branches to an exit label and whose
+   * back-edge occurs after the body. This handles nested loops and the common
+   * while/for bytecode shape where the exit test is not adjacent to the back-edge.
+   */
+  private static LoopShape findForwardExitLoop(
+      List<IrOperationModel> operations,
+      int loopHeaderIndex,
+      int end,
+      String loopLabel,
+      Map<String, Integer> labels) {
+    Integer header = labels.get(labelKey(loopLabel));
+    if (header == null || header != loopHeaderIndex) return null;
+
+    for (int branchIndex = loopHeaderIndex + 1; branchIndex < end; branchIndex++) {
+      IrOperationModel branch = operations.get(branchIndex);
+      if (!"CONDITIONAL_BRANCH".equals(branch.kind()) || branch.operands().size() < 2) continue;
+      Integer exitIndex = labels.get(labelKey(branch.operands().get(1)));
+      if (exitIndex == null || exitIndex <= branchIndex) continue;
+
+      int backEdgeIndex = Math.min(exitIndex - 1, end - 1);
+      while (backEdgeIndex > branchIndex && isLoopExitMetadata(operations.get(backEdgeIndex))) {
+        backEdgeIndex--;
+      }
+      if (backEdgeIndex <= branchIndex) continue;
+
+      IrOperationModel backEdge = operations.get(backEdgeIndex);
+      if ("JUMP".equals(backEdge.kind()) && !backEdge.operands().isEmpty()
+          && labelKey(loopLabel).equals(labelKey(backEdge.operands().get(0)))) {
+        return new LoopShape(branchIndex, backEdgeIndex, exitIndex);
+      }
+    }
+    return null;
+  }
+
+  private static boolean isLoopExitMetadata(IrOperationModel operation) {
+    return "LABEL".equals(operation.kind()) || "TRY_BEGIN".equals(operation.kind())
+        || "TRY_END".equals(operation.kind()) || "CATCH_BEGIN".equals(operation.kind())
+        || "STACK_OPERATION".equals(operation.kind());
+  }
+
+  private static ConditionalRender renderForwardExitLoop(
+      List<IrOperationModel> operations,
+      int loopHeaderIndex,
+      int end,
+      LoopShape loop,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
+    String condition = operations.get(loop.branchIndex()).operands().get(0);
+    context.enterLoop(loopLabel);
+    RenderResult conditionPrelude;
+    RenderResult body;
+    try {
+      // Keep condition setup inside the loop so side-effecting local writes are
+      // re-executed each iteration. The conditional branch becomes a break
+      // guard because its target is the loop's forward exit.
+      conditionPrelude = renderRange(
+          operations, loopHeaderIndex + 1, loop.branchIndex(), indent + 1, context, labels);
+      body = renderRange(
+          operations, loop.branchIndex() + 1, loop.backEdgeIndex(), indent + 1, context, labels);
+    } finally {
+      context.exitLoop();
+    }
+
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("while (true) {\n")
+        .append(conditionPrelude.source())
+        .append(indent(indent + 1)).append("if (")
+        .append(normalizeCondition(condition)).append(") break;\n")
+        .append(body.source())
+        .append(indent(indent)).append("}\n");
+    int lastIndex = loop.exitIndex() < end ? loop.exitIndex() : end - 1;
+    return new ConditionalRender(
+        source.toString(),
+        conditionPrelude.complete() && body.complete(),
+        lastIndex);
+  }
+
   private static int findBackwardConditional(
       List<IrOperationModel> operations,
       int labelIndex,
@@ -1066,6 +1156,8 @@ public final class JavaTranslator {
   }
 
   private record SwitchArm(int key, String label) {}
+
+  private record LoopShape(int branchIndex, int backEdgeIndex, int exitIndex) {}
 
   private record ConditionalRender(String source, boolean complete, int lastIndex) {}
 
