@@ -2068,6 +2068,14 @@ public final class JavaScriptModTranslationExporter {
             }
           },
           getStaticField(className, fieldName) {
+            if (className === "net.minecraft.util.EnumFacing$Axis"
+                && Object.prototype.hasOwnProperty.call(GoldClientMinecraftEnumAxis, fieldName)) {
+              return GoldClientMinecraftEnumAxis[fieldName];
+            }
+            if (className === "net.minecraft.util.EnumFacing$AxisDirection"
+                && Object.prototype.hasOwnProperty.call(GoldClientMinecraftAxisDirection, fieldName)) {
+              return GoldClientMinecraftAxisDirection[fieldName];
+            }
             if (className === "net.minecraft.util.EnumFacing"
                 && Object.prototype.hasOwnProperty.call(GoldClientMinecraftEnumFacing, fieldName)) {
               return GoldClientMinecraftEnumFacing[fieldName];
@@ -2175,6 +2183,14 @@ public final class JavaScriptModTranslationExporter {
                 const rgb = [[brightness,t,p],[q,brightness,p],[p,brightness,t],[p,q,brightness],[t,p,brightness],[brightness,p,q]][sector];
                 return (Math.trunc(rgb[0] * 255) << 16) | (Math.trunc(rgb[1] * 255) << 8) | Math.trunc(rgb[2] * 255);
               }
+            }
+            if (owner === "net.minecraft.util.EnumFacing$Axis") {
+              if (method === "values") return GoldClientMinecraftEnumAxis.VALUES.slice();
+              if (method === "byName") return GoldClientMinecraftEnumAxis.VALUES.find(value => value.getName() === String(args[0]).toLowerCase()) ?? null;
+            }
+            if (owner === "net.minecraft.util.EnumFacing$AxisDirection") {
+              if (method === "values") return GoldClientMinecraftAxisDirection.VALUES.slice();
+              if (method === "byName") return GoldClientMinecraftAxisDirection.VALUES.find(value => value.getName() === String(args[0]).toLowerCase()) ?? null;
             }
             if (owner === "net.minecraft.util.EnumFacing") {
               if (method === "values") return GoldClientMinecraftEnumFacing.VALUES.slice();
