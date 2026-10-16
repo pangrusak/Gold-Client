@@ -620,7 +620,7 @@ class JavaScriptModTranslationExporterTest {
           throw new Error("List search ignored Java equals");
         }
         if (!list.removeObject(equalCopy) || list.contains(stored)) throw new Error("remove(Object) equality mismatch");
-        list.add(10); list.add(20); list.add(30);
+        list.clear(); list.add(10); list.add(20); list.add(30);
         if (list.remove(1) !== 20 || list.toArray().join(",") !== "10,30") {
           throw new Error("remove(int) should return and remove the indexed element");
         }
