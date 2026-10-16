@@ -492,6 +492,8 @@ class JavaScriptModTranslationExporterTest {
 
     assertEquals(0, report.adapterRequiredCount());
     assertTrue(report.methods().stream().anyMatch(item -> item.status().equals("declaration-only")));
+    assertTrue(Files.readString(output.resolve("example/IValue.translated.js"))
+        .contains("Status: declaration-only; concrete implementations supply this method."));
     String manifest = Files.readString(output.resolve("declaration-adapters.json"));
     assertTrue(manifest.contains("\"formatVersion\": \"gold-client-declaration-adapters-v1\""));
     assertTrue(manifest.contains("\"adapterRequiredCount\": 0"));
