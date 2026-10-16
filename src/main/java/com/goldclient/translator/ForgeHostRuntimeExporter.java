@@ -200,7 +200,10 @@ public final class ForgeHostRuntimeExporter {
             if (typeof eventType !== "string" || !eventType) throw new TypeError("eventType is required");
             if (typeof callback !== "function") throw new TypeError("event callback must be a function");
             const owner = options.owner ?? "anonymous";
-            const priority = Number.isFinite(options.priority) ? options.priority : 0;
+            const namedPriorities = { HIGHEST: 5, HIGH: 4, NORMAL: 3, LOW: 2, LOWEST: 1 };
+            const suppliedPriority = typeof options.priority === "string"
+              ? namedPriorities[options.priority.toUpperCase()] : options.priority;
+            const priority = Number.isFinite(suppliedPriority) ? suppliedPriority : 0;
             const record = Object.freeze({
               id: ++this.#sequence, eventType, callback, owner, priority,
               receiveCanceled: options.receiveCanceled === true,
@@ -260,7 +263,9 @@ public final class ForgeHostRuntimeExporter {
             try {
               for (const listener of listeners) {
                 if (this.#pendingRemovals.has(listener.id)) continue;
-                if (event?.isCanceled === true && !listener.receiveCanceled) continue;
+                const canceled = typeof event?.isCanceled === "function"
+                  ? event.isCanceled() === true : event?.isCanceled === true;
+                if (canceled && !listener.receiveCanceled) continue;
                 try {
                   results.push(listener.callback(event));
                 } catch (error) {
