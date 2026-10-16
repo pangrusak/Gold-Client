@@ -1779,7 +1779,7 @@ public final class JavaScriptModTranslationExporter {
           }
           getAverageEdgeLength() { return ((this.maxX-this.minX)+(this.maxY-this.minY)+(this.maxZ-this.minZ))/3; }
           isEmpty() { return this.maxX <= this.minX || this.maxY <= this.minY || this.maxZ <= this.minZ; }
-          hasNaN() { return ![this.minX,this.minY,this.minZ,this.maxX,this.maxY,this.maxZ].every(Number.isFinite); }
+          hasNaN() { return [this.minX,this.minY,this.minZ,this.maxX,this.maxY,this.maxZ].some(Number.isNaN); }
           equals(other) {
             return other != null && this.minX === other.minX && this.minY === other.minY && this.minZ === other.minZ
               && this.maxX === other.maxX && this.maxY === other.maxY && this.maxZ === other.maxZ;
