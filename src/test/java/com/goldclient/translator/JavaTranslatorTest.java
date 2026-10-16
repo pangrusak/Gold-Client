@@ -1157,4 +1157,34 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
+  @Test
+  void keepsTryStartAndNormalReturnWhenBranchTargetsProtectedRegion() {
+    List<String> region = List.of("Ltry", "Lend", "Lhandler", "java.lang.RuntimeException");
+    IrMethodModel method = new IrMethodModel("safeToString", "()Ljava/lang/String;", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("isNotRegistryEntry != 0", "Ltry"), 0),
+        new IrOperationModel("CONSTANT", List.of("\"fallback\""), 1),
+        new IrOperationModel("RETURN", List.of("\"fallback\""), 2),
+        new IrOperationModel("TRY_BEGIN", region, 3),
+        new IrOperationModel("LABEL", List.of("Ltry"), 4),
+        new IrOperationModel("CALL_VALUE", List.of("local0.toString()"), 5),
+        new IrOperationModel("TRY_END", region, 6),
+        new IrOperationModel("LABEL", List.of("Lend"), 7),
+        new IrOperationModel("RETURN", List.of("local0.toString()"), 8),
+        new IrOperationModel("CATCH_BEGIN", region, 9),
+        new IrOperationModel("LABEL", List.of("Lhandler"), 10),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 11),
+        new IrOperationModel("METHOD_CALL", List.of("logFailure(local1)"), 12),
+        new IrOperationModel("RETURN", List.of("local0.getClass().toString()"), 13)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (isNotRegistryEntry == 0)"), result.source());
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains("return local0.toString();"), result.source());
+    assertTrue(result.source().contains("catch (java.lang.RuntimeException local1)"), result.source());
+    assertTrue(result.source().contains("return local0.getClass().toString();"), result.source());
+    assertTrue(!result.source().contains("<exception>"), result.source());
+  }
+
 }
