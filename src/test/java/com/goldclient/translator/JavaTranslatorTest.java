@@ -1023,4 +1023,33 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
+  @Test
+  void lowersMultiConditionBooleanReturnChain() {
+    IrMethodModel method = new IrMethodModel("isMouseOver", "()Z", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("rectangle.contains(x, y) != 0", "Ltrue"), 0),
+        new IrOperationModel("FIELD_READ", List.of("recipeTransferButton"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("recipeTransferButton == null", "Lfalse"), 2),
+        new IrOperationModel("FIELD_READ", List.of("recipeTransferButton"), 3),
+        new IrOperationModel("CALL_VALUE", List.of("recipeTransferButton.isHovered()"), 4),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("recipeTransferButton.isHovered() == 0", "Lfalse"), 5),
+        new IrOperationModel("LABEL", List.of("Ltrue"), 6),
+        new IrOperationModel("CONSTANT", List.of("1"), 7),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 8),
+        new IrOperationModel("LABEL", List.of("Lfalse"), 9),
+        new IrOperationModel("CONSTANT", List.of("0"), 10),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 11),
+        new IrOperationModel("RETURN", List.of("<unknown>"), 12)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (rectangle.contains(x, y) != 0)"), result.source());
+    assertTrue(result.source().contains("if (recipeTransferButton == null)"), result.source());
+    assertTrue(result.source().contains("if (recipeTransferButton.isHovered() == 0)"), result.source());
+    assertTrue(result.source().contains("return 1;"), result.source());
+    assertTrue(result.source().contains("return 0;"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
 }
