@@ -258,6 +258,12 @@ class JavaScriptModTranslationExporterTest {
         const first = r.createJava("java.util.Random", 0);
         if (first.nextInt() !== -1155484576) throw new Error("Java Random first nextInt mismatch");
         if (first.nextInt() !== -723955400) throw new Error("Java Random second nextInt mismatch");
+        const longRandom = r.createJava("java.util.Random", 0);
+        if (longRandom.nextLong() !== -4962768465676381896n) throw new Error("Java Random nextLong mismatch");
+        const byteRandom = r.createJava("java.util.Random", 0);
+        const bytes = Array(5).fill(0);
+        byteRandom.nextBytes(bytes);
+        if (bytes.join(",") !== "96,-76,32,-69,56") throw new Error("Java Random nextBytes mismatch");
         const bounded = r.createJava("java.util.Random", 0);
         if (bounded.nextInt(100) !== 60) throw new Error("Java Random bounded nextInt mismatch");
         const powerOfTwo = r.createJava("java.util.Random", 0);
