@@ -1537,6 +1537,122 @@ public final class JavaScriptModTranslationExporter {
           reverse() { this.value = Array.from(this.value).reverse().join(""); return this; }
         }
 
+        // Value-type adapters for common Minecraft 1.12.2 APIs. These do not
+        // emulate a World or server; they implement deterministic math/identity types.
+        class GoldClientMinecraftResourceLocation {
+          constructor(namespaceOrPath, path = undefined) {
+            let namespace = path === undefined ? "minecraft" : String(namespaceOrPath);
+            let resourcePath = path === undefined ? String(namespaceOrPath) : String(path);
+            if (path === undefined && resourcePath.includes(":")) {
+              const split = resourcePath.indexOf(":");
+              namespace = resourcePath.slice(0, split);
+              resourcePath = resourcePath.slice(split + 1);
+            }
+            this.resourceDomain = namespace.toLowerCase();
+            this.resourcePath = resourcePath.toLowerCase();
+            if (!/^[a-z0-9_.-]+$/.test(this.resourceDomain)
+                || !/^[a-z0-9/._-]+$/.test(this.resourcePath)) {
+              throw new TypeError("IllegalArgumentException: invalid resource location");
+            }
+          }
+          getResourceDomain() { return this.resourceDomain; }
+          getNamespace() { return this.resourceDomain; }
+          getResourcePath() { return this.resourcePath; }
+          getPath() { return this.resourcePath; }
+          toString() { return this.resourceDomain + ":" + this.resourcePath; }
+          equals(other) {
+            return other != null && other.resourceDomain === this.resourceDomain
+              && other.resourcePath === this.resourcePath;
+          }
+          hashCode() {
+            let hash = 0;
+            for (const character of this.toString()) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) | 0;
+            return hash;
+          }
+        }
+
+        class GoldClientMinecraftBlockPos {
+          constructor(x = 0, y = 0, z = 0) {
+            if (x != null && typeof x === "object") {
+              const position = x;
+              this.x = Math.floor(Number(position.x ?? position.getX?.() ?? 0));
+              this.y = Math.floor(Number(position.y ?? position.getY?.() ?? 0));
+              this.z = Math.floor(Number(position.z ?? position.getZ?.() ?? 0));
+            } else {
+              this.x = Math.floor(Number(x));
+              this.y = Math.floor(Number(y));
+              this.z = Math.floor(Number(z));
+            }
+            if (![this.x, this.y, this.z].every(Number.isFinite)) {
+              throw new TypeError("IllegalArgumentException: invalid block position");
+            }
+          }
+          getX() { return this.x; }
+          getY() { return this.y; }
+          getZ() { return this.z; }
+          add(x, y, z) {
+            if (x != null && typeof x === "object") return this.add(x.x ?? x.getX?.() ?? 0, x.y ?? x.getY?.() ?? 0, x.z ?? x.getZ?.() ?? 0);
+            return new GoldClientMinecraftBlockPos(this.x + Number(x), this.y + Number(y), this.z + Number(z));
+          }
+          subtract(position) { return this.add(-(position.x ?? position.getX?.() ?? 0), -(position.y ?? position.getY?.() ?? 0), -(position.z ?? position.getZ?.() ?? 0)); }
+          up(distance = 1) { return this.add(0, distance, 0); }
+          down(distance = 1) { return this.add(0, -distance, 0); }
+          north(distance = 1) { return this.add(0, 0, -distance); }
+          south(distance = 1) { return this.add(0, 0, distance); }
+          east(distance = 1) { return this.add(distance, 0, 0); }
+          west(distance = 1) { return this.add(-distance, 0, 0); }
+          offset(direction, distance = 1) {
+            const x = Number(direction?.getXOffset?.() ?? direction?.x ?? 0);
+            const y = Number(direction?.getYOffset?.() ?? direction?.y ?? 0);
+            const z = Number(direction?.getZOffset?.() ?? direction?.z ?? 0);
+            return this.add(x * distance, y * distance, z * distance);
+          }
+          distanceSq(x, y, z) {
+            if (x != null && typeof x === "object") { z = x.z ?? x.getZ?.() ?? 0; y = x.y ?? x.getY?.() ?? 0; x = x.x ?? x.getX?.() ?? 0; }
+            const dx = this.x - Number(x), dy = this.y - Number(y), dz = this.z - Number(z);
+            return dx * dx + dy * dy + dz * dz;
+          }
+          toLong() {
+            return BigInt.asIntN(64, (BigInt(this.x & 0x3ffffff) << 38n)
+              | (BigInt(this.z & 0x3ffffff) << 12n) | BigInt(this.y & 0xfff));
+          }
+          equals(other) { return other != null && this.x === other.x && this.y === other.y && this.z === other.z; }
+          hashCode() { return (Math.imul(this.x, 3129871) ^ Math.imul(this.z, 116129781) ^ this.y) | 0; }
+          toString() { return "(" + this.x + ", " + this.y + ", " + this.z + ")"; }
+          static fromLong(value) {
+            const packed = BigInt.asUintN(64, BigInt(value));
+            const signExtend = (number, bits) => Number(BigInt.asIntN(bits, number));
+            return new GoldClientMinecraftBlockPos(
+              signExtend(packed >> 38n, 26),
+              signExtend(packed & 0xfffn, 12),
+              signExtend((packed >> 12n) & 0x3ffffffn, 26));
+          }
+        }
+        GoldClientMinecraftBlockPos.ORIGIN = new GoldClientMinecraftBlockPos(0, 0, 0);
+
+        class GoldClientMinecraftVec3d {
+          constructor(x = 0, y = 0, z = 0) {
+            if (x != null && typeof x === "object") {
+              const vector = x;
+              this.x = Number(vector.x ?? 0); this.y = Number(vector.y ?? 0); this.z = Number(vector.z ?? 0);
+            } else { this.x = Number(x); this.y = Number(y); this.z = Number(z); }
+          }
+          addVector(x, y, z) { return new GoldClientMinecraftVec3d(this.x + x, this.y + y, this.z + z); }
+          add(other) { return this.addVector(other.x, other.y, other.z); }
+          subtract(other) { return new GoldClientMinecraftVec3d(this.x - other.x, this.y - other.y, this.z - other.z); }
+          scale(scale) { return new GoldClientMinecraftVec3d(this.x * scale, this.y * scale, this.z * scale); }
+          dotProduct(other) { return this.x * other.x + this.y * other.y + this.z * other.z; }
+          crossProduct(other) { return new GoldClientMinecraftVec3d(this.y * other.z - this.z * other.y, this.z * other.x - this.x * other.z, this.x * other.y - this.y * other.x); }
+          lengthSquared() { return this.dotProduct(this); }
+          lengthVector() { return Math.sqrt(this.lengthSquared()); }
+          normalize() { const length = this.lengthVector(); return length < 1e-4 ? new GoldClientMinecraftVec3d(0, 0, 0) : this.scale(1 / length); }
+          distanceTo(other) { return Math.sqrt(this.squareDistanceTo(other)); }
+          squareDistanceTo(other) { return (this.x-other.x)**2 + (this.y-other.y)**2 + (this.z-other.z)**2; }
+          toString() { return "("+this.x+", "+this.y+", "+this.z+")"; }
+          equals(other) { return other != null && this.x === other.x && this.y === other.y && this.z === other.z; }
+        }
+        GoldClientMinecraftVec3d.ZERO = new GoldClientMinecraftVec3d(0, 0, 0);
+
         export const GoldClientRuntime = Object.freeze({
           intDiv(a, b) {
             if (b === 0) throw new Error("ArithmeticException: / by zero");
