@@ -176,6 +176,19 @@ class JavaScriptModTranslationExporterTest {
         if (seen.join(",") !== "high,low" || result.listenerCount !== 2) throw new Error("event order");
         bus.clearOwner("a");
         if (bus.size !== 1) throw new Error("owner cleanup");
+        const forgeBus = new ForgeEventBus();
+        const canceledSeen = [];
+        forgeBus.subscribe("canceled", () => canceledSeen.push("default"));
+        forgeBus.subscribe("canceled", () => canceledSeen.push("receive"), { receiveCanceled: true, priority: "HIGHEST" });
+        forgeBus.subscribe("canceled", () => canceledSeen.push("low"), { priority: "LOW" });
+        const canceledEvent = { isCanceled: () => true };
+        forgeBus.post("canceled", canceledEvent);
+        if (canceledSeen.join(",") !== "receive") throw new Error("Forge isCanceled() or receiveCanceled semantics");
+        const prioritySeen = [];
+        forgeBus.subscribe("priority", () => prioritySeen.push("low"), { priority: "LOW" });
+        forgeBus.subscribe("priority", () => prioritySeen.push("high"), { priority: "HIGH" });
+        forgeBus.post("priority", {});
+        if (prioritySeen.join(",") !== "high,low") throw new Error("named Forge event priority order");
         let rejected = false;
         try { createForgeHost({}); } catch (error) { rejected = error.name === "ForgeHostBindingError"; }
         if (!rejected) throw new Error("missing bindings were silently accepted");
