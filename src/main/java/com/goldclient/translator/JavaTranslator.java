@@ -1005,6 +1005,12 @@ public final class JavaTranslator {
     }
 
     if (targetIndex <= branchIndex) {
+      if (context.isActiveLoop(labelKey(target))) {
+        return new ConditionalRender(
+            indent(indent) + "if (" + normalizeCondition(condition) + ") continue;\n",
+            true,
+            branchIndex);
+      }
       return renderBackwardLoop(
           operations, branchIndex, targetIndex, end, indent, context, labels,
           condition);
