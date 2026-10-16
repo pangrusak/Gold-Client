@@ -323,14 +323,35 @@ public final class JavaTranslator {
       if (tryEnd <= begin || catchBegin <= tryEnd) return null;
     }
 
+    Set<String> regionHandlerLabels = new java.util.LinkedHashSet<>();
+    for (IrOperationModel candidate : operations) {
+      if (!"TRY_BEGIN".equals(candidate.kind()) || candidate.operands().size() < 4) continue;
+      List<String> candidateMetadata = candidate.operands();
+      if (labelKey(startLabel).equals(labelKey(candidateMetadata.get(0)))
+          && labelKey(endLabel).equals(labelKey(candidateMetadata.get(1)))) {
+        regionHandlerLabels.add(labelKey(candidateMetadata.get(2)));
+      }
+    }
+    String normalJoinLabel = null;
+    if (regionHandlerLabels.size() == 1) {
+      for (int i = tryEnd + 1; i < catchBegin; i++) {
+        IrOperationModel operation = operations.get(i);
+        if (!"JUMP".equals(operation.kind()) || operation.operands().isEmpty()) continue;
+        String candidateJoin = operation.operands().get(0);
+        Integer candidateJoinIndex = labels.get(labelKey(candidateJoin));
+        if (candidateJoinIndex != null && candidateJoinIndex > catchBegin) {
+          normalJoinLabel = candidateJoin;
+        }
+      }
+    }
+
     int handlerEnd = end;
     String joinLabel = null;
     for (int i = catchBegin + 1; i < end; i++) {
       IrOperationModel operation = operations.get(i);
 
-      // Do not mistake a branch leaving a nested try/catch for the end of
-      // this handler. This is common in compiler-generated try-with-resources
-      // code, where close() has its own exception table inside the outer catch.
+      // Nested close()/cleanup regions may have their own joins; structure them
+      // first and don't mistake their internal branches for the outer handler exit.
       if ("TRY_BEGIN".equals(operation.kind())) {
         ConditionalRender nested = renderTryCatch(
             operations, i, end, indent, context, labels);
@@ -340,11 +361,26 @@ public final class JavaTranslator {
         }
       }
 
-      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+      if (normalJoinLabel != null) {
+        if ("LABEL".equals(operation.kind()) && !operation.operands().isEmpty()
+            && labelKey(normalJoinLabel).equals(labelKey(operation.operands().get(0)))) {
+          handlerEnd = i;
+          joinLabel = normalJoinLabel;
+          break;
+        }
+        if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+            && labelKey(normalJoinLabel).equals(labelKey(operation.operands().get(0)))) {
+          handlerEnd = i;
+          joinLabel = normalJoinLabel;
+          break;
+        }
+      } else if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
         String target = operation.operands().get(0);
         Integer targetIndex = labels.get(labelKey(target));
         Integer protectedEnd = labels.get(labelKey(endLabel));
-        if (targetIndex != null && protectedEnd != null && targetIndex > protectedEnd) {
+        // Backward jumps are loop/continue edges inside the handler, not joins.
+        if (targetIndex != null && targetIndex > i
+            && protectedEnd != null && targetIndex > protectedEnd) {
           handlerEnd = i;
           joinLabel = target;
           break;
@@ -355,7 +391,6 @@ public final class JavaTranslator {
         handlerEnd = i + 1;
         break;
       }
-
     }
     if (handlerEnd <= catchBegin + 1) return null;
 
@@ -887,8 +922,23 @@ public final class JavaTranslator {
     if (returnOperation.operands().stream().anyMatch(value ->
         value.contains("<unknown>") || value.contains("<exception>"))) return null;
 
+    int fallthroughEnd = targetIndex;
+    int skipReturnJump = findForwardJoinJump(
+        operations, branchIndex + 1, targetIndex, end, labels);
+    if (skipReturnJump >= 0 && onlyMetadataBetween(
+        operations, skipReturnJump + 1, targetIndex)) {
+      String skippedReturnJoin = operations.get(skipReturnJump).operands().get(0);
+      Integer skippedReturnJoinIndex = labels.get(labelKey(skippedReturnJoin));
+      if (skippedReturnJoinIndex != null && skippedReturnJoinIndex > returnIndex) {
+        fallthroughEnd = skipReturnJump;
+      } else {
+        skipReturnJump = -1;
+      }
+    } else {
+      skipReturnJump = -1;
+    }
     RenderResult fallthrough = renderRange(
-        operations, branchIndex + 1, targetIndex, indent, context, labels);
+        operations, branchIndex + 1, fallthroughEnd, indent, context, labels);
     StringBuilder source = new StringBuilder();
     source.append(indent(indent)).append("if (")
         .append(normalizeCondition(branch.operands().get(0))).append(") {\n");
