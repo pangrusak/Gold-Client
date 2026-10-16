@@ -607,6 +607,43 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void arrayListUsesJavaEqualsAndSeparatesRemoveOverloads() throws Exception {
+    Path output = tempDir.resolve("java-arraylist-equality-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("arraylist-equality-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const makeValue = value => ({ value, equals(other) { return other != null && other.value === this.value; } });
+        const stored = makeValue("same"), equalCopy = makeValue("same"), other = makeValue("other");
+        const list = r.createJava("java.util.ArrayList", [stored, other]);
+        if (!list.contains(equalCopy) || list.indexOf(equalCopy) !== 0 || list.lastIndexOf(equalCopy) !== 0) {
+          throw new Error("List search ignored Java equals");
+        }
+        if (!list.removeObject(equalCopy) || list.contains(stored)) throw new Error("remove(Object) equality mismatch");
+        list.add(10); list.add(20); list.add(30);
+        if (list.remove(1) !== 20 || list.toArray().join(",") !== "10,30") {
+          throw new Error("remove(int) should return and remove the indexed element");
+        }
+        const removeValues = r.createJava("java.util.ArrayList", [makeValue("x"), makeValue("y")]);
+        if (!removeValues.removeAll([makeValue("x")]) || removeValues.size() !== 1) {
+          throw new Error("List.removeAll ignored Java equals");
+        }
+        console.log("java-arraylist-equality-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "ArrayList equality runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-arraylist-equality-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
