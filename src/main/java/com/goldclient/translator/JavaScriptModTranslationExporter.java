@@ -2007,6 +2007,60 @@ public final class JavaScriptModTranslationExporter {
             return null;
           },
           invokePlatformStatic(owner, method, ...args) {
+            if (owner === "net.minecraft.util.math.MathHelper") {
+              const value = Number(args[0]);
+              if (method === "clamp" || method === "clamp_float" || method === "clamp_int") {
+                const clamped = Math.max(Number(args[1]), Math.min(Number(args[2]), value));
+                return method === "clamp_int" ? Math.trunc(clamped) : clamped;
+              }
+              if (method === "floor" || method === "floor_double" || method === "fastFloor") return Math.floor(value);
+              if (method === "ceil" || method === "ceil_double") return Math.ceil(value);
+              if (method === "abs" || method === "abs_int") return Math.abs(value);
+              if (method === "sqrt" || method === "sqrt_double") return Math.sqrt(value);
+              if (method === "sin") return Math.sin(value);
+              if (method === "cos") return Math.cos(value);
+              if (method === "atan2") return Math.atan2(Number(args[0]), Number(args[1]));
+              if (method === "wrapDegrees") {
+                let degrees = value % 360;
+                if (degrees >= 180) degrees -= 360;
+                if (degrees < -180) degrees += 360;
+                return degrees;
+              }
+              if (method === "normalizeAngle") {
+                const bound = Number(args[1]);
+                return bound === 0 ? 0 : ((value % bound) + bound) % bound;
+              }
+              if (method === "denormalizeClamp") {
+                const start = Number(args[0]), end = Number(args[1]), amount = Number(args[2]);
+                const delta = end - start;
+                if (delta < -180) return start + (360 + delta) * amount;
+                if (delta > 180) return start + (delta - 360) * amount;
+                return start + delta * amount;
+              }
+              if (method === "pct") return Number(args[0]) / Number(args[1]);
+              if (method === "average") {
+                const values = Array.from(args[0] ?? []);
+                return values.length ? values.reduce((sum, item) => sum + Number(item), 0) / values.length : 0;
+              }
+              if (method === "getInt" || method === "getRandomIntegerInRange") {
+                const random = args[0], min = Number(args[1]), max = Number(args[2]);
+                return min >= max ? min : min + random.nextInt(max - min + 1);
+              }
+              if (method === "getRandomFloat") {
+                const random = args[0], min = Number(args[1]), max = Number(args[2]);
+                return min + random.nextFloat() * (max - min);
+              }
+              if (method === "hsvToRGB") {
+                const hue = Number(args[0]), saturation = Number(args[1]), brightness = Number(args[2]);
+                const sector = Math.floor(hue * 6) % 6;
+                const fraction = hue * 6 - Math.floor(hue * 6);
+                const p = brightness * (1 - saturation);
+                const q = brightness * (1 - fraction * saturation);
+                const t = brightness * (1 - (1 - fraction) * saturation);
+                const rgb = [[brightness,t,p],[q,brightness,p],[p,brightness,t],[p,q,brightness],[t,p,brightness],[brightness,p,q]][sector];
+                return (Math.round(rgb[0] * 255) << 16) | (Math.round(rgb[1] * 255) << 8) | Math.round(rgb[2] * 255);
+              }
+            }
             if (owner === "net.minecraft.util.EnumFacing") {
               if (method === "values") return GoldClientMinecraftEnumFacing.VALUES.slice();
               if (method === "getFront") return GoldClientMinecraftEnumFacing.getFront(args[0]);
