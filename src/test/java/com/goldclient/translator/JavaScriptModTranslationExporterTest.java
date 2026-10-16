@@ -507,9 +507,9 @@ class JavaScriptModTranslationExporterTest {
         Opcodes.ACC_PUBLIC, null, List.of(), List.of(),
         List.of(
             method("choose", "(I)Ljava/lang/String;", Opcodes.ACC_PUBLIC, List.of(
-                op("CONSTANT", "\\"int\\""), op("RETURN", "\\"int\\""))),
+                op("CONSTANT", "\"int\""), op("RETURN", "\"int\""))),
             method("choose", "(Ljava/lang/String;)Ljava/lang/String;", Opcodes.ACC_PUBLIC, List.of(
-                op("CONSTANT", "\\"string\\""), op("RETURN", "\\"string\\"")))),
+                op("CONSTANT", "\"string\""), op("RETURN", "\"string\"")))),
         List.of());
     Path output = tempDir.resolve("overloaded-methods");
     new JavaScriptModTranslationExporter().export(List.of(clazz), output);
