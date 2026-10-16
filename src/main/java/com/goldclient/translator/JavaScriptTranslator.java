@@ -103,13 +103,20 @@ public final class JavaScriptTranslator {
 
   public TranslationResult translateAdapter(String methodName, String descriptor, String reason,
       boolean isStatic) {
+    return translateAdapter(null, methodName, descriptor, reason, isStatic);
+  }
+
+  /** Emits a declaration adapter with an owner-qualified key to avoid cross-type collisions. */
+  public TranslationResult translateAdapter(String owner, String methodName, String descriptor,
+      String reason, boolean isStatic) {
     String signatureSource = structuredTranslator.translate(
         new IrMethodModel(methodName, descriptor, List.of())).source();
     Matcher signature = SIGNATURE.matcher(signatureSource);
     String parameters = signature.find() ? lowerParameters(signature.group(2), isStatic) : "";
     String exportName = exportedName(methodName, descriptor);
-    String detail = methodName + (descriptor == null ? "" : descriptor) + ": "
-        + (reason == null ? "declaration" : reason);
+    String signatureKey = methodName + (descriptor == null ? "" : descriptor);
+    String detail = (owner == null || owner.isBlank() ? "" : owner.replace('/', '.') + "#")
+        + signatureKey + ": " + (reason == null ? "declaration" : reason);
     return new TranslationResult(
         "// Status: adapter-required; no JVM method body exists.\n"
             + "export function " + exportName + "(" + parameters + ") {\n"
