@@ -902,6 +902,12 @@ public final class JavaTranslator {
     if (branch.operands().size() < 2) return null;
     Integer targetIndex = labels.get(labelKey(branch.operands().get(1)));
     if (targetIndex == null || targetIndex <= branchIndex || targetIndex >= end) return null;
+    // A try-region start is not an ordinary early-return destination: keep its
+    // markers available so renderTryCatch can preserve the protected extent.
+    if (findTryBeginBeforeTarget(
+        operations, branchIndex + 1, targetIndex, branch.operands().get(1), labels) >= 0) {
+      return null;
+    }
 
     int returnIndex = -1;
     for (int i = targetIndex + 1; i < end; i++) {
