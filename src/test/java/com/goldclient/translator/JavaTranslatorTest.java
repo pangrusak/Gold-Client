@@ -844,4 +844,36 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
+  @Test
+  void structuresTryRegionThatStartsAtConditionalTarget() {
+    List<String> region = List.of("Ltry", "LafterTry", "Lhandler", "java.lang.RuntimeException");
+    IrMethodModel method = new IrMethodModel("render", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("skipPreTry != 0", "Ltry"), 0),
+        new IrOperationModel("METHOD_CALL", List.of("beforeTry()"), 1),
+        new IrOperationModel("TRY_BEGIN", region, 2),
+        new IrOperationModel("LABEL", List.of("Ltry"), 3),
+        new IrOperationModel("METHOD_CALL", List.of("protectedWork()"), 4),
+        new IrOperationModel("TRY_END", region, 5),
+        new IrOperationModel("LABEL", List.of("LafterTry"), 6),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 7),
+        new IrOperationModel("CATCH_BEGIN", region, 8),
+        new IrOperationModel("LABEL", List.of("Lhandler"), 9),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 10),
+        new IrOperationModel("METHOD_CALL", List.of("recover(local1)"), 11),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 12),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 13),
+        new IrOperationModel("RETURN", List.of(), 14)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("beforeTry();"), result.source());
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains("catch (java.lang.RuntimeException local1)"), result.source());
+    assertTrue(result.source().contains("protectedWork();"), result.source());
+    assertTrue(result.source().contains("recover(local1);"), result.source());
+    assertTrue(!result.source().contains("<exception>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
 }
