@@ -74,24 +74,24 @@ public final class JavaTranslator {
 
       if ("LABEL".equals(operation.kind())) {
         if (!operation.operands().isEmpty()) {
+          // Prefer the loop's actual forward exit test over a nested conditional
+          // that happens to branch back to this header as a continue edge.
+          LoopShape forwardExitLoop = findForwardExitLoop(
+              operations, i, end, operation.operands().get(0), labels);
+          if (forwardExitLoop != null) {
+            ConditionalRender loop = renderForwardExitLoop(
+                operations, i, end, forwardExitLoop, indent, context, labels);
+            source.append(loop.source());
+            complete &= loop.complete();
+            i = loop.lastIndex();
+            continue;
+          }
           int loopBranch = findBackwardConditional(
               operations, i, end, operation.operands().get(0));
           if (loopBranch > i) {
             ConditionalRender loop = renderBackwardLoop(
                 operations, loopBranch, i, end, indent, context, labels,
                 operations.get(loopBranch).operands().get(0));
-            source.append(loop.source());
-            complete &= loop.complete();
-            i = loop.lastIndex();
-            continue;
-          }
-          // Prefer the loop's actual forward exit test over a nested conditional
-          // that happens to be followed by a continue edge to this header.
-          LoopShape forwardExitLoop = findForwardExitLoop(
-              operations, i, end, operations.get(i).operands().get(0), labels);
-          if (forwardExitLoop != null) {
-            ConditionalRender loop = renderForwardExitLoop(
-                operations, i, end, forwardExitLoop, indent, context, labels);
             source.append(loop.source());
             complete &= loop.complete();
             i = loop.lastIndex();
