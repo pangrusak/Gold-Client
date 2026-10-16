@@ -836,7 +836,7 @@ public final class JavaScriptModTranslationExporter {
           }
           clear() { this.items.length = 0; }
           remove(value) {
-            if (Number.isInteger(value)) return this.removeAt(value) !== undefined;
+            if (Number.isInteger(value)) return this.removeAt(value);
             return this.removeObject(value);
           }
           removeObject(value) {
