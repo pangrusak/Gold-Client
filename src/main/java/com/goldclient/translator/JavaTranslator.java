@@ -656,18 +656,21 @@ public final class JavaTranslator {
     Integer trueLabelIndex = labels.get(labelKey(firstBranch.operands().get(1)));
     if (trueLabelIndex == null || trueLabelIndex <= branchIndex || trueLabelIndex >= end) return null;
 
-    int secondBranchIndex = -1;
+    List<Integer> falseBranches = new java.util.ArrayList<>();
     Integer falseLabelIndex = null;
     for (int i = branchIndex + 1; i < trueLabelIndex; i++) {
       IrOperationModel candidate = operations.get(i);
       if ("JUMP".equals(candidate.kind())) return null;
       if ("CONDITIONAL_BRANCH".equals(candidate.kind())) {
-        if (secondBranchIndex >= 0 || candidate.operands().size() < 2) return null;
-        secondBranchIndex = i;
-        falseLabelIndex = labels.get(labelKey(candidate.operands().get(1)));
+        if (candidate.operands().size() < 2) return null;
+        Integer candidateFalseLabel = labels.get(labelKey(candidate.operands().get(1)));
+        if (candidateFalseLabel == null) return null;
+        if (falseLabelIndex == null) falseLabelIndex = candidateFalseLabel;
+        else if (!falseLabelIndex.equals(candidateFalseLabel)) return null;
+        falseBranches.add(i);
       }
     }
-    if (secondBranchIndex < 0 || falseLabelIndex == null
+    if (falseBranches.isEmpty() || falseLabelIndex == null
         || falseLabelIndex <= trueLabelIndex || falseLabelIndex >= end) return null;
 
     int trueConstantIndex = nextExecutableIndex(operations, trueLabelIndex + 1, end);
@@ -691,27 +694,37 @@ public final class JavaTranslator {
         || !"<unknown>".equals(operations.get(sinkIndex).operands().get(
             operations.get(sinkIndex).operands().size() - 1))) return null;
 
-    RenderResult prefix = renderRange(
-        operations, branchIndex + 1, secondBranchIndex, indent, context, labels);
     String trueValue = operations.get(trueConstantIndex).operands().get(0);
     String falseValue = operations.get(falseConstantIndex).operands().get(0);
     StringBuilder source = new StringBuilder();
+    boolean complete = true;
     if ("RETURN".equals(operations.get(sinkIndex).kind())) {
       source.append(indent(indent)).append("if (")
           .append(normalizeCondition(firstBranch.operands().get(0))).append(") {\n")
           .append(indent(indent + 1)).append("return ").append(trueValue).append(";\n")
-          .append(indent(indent)).append("}\n")
-          .append(prefix.source())
-          .append(indent(indent)).append("if (")
-          .append(normalizeCondition(operations.get(secondBranchIndex).operands().get(0)))
-          .append(") {\n")
-          .append(indent(indent + 1)).append("return ").append(falseValue).append(";\n")
-          .append(indent(indent)).append("}\n")
-          .append(indent(indent)).append("return ").append(trueValue).append(";\n");
-      return new ConditionalRender(source.toString(), prefix.complete(), sinkIndex);
+          .append(indent(indent)).append("}\n");
+      int previous = branchIndex;
+      for (int falseBranch : falseBranches) {
+        RenderResult prefix = renderRange(
+            operations, previous + 1, falseBranch, indent, context, labels);
+        source.append(prefix.source());
+        complete &= prefix.complete();
+        source.append(indent(indent)).append("if (")
+            .append(normalizeCondition(operations.get(falseBranch).operands().get(0)))
+            .append(") {\n")
+            .append(indent(indent + 1)).append("return ").append(falseValue).append(";\n")
+            .append(indent(indent)).append("}\n");
+        previous = falseBranch;
+      }
+      source.append(indent(indent)).append("return ").append(trueValue).append(";\n");
+      return new ConditionalRender(source.toString(), complete, sinkIndex);
     }
     if (!"LOCAL_WRITE".equals(operations.get(sinkIndex).kind())
-        || operations.get(sinkIndex).operands().size() < 2) return null;
+        || operations.get(sinkIndex).operands().size() < 2 || falseBranches.size() != 1) return null;
+
+    int falseBranch = falseBranches.get(0);
+    RenderResult prefix = renderRange(
+        operations, branchIndex + 1, falseBranch, indent + 1, context, labels);
     String local = operations.get(sinkIndex).operands().get(0);
     boolean declare = context.declareLocal(local);
     if (declare) source.append(indent(indent)).append("var ").append(local).append(";\n");
@@ -721,7 +734,7 @@ public final class JavaTranslator {
         .append(indent(indent)).append("} else {\n")
         .append(prefix.source())
         .append(indent(indent + 1)).append("if (")
-        .append(normalizeCondition(operations.get(secondBranchIndex).operands().get(0)))
+        .append(normalizeCondition(operations.get(falseBranch).operands().get(0)))
         .append(") {\n")
         .append(indent(indent + 2)).append(local).append(" = ").append(falseValue).append(";\n")
         .append(indent(indent + 1)).append("} else {\n")
