@@ -305,6 +305,50 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void collectionsUsesJavaEqualityAndSeededShuffle() throws Exception {
+    Path output = tempDir.resolve("java-collections-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("collections-runtime-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const makeValue = value => ({ value, equals(other) { return other != null && other.value === this.value; } });
+        const oneA = makeValue(1), oneB = makeValue(1), two = makeValue(2);
+        if (r.invokeJavaStatic("java.util.Collections", "frequency", [oneA, two, oneB], makeValue(1)) !== 2) {
+          throw new Error("Collections.frequency should use Java equals");
+        }
+        if (r.invokeJavaStatic("java.util.Collections", "disjoint", [oneA], [oneB])) {
+          throw new Error("Collections.disjoint should use Java equals");
+        }
+        r.invokeJavaStatic("java.util.Collections", "replaceAll", [oneA, two, oneB], makeValue(1), "replaced");
+        const replaced = [oneA, two, oneB];
+        r.invokeJavaStatic("java.util.Collections", "replaceAll", replaced, makeValue(1), "replaced");
+        if (replaced.join(",") !== "replaced,[object Object],replaced") {
+          throw new Error("Collections.replaceAll should use Java equals");
+        }
+        const list = r.createJava("java.util.ArrayList", [0, 1, 2, 3, 4]);
+        r.invokeJavaStatic("java.util.Collections", "shuffle", list, r.createJava("java.util.Random", 0));
+        if (list.items.join(",") !== "3,2,1,4,0") {
+          throw new Error("Collections.shuffle should use the supplied seeded Random: " + list.items);
+        }
+        const array = [0, 1, 2, 3, 4];
+        r.invokeJavaStatic("java.util.Collections", "shuffle", array, r.createJava("java.util.Random", 0));
+        if (array.join(",") !== "3,2,1,4,0") throw new Error("Collections.shuffle array mismatch");
+        console.log("java-collections-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Java Collections runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-collections-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
