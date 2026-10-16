@@ -526,6 +526,46 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void collectionsCopySwapBinarySearchAndNCopiesWork() throws Exception {
+    Path output = tempDir.resolve("java-collections-operations");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("collections-operations-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const call = (method, ...args) => r.invokeJavaStatic("java.util.Collections", method, ...args);
+        const destination = r.createJava("java.util.ArrayList", [0, 0, 0]);
+        const source = r.createJava("java.util.ArrayList", [7, 8]);
+        call("copy", destination, source);
+        if (destination.items.join(",") !== "7,8,0") throw new Error("Collections.copy mismatch");
+        call("swap", destination, 0, 2);
+        if (destination.items.join(",") !== "0,8,7") throw new Error("Collections.swap mismatch");
+        if (call("binarySearch", [1, 3, 5, 7], 5) !== 2) throw new Error("Collections.binarySearch failed");
+        if (call("binarySearch", [1, 3, 5, 7], 4) !== -3) throw new Error("Collections.binarySearch insertion point mismatch");
+        const copies = call("nCopies", 3, "x");
+        if (copies.toArray().join(",") !== "x,x,x") throw new Error("Collections.nCopies mismatch");
+        let immutable = false;
+        try { copies.add("y"); } catch (error) { immutable = error.message.includes("UnsupportedOperationException"); }
+        if (!immutable) throw new Error("Collections.nCopies should be unmodifiable");
+        let shortDestinationRejected = false;
+        try { call("copy", [0], [1, 2]); }
+        catch (error) { shortDestinationRejected = error.message.includes("destination is too small"); }
+        if (!shortDestinationRejected) throw new Error("Collections.copy accepted a short destination");
+        console.log("java-collections-operations-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Collections operations runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-collections-operations-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
