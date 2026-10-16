@@ -1952,6 +1952,10 @@ public final class JavaScriptModTranslationExporter {
             }
           },
           getStaticField(className, fieldName) {
+            if (className === "net.minecraft.util.EnumFacing"
+                && Object.prototype.hasOwnProperty.call(GoldClientMinecraftEnumFacing, fieldName)) {
+              return GoldClientMinecraftEnumFacing[fieldName];
+            }
             if (className === "net.minecraft.util.math.BlockPos" && fieldName === "ORIGIN") return GoldClientMinecraftBlockPos.ORIGIN;
             if (className === "net.minecraft.util.math.Vec3d" && fieldName === "ZERO") return GoldClientMinecraftVec3d.ZERO;
             if (className === "java.util.concurrent.TimeUnit") return GoldClientJavaTimeUnit.named(fieldName);
@@ -2003,6 +2007,18 @@ public final class JavaScriptModTranslationExporter {
             return null;
           },
           invokePlatformStatic(owner, method, ...args) {
+            if (owner === "net.minecraft.util.EnumFacing") {
+              if (method === "values") return GoldClientMinecraftEnumFacing.VALUES.slice();
+              if (method === "getFront") return GoldClientMinecraftEnumFacing.getFront(args[0]);
+              if (method === "getHorizontal") return GoldClientMinecraftEnumFacing.getHorizontal(args[0]);
+              if (method === "byName") return GoldClientMinecraftEnumFacing.byName(args[0]);
+              if (method === "getFacingFromVector") {
+                const [x, y, z] = args.map(Number);
+                if (Math.abs(x) > Math.abs(y) && Math.abs(x) > Math.abs(z)) return x < 0 ? GoldClientMinecraftEnumFacing.WEST : GoldClientMinecraftEnumFacing.EAST;
+                if (Math.abs(y) > Math.abs(z)) return y < 0 ? GoldClientMinecraftEnumFacing.DOWN : GoldClientMinecraftEnumFacing.UP;
+                return z < 0 ? GoldClientMinecraftEnumFacing.NORTH : GoldClientMinecraftEnumFacing.SOUTH;
+              }
+            }
             if (owner === "net.minecraft.util.math.BlockPos" && method === "fromLong") {
               return GoldClientMinecraftBlockPos.fromLong(args[0]);
             }
