@@ -1630,12 +1630,43 @@ public final class JavaScriptModTranslationExporter {
         }
         GoldClientMinecraftBlockPos.ORIGIN = new GoldClientMinecraftBlockPos(0, 0, 0);
 
+        class GoldClientMinecraftEnumAxis {
+          constructor(name) { this.name = name; }
+          getName() { return this.name.toLowerCase(); }
+          isVertical() { return this.name === "Y"; }
+          isHorizontal() { return this.name !== "Y"; }
+          toString() { return this.getName(); }
+          equals(other) { return other != null && this.name === other.name; }
+        }
+        GoldClientMinecraftEnumAxis.X = new GoldClientMinecraftEnumAxis("X");
+        GoldClientMinecraftEnumAxis.Y = new GoldClientMinecraftEnumAxis("Y");
+        GoldClientMinecraftEnumAxis.Z = new GoldClientMinecraftEnumAxis("Z");
+        GoldClientMinecraftEnumAxis.VALUES = [
+          GoldClientMinecraftEnumAxis.X, GoldClientMinecraftEnumAxis.Y, GoldClientMinecraftEnumAxis.Z
+        ];
+
+        class GoldClientMinecraftAxisDirection {
+          constructor(name, offset) { this.name = name; this.offset = offset; }
+          getName() { return this.name.toLowerCase(); }
+          getOffset() { return this.offset; }
+          toString() { return this.getName(); }
+          equals(other) { return other != null && this.name === other.name; }
+        }
+        GoldClientMinecraftAxisDirection.POSITIVE = new GoldClientMinecraftAxisDirection("POSITIVE", 1);
+        GoldClientMinecraftAxisDirection.NEGATIVE = new GoldClientMinecraftAxisDirection("NEGATIVE", -1);
+        GoldClientMinecraftAxisDirection.VALUES = [
+          GoldClientMinecraftAxisDirection.POSITIVE, GoldClientMinecraftAxisDirection.NEGATIVE
+        ];
+
         class GoldClientMinecraftEnumFacing {
           constructor(name, index, x, y, z, horizontalIndex = -1) {
             this.name = name; this.index = index;
             this.xOffset = x; this.yOffset = y; this.zOffset = z;
             this.horizontalIndex = horizontalIndex;
-            this.axis = y !== 0 ? "Y" : x !== 0 ? "X" : "Z";
+            this.axis = y !== 0 ? GoldClientMinecraftEnumAxis.Y
+              : x !== 0 ? GoldClientMinecraftEnumAxis.X : GoldClientMinecraftEnumAxis.Z;
+            this.axisDirection = (x + y + z) > 0
+              ? GoldClientMinecraftAxisDirection.POSITIVE : GoldClientMinecraftAxisDirection.NEGATIVE;
           }
           getName() { return this.name.toLowerCase(); }
           getIndex() { return this.index; }
@@ -1644,6 +1675,7 @@ public final class JavaScriptModTranslationExporter {
           getYOffset() { return this.yOffset; }
           getZOffset() { return this.zOffset; }
           getAxis() { return this.axis; }
+          getAxisDirection() { return this.axisDirection; }
           getOpposite() { return GoldClientMinecraftEnumFacing.OPPOSITES[this.name]; }
           toString() { return this.getName(); }
           equals(other) { return other != null && this.name === other.name; }
