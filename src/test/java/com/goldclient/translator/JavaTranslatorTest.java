@@ -944,4 +944,61 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
+  @Test
+  void structuresInfiniteLoopWithEarlyReturnsAndContinue() {
+    IrMethodModel method = new IrMethodModel("findEntry", "()Z", List.of(
+        new IrOperationModel("LABEL", List.of("Lloop"), 0),
+        new IrOperationModel("CALL_VALUE", List.of("nextEntry()"), 1),
+        new IrOperationModel("LOCAL_WRITE", List.of("local2", "nextEntry()"), 2),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local2 == null", "LnotFound"), 3),
+        new IrOperationModel("CALL_VALUE", List.of("local2.getName().equals(name)"), 4),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local2.getName().equals(name) == 0", "Lcontinue"), 5),
+        new IrOperationModel("CONSTANT", List.of("1"), 6),
+        new IrOperationModel("RETURN", List.of("1"), 7),
+        new IrOperationModel("LABEL", List.of("LnotFound"), 8),
+        new IrOperationModel("CONSTANT", List.of("0"), 9),
+        new IrOperationModel("RETURN", List.of("0"), 10),
+        new IrOperationModel("LABEL", List.of("Lcontinue"), 11),
+        new IrOperationModel("JUMP", List.of("Lloop"), 12)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("if (local2 == null)"), result.source());
+    assertTrue(result.source().contains("return 0;"), result.source());
+    assertTrue(result.source().contains("continue;"), result.source());
+    assertTrue(result.source().contains("return 1;"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void treatsSwitchDefaultThatIsTheJoinAsContinuation() {
+    IrMethodModel method = new IrMethodModel("trim", "()V", List.of(
+        new IrOperationModel("LOCAL_READ", List.of("size"), 0),
+        new IrOperationModel("TABLE_SWITCH",
+            List.of("size", "0", "2", "Ljoin", "Lempty", "Lsingle", "Lmany"), 1),
+        new IrOperationModel("LABEL", List.of("Lempty"), 2),
+        new IrOperationModel("METHOD_CALL", List.of("emptyMap()"), 3),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 4),
+        new IrOperationModel("LABEL", List.of("Lsingle"), 5),
+        new IrOperationModel("METHOD_CALL", List.of("singletonMap()"), 6),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 7),
+        new IrOperationModel("LABEL", List.of("Lmany"), 8),
+        new IrOperationModel("METHOD_CALL", List.of("copyMap()"), 9),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 10),
+        new IrOperationModel("RETURN", List.of(), 11)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("switch (size)"), result.source());
+    assertTrue(result.source().contains("case 0:"), result.source());
+    assertTrue(result.source().contains("default:") == false, result.source());
+    assertTrue(result.source().contains("emptyMap();"), result.source());
+    assertTrue(result.source().contains("singletonMap();"), result.source());
+    assertTrue(result.source().contains("copyMap();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
 }
