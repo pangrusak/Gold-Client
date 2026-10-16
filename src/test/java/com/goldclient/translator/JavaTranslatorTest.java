@@ -1052,4 +1052,27 @@ class JavaTranslatorTest {
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
+  @Test
+  void structuresContinueDiamondWithoutLeavingGoto() {
+    IrMethodModel method = new IrMethodModel("loopWithConditionalContinue", "()V", List.of(
+        new IrOperationModel("LABEL", List.of("Lloop"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("done", "Lend"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("skipItem", "Lcontinue"), 2),
+        new IrOperationModel("METHOD_CALL", List.of("processItem()"), 3),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 4),
+        new IrOperationModel("LABEL", List.of("Lcontinue"), 5),
+        new IrOperationModel("JUMP", List.of("Lloop"), 6),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 7),
+        new IrOperationModel("JUMP", List.of("Lloop"), 8),
+        new IrOperationModel("LABEL", List.of("Lend"), 9),
+        new IrOperationModel("RETURN", List.of(), 10)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (skipItem) continue;"), result.source());
+    assertTrue(result.source().contains("processItem();"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
 }
