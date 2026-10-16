@@ -418,6 +418,42 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void sortingAdaptersHonorComparatorObjectsAndJavaNaturalOrdering() throws Exception {
+    Path output = tempDir.resolve("java-comparator-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("comparator-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const reverse = { compare(a, b) { return b - a; } };
+        const array = [1, 4, 2, 3];
+        r.invokeJavaStatic("java.util.Arrays", "sort", array, reverse);
+        if (array.join(",") !== "4,3,2,1") throw new Error("Arrays.sort ignored Comparator.compare");
+        const list = r.createJava("java.util.ArrayList", [1, 4, 2, 3]);
+        r.invokeJavaStatic("java.util.Collections", "sort", list, reverse);
+        if (list.items.join(",") !== "4,3,2,1") throw new Error("Collections.sort ignored Comparator.compare");
+        const found = r.invokeJavaStatic("java.util.Arrays", "binarySearch", [9, 7, 5, 3], 5, reverse);
+        if (found !== 2) throw new Error("binarySearch comparator mismatch: " + found);
+        const natural = [10, 2, -1];
+        r.invokeJavaStatic("java.util.Arrays", "sort", natural);
+        if (natural.join(",") !== "-1,2,10") throw new Error("numeric natural ordering mismatch");
+        const min = r.invokeJavaStatic("java.util.Collections", "min", [8, 2, 5]);
+        if (min !== 2) throw new Error("Collections.min natural ordering mismatch");
+        console.log("java-comparator-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Comparator runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-comparator-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
