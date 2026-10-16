@@ -1441,6 +1441,20 @@ public final class JavaScriptModTranslationExporter {
             if (typeof a.equals === "function") return Boolean(a.equals(b));
             return a === b;
           },
+          javaDeepEquals(a, b) {
+            if (a === b) return true;
+            if (a == null || b == null) return false;
+            const arrayA = Array.isArray(a) || ArrayBuffer.isView(a);
+            const arrayB = Array.isArray(b) || ArrayBuffer.isView(b);
+            if (arrayA || arrayB) {
+              if (!arrayA || !arrayB || a.length !== b.length) return false;
+              for (let i = 0; i < a.length; i++) {
+                if (!this.javaDeepEquals(a[i], b[i])) return false;
+              }
+              return true;
+            }
+            return this.javaEquals(a, b);
+          },
           requireNonNull(value, message = "null") {
             if (value === null || value === undefined) throw new TypeError(message);
             return value;
@@ -1807,12 +1821,7 @@ public final class JavaScriptModTranslationExporter {
             }
             if (owner === "java.util.Objects") {
               if (method === "equals") return this.javaEquals(args[0], args[1]);
-              if (method === "deepEquals") {
-                const a = args[0], b = args[1];
-                return Array.isArray(a) && Array.isArray(b)
-                  ? a.length === b.length && a.every((value, index) => this.javaEquals(value, b[index]))
-                  : this.javaEquals(a, b);
-              }
+              if (method === "deepEquals") return this.javaDeepEquals(args[0], args[1]);
               if (method === "hashCode") return this.javaHashCode(args[0]);
               if (method === "hash") return args.reduce((hash, value) =>
                 (Math.imul(hash, 31) + this.javaHashCode(value)) | 0, 1);
