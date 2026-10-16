@@ -249,6 +249,56 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void javaRandomMatchesTheJdkSeededSequence() throws Exception {
+    Path output = tempDir.resolve("java-random-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("java-random-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const first = r.createJava("java.util.Random", 0);
+        if (first.nextInt() !== -1155484576) throw new Error("Java Random first nextInt mismatch");
+        if (first.nextInt() !== -723955400) throw new Error("Java Random second nextInt mismatch");
+        const bounded = r.createJava("java.util.Random", 0);
+        if (bounded.nextInt(100) !== 60) throw new Error("Java Random bounded nextInt mismatch");
+        const powerOfTwo = r.createJava("java.util.Random", 0);
+        if (powerOfTwo.nextInt(16) !== 11) throw new Error("Java Random power-of-two bound mismatch");
+        const doubleRandom = r.createJava("java.util.Random", 0);
+        if (Math.abs(doubleRandom.nextDouble() - 0.730967787376657) > 1e-15) {
+          throw new Error("Java Random nextDouble mismatch");
+        }
+        const gaussian = r.createJava("java.util.Random", 0);
+        if (Math.abs(gaussian.nextGaussian() - 0.8025330637390305) > 1e-14) {
+          throw new Error("Java Random nextGaussian mismatch");
+        }
+        if (gaussian.nextGaussian() !== gaussian.nextGaussianValue) {
+          throw new Error("Java Random Gaussian cache should return the paired sample");
+        }
+        const reset = r.createJava("java.util.Random", 99);
+        const beforeReset = reset.nextInt();
+        reset.setSeed(0);
+        if (reset.nextInt() !== -1155484576 || beforeReset === reset.nextInt()) {
+          throw new Error("Java Random setSeed did not reset the sequence");
+        }
+        let invalidBoundRejected = false;
+        try { r.createJava("java.util.Random", 0).nextInt(0); }
+        catch (error) { invalidBoundRejected = error.message.includes("bound must be positive"); }
+        if (!invalidBoundRejected) throw new Error("Java Random accepted a zero bound");
+        console.log("java-random-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Java Random runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-random-ok", outputText);
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);
