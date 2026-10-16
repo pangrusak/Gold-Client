@@ -2098,6 +2098,42 @@ public final class JavaScriptModTranslationExporter {
               if (method === "emptyList") return new GoldClientJavaList();
               if (method === "emptySet") return new GoldClientJavaSet();
               if (method === "emptyMap") return new GoldClientJavaMap();
+              if (method === "nCopies") {
+                const count = Number(args[0]);
+                if (!Number.isInteger(count) || count < 0) throw new RangeError("IllegalArgumentException: negative copies");
+                return this.unmodifiable(new GoldClientJavaList(Array(count).fill(args[1])));
+              }
+              if (method === "copy") {
+                const destination = args[0]?.items ?? args[0];
+                const source = Array.from(args[1]?.items ?? args[1] ?? []);
+                if (destination == null) throw new TypeError("NullPointerException: destination");
+                if (destination.length < source.length) throw new RangeError("IndexOutOfBoundsException: destination is too small");
+                for (let i = 0; i < source.length; i++) destination[i] = source[i];
+                return;
+              }
+              if (method === "swap") {
+                const values = args[0]?.items ?? args[0];
+                if (values == null) throw new TypeError("NullPointerException: list");
+                const i = Number(args[1]), j = Number(args[2]);
+                if (!Number.isInteger(i) || !Number.isInteger(j) || i < 0 || j < 0 || i >= values.length || j >= values.length) {
+                  throw new RangeError("IndexOutOfBoundsException");
+                }
+                [values[i], values[j]] = [values[j], values[i]];
+                return;
+              }
+              if (method === "binarySearch") {
+                const values = Array.from(args[0]?.items ?? args[0] ?? []);
+                const target = args[1], comparator = args[2] ?? null;
+                let low = 0, high = values.length - 1;
+                while (low <= high) {
+                  const mid = (low + high) >>> 1;
+                  const compare = this.compareJava(values[mid], target, comparator);
+                  if (compare < 0) low = mid + 1;
+                  else if (compare > 0) high = mid - 1;
+                  else return mid;
+                }
+                return -(low + 1);
+              }
               if (method === "singletonList") return new GoldClientJavaList([args[0]]);
               if (method === "singleton") return new GoldClientJavaSet([args[0]]);
               if (method === "singletonMap") return new GoldClientJavaMap([[args[0], args[1]]]);
