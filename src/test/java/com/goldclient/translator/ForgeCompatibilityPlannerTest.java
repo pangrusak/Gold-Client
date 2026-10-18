@@ -88,6 +88,25 @@ class ForgeCompatibilityPlannerTest {
   }
 
   @Test
+  void countsAbstractDeclarationsSeparatelyFromStubbedBodies() {
+    ClassModel api = new ClassModel("sample/Api", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(),
+        List.of(
+            method("implementsNothing", "()V", Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, List.of()),
+            method("nativeCall", "()V", Opcodes.ACC_PUBLIC | Opcodes.ACC_NATIVE, List.of())),
+        List.of());
+
+    var plan = new ForgeCompatibilityPlanner().plan(List.of(api));
+    assertEquals(1, plan.declarationOnlyMethodCount());
+    assertEquals(1, plan.stubbedMethodCount());
+    assertEquals(0, plan.completeMethodCount());
+    assertEquals(0, plan.incompleteMethodCount());
+    assertEquals(1, plan.translationWarnings().size(),
+        "only the native method is a missing body, not the abstract declaration");
+    assertTrue(plan.translationWarnings().get(0).contains("nativeCall"));
+  }
+
+  @Test
   void extractsOnlyValidInternalNamesFromDescriptorsAndOperandText() {
     ClassModel mod = new ClassModel("sample/Descriptors", "java/lang/Object", List.of(),
         Opcodes.ACC_PUBLIC, null, List.of(), List.of(),

@@ -37,7 +37,7 @@ public final class ForgeCompatibilityPlanner {
       Set<String> operations, int occurrenceCount, List<String> usedBy) {}
   public record CompatibilityPlan(String formatVersion, String target,
       int classCount, int methodCount, int completeMethodCount,
-      int incompleteMethodCount, int stubbedMethodCount,
+      int incompleteMethodCount, int stubbedMethodCount, int declarationOnlyMethodCount,
       List<ApiReference> references, List<String> blockingFamilies,
       List<String> translationWarnings, List<String> nextActions) {}
 
@@ -70,6 +70,7 @@ public final class ForgeCompatibilityPlanner {
     int complete = 0;
     int incomplete = 0;
     int stubbed = 0;
+    int declarationOnly = 0;
     List<String> warnings = new ArrayList<>();
 
     for (ClassModel clazz : classes) {
@@ -78,6 +79,7 @@ public final class ForgeCompatibilityPlanner {
         String methodKey = clazz.name().replace('/', '.') + "#" + method.name() + method.descriptor();
         String status = methodStatus(method);
         if ("complete".equals(status)) complete++;
+        else if ("declaration-only".equals(status)) declarationOnly++;
         else if ("stubbed".equals(status)) stubbed++;
         else incomplete++;
 
@@ -93,7 +95,7 @@ public final class ForgeCompatibilityPlanner {
             scanText(operand, methodKey, kind, inputClasses, refs);
           }
         }
-        if (!"complete".equals(status)) {
+        if ("stubbed".equals(status) || "incomplete".equals(status)) {
           warnings.add(methodKey + " is " + status + "; compatibility planning cannot repair missing bytecode.");
         }
       }
@@ -122,7 +124,7 @@ public final class ForgeCompatibilityPlanner {
     }
     if (actions.isEmpty()) actions.add("Run the generated module against the real target runtime and test behavior, not just imports.");
     return new CompatibilityPlan("gold-forge-compatibility-plan-v1", "Eaglercraft 1.12.2",
-        classes.size(), methodCount, complete, incomplete, stubbed, references,
+        classes.size(), methodCount, complete, incomplete, stubbed, declarationOnly, references,
         blockers, List.copyOf(warnings), List.copyOf(actions));
   }
 
@@ -145,8 +147,10 @@ public final class ForgeCompatibilityPlanner {
         .append("Target: ").append(plan.target()).append('\n')
         .append("Classes: ").append(plan.classCount()).append('\n')
         .append("Methods: ").append(plan.methodCount()).append('\n')
-        .append("Complete / incomplete / stubbed: ").append(plan.completeMethodCount()).append(" / ")
-        .append(plan.incompleteMethodCount()).append(" / ").append(plan.stubbedMethodCount()).append('\n')
+        .append("Complete / incomplete / stubbed / declaration-only: ")
+        .append(plan.completeMethodCount()).append(" / ")
+        .append(plan.incompleteMethodCount()).append(" / ").append(plan.stubbedMethodCount())
+        .append(" / ").append(plan.declarationOnlyMethodCount()).append('\n')
         .append("External API references: ").append(plan.references().size()).append('\n')
         .append("Unbound families: ").append(plan.blockingFamilies().isEmpty()
             ? "none detected" : String.join(", ", plan.blockingFamilies())).append("\n\n");
@@ -162,7 +166,8 @@ public final class ForgeCompatibilityPlanner {
   }
 
   private static String methodStatus(MethodModel method) {
-    if ((method.access() & (0x0100 | 0x0400)) != 0
+    if ((method.access() & 0x0400) != 0) return "declaration-only";
+    if ((method.access() & 0x0100) != 0
         || method.intermediateRepresentation().operations().isEmpty()) return "stubbed";
     return method.intermediateRepresentation().operations().stream()
         .anyMatch(op -> "UNKNOWN".equals(op.kind()) || "UNSUPPORTED".equals(op.kind()))
