@@ -118,6 +118,8 @@ class JavaScriptModTranslationExporterTest {
     assertEquals(resource, exported);
     assertTrue(resource.contains("export const GoldClientRuntime"),
         resource.length() + " byte runtime is missing the GoldClientRuntime export");
+    assertFalse(resource.contains("\0"),
+        "runtime must not embed literal NUL bytes; use JavaScript escapes instead");
   }
 
   @Test

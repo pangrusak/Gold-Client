@@ -1129,7 +1129,7 @@ export const GoldClientRuntime = Object.freeze({
   newArray(kind, length) {
     const size = Number(length);
     if (!Number.isInteger(size) || size < 0) throw new RangeError("invalid array length");
-    const defaults = { boolean: false, byte: 0, char: " ", short: 0,
+    const defaults = { boolean: false, byte: 0, char: "\0", short: 0,
       int: 0, long: 0, float: 0, double: 0, Object: null };
     return Array(size).fill(Object.prototype.hasOwnProperty.call(defaults, kind)
       ? defaults[kind] : null);
@@ -1139,7 +1139,7 @@ export const GoldClientRuntime = Object.freeze({
     for (const size of sizes) {
       if (!Number.isInteger(size) || size < 0) throw new RangeError("invalid array length");
     }
-    const defaults = { boolean: false, byte: 0, char: " ", short: 0,
+    const defaults = { boolean: false, byte: 0, char: "\0", short: 0,
       int: 0, long: 0, float: 0, double: 0, Object: null };
     const leafDefault = Object.prototype.hasOwnProperty.call(defaults, kind)
       ? defaults[kind] : null;
