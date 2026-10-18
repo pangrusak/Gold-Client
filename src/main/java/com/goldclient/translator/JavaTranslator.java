@@ -146,9 +146,9 @@ public final class JavaTranslator {
 
       if ("CONDITIONAL_BRANCH".equals(operation.kind())
           && operation.operands().size() >= 2) {
-        if (context.isLoopExit(labelKey(operation.operands().get(1)))) {
-          // An early exit of the enclosing break-loop: the taken edge leaves
-          // the loop, so the branch is a break guard.
+        if (context.isInnermostBreakTarget(labelKey(operation.operands().get(1)))) {
+          // An early exit of the enclosing break-loop or switch: the taken edge
+          // leaves that scope, so the branch is a break guard.
           source.append(indent(indent)).append("if (")
               .append(normalizeCondition(operation.operands().get(0)))
               .append(") break;\n");
@@ -250,13 +250,23 @@ public final class JavaTranslator {
         String target = operation.operands().get(0);
         Integer targetIndex = labels.get(labelKey(target));
 
-        if (context.isLoopExit(labelKey(target))) {
-          source.append(indent(indent)).append("break;\n");
+        if (context.isActiveLoop(labelKey(target))) {
+          source.append(indent(indent)).append("continue;\n");
           continue;
         }
 
-        if (context.isActiveLoop(labelKey(target))) {
-          source.append(indent(indent)).append("continue;\n");
+        if (context.isBreakTarget(labelKey(target))) {
+          if (context.isInnermostBreakTarget(labelKey(target))) {
+            source.append(indent(indent)).append("break;\n");
+          } else {
+            // A nested loop or switch sits between this jump and the scope it
+            // leaves; a plain break would leave the wrong scope.
+            source.append(indent(indent))
+                .append("GoldClientRuntime.unsupported(\"JUMP\", \"")
+                .append(escapeJava(String.join(" | ", operation.operands())))
+                .append("\");\n");
+            complete = false;
+          }
           continue;
         }
 
@@ -569,9 +579,10 @@ public final class JavaTranslator {
       targetIndices.put(arm.label(), target);
     }
 
-    int lastExplicitTarget = targetIndices.values().stream()
+    int lastDistinctTarget = targetIndices.values().stream()
+        .filter(index -> !index.equals(defaultIndex))
         .mapToInt(Integer::intValue).max().orElse(switchIndex);
-    int lastTarget = Math.max(defaultIndex, lastExplicitTarget);
+    int lastTarget = Math.max(defaultIndex, lastDistinctTarget);
 
     // Targets equal to the render range's exclusive end are range exits: the
     // enclosing renderer owns the code after this range (a shared return block,
@@ -582,7 +593,7 @@ public final class JavaTranslator {
     boolean defaultIsJoin = false;
     if (defaultIndex == end) {
       defaultIsJoin = true;
-    } else if (defaultIndex > lastExplicitTarget) {
+    } else if (defaultIndex > lastDistinctTarget) {
       for (int index = switchIndex + 1; index < defaultIndex; index++) {
         IrOperationModel candidate = operations.get(index);
         if ("JUMP".equals(candidate.kind()) && !candidate.operands().isEmpty()
@@ -634,44 +645,49 @@ public final class JavaTranslator {
         .append(normalizeExpression(value)).append(") {\n");
     boolean complete = true;
 
-    for (int block = 0; block < orderedTargets.size(); block++) {
-      int targetIndex = orderedTargets.get(block);
-      int segmentEnd = block + 1 < orderedTargets.size()
-          ? orderedTargets.get(block + 1) : joinIndex;
-      if (segmentEnd < targetIndex + 1) {
-        complete = false;
-        continue;
-      }
+    if (joinLabel != null) context.enterSwitchJoin(labelKey(joinLabel));
+    try {
+      for (int block = 0; block < orderedTargets.size(); block++) {
+        int targetIndex = orderedTargets.get(block);
+        int segmentEnd = block + 1 < orderedTargets.size()
+            ? orderedTargets.get(block + 1) : joinIndex;
+        if (segmentEnd < targetIndex + 1) {
+          complete = false;
+          continue;
+        }
 
-      for (String label : labelsAtTarget.get(targetIndex)) {
-        source.append(indent(indent + 1)).append(label).append("\n");
-      }
+        for (String label : labelsAtTarget.get(targetIndex)) {
+          source.append(indent(indent + 1)).append(label).append("\n");
+        }
 
-      int bodyEnd = segmentEnd;
-      boolean jumpsToJoin = false;
-      if (bodyEnd > targetIndex + 1) {
-        IrOperationModel last = operations.get(bodyEnd - 1);
-        if ("JUMP".equals(last.kind()) && !last.operands().isEmpty()
-            && joinLabel != null
-            && labelKey(joinLabel).equals(labelKey(last.operands().get(0)))) {
-          bodyEnd--;
-          jumpsToJoin = true;
+        int bodyEnd = segmentEnd;
+        boolean jumpsToJoin = false;
+        if (bodyEnd > targetIndex + 1) {
+          IrOperationModel last = operations.get(bodyEnd - 1);
+          if ("JUMP".equals(last.kind()) && !last.operands().isEmpty()
+              && joinLabel != null
+              && labelKey(joinLabel).equals(labelKey(last.operands().get(0)))) {
+            bodyEnd--;
+            jumpsToJoin = true;
+          }
+        }
+
+        RenderResult body = renderRange(
+            operations, targetIndex + 1, bodyEnd, indent + 2, context, labels);
+        source.append(body.source());
+        complete &= body.complete();
+
+        boolean endsAbruptly = bodyEnd > targetIndex + 1
+            && (isTerminal(operations.get(bodyEnd - 1)) || jumpsToJoin);
+        boolean fallsThroughToNextCase = block + 1 < orderedTargets.size()
+            && segmentEnd == orderedTargets.get(block + 1)
+            && !endsAbruptly;
+        if (jumpsToJoin || (!fallsThroughToNextCase && !endsAbruptly)) {
+          source.append(indent(indent + 2)).append("break;\n");
         }
       }
-
-      RenderResult body = renderRange(
-          operations, targetIndex + 1, bodyEnd, indent + 2, context, labels);
-      source.append(body.source());
-      complete &= body.complete();
-
-      boolean endsAbruptly = bodyEnd > targetIndex + 1
-          && (isTerminal(operations.get(bodyEnd - 1)) || jumpsToJoin);
-      boolean fallsThroughToNextCase = block + 1 < orderedTargets.size()
-          && segmentEnd == orderedTargets.get(block + 1)
-          && !endsAbruptly;
-      if (jumpsToJoin || (!fallsThroughToNextCase && !endsAbruptly)) {
-        source.append(indent(indent + 2)).append("break;\n");
-      }
+    } finally {
+      if (joinLabel != null) context.exitSwitchJoin();
     }
 
     source.append(indent(indent)).append("}\n");
@@ -1049,11 +1065,20 @@ public final class JavaTranslator {
 
     int thenJumpIndex = -1;
     Integer joinIndex = null;
+    boolean joinBeyondRange = false;
     for (int i = thenIndex + 1; i < end; i++) {
       IrOperationModel operation = operations.get(i);
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
-        Integer target = labels.get(labelKey(operation.operands().get(0)));
-        if (target == null || target <= elseIndex || target >= end) return null;
+        String jumpTarget = operation.operands().get(0);
+        Integer target = labels.get(labelKey(jumpTarget));
+        if (target == null || target <= elseIndex) return null;
+        // A join at or beyond the range end is the enclosing switch's join:
+        // both arms leave the switch statement and its trailing break handles
+        // the jump.
+        if (target >= end) {
+          if (!context.isInnermostSwitchJoin(labelKey(jumpTarget))) return null;
+          joinBeyondRange = true;
+        }
         thenJumpIndex = i;
         joinIndex = target;
         break;
@@ -1067,14 +1092,14 @@ public final class JavaTranslator {
     }
     if (thenJumpIndex < 0 || joinIndex == null) return null;
 
-    int elseEnd = joinIndex;
+    int elseEnd = joinBeyondRange ? end : joinIndex;
     int lastExecutable = -1;
     for (int i = elseIndex + 1; i < elseEnd; i++) {
       if (!isBranchValueMetadata(operations.get(i))) lastExecutable = i;
     }
     if (lastExecutable < 0) return null;
     IrOperationModel elseTail = operations.get(lastExecutable);
-    if ("JUMP".equals(elseTail.kind()) && !elseTail.operands().isEmpty()
+    if (!joinBeyondRange && "JUMP".equals(elseTail.kind()) && !elseTail.operands().isEmpty()
         && labelKey(elseTail.operands().get(0))
             .equals(labelKey(operations.get(joinIndex).operands().get(0)))) {
       elseEnd = lastExecutable;
@@ -1109,7 +1134,8 @@ public final class JavaTranslator {
     source.append(elseBody.source());
     source.append(indent(indent)).append("}\n");
     return new ConditionalRender(source.toString(),
-        thenBody.complete() && elseBody.complete(), joinIndex - 1);
+        thenBody.complete() && elseBody.complete(),
+        joinBeyondRange ? end - 1 : joinIndex - 1);
   }
 
   private static ConditionalRender renderBranchToReturn(
