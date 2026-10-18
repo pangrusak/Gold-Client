@@ -10,6 +10,7 @@ public final class TranslationContext {
   private final Deque<String> loopLabels = new ArrayDeque<>();
   private final Deque<String> loopExitLabels = new ArrayDeque<>();
   private final Deque<BreakScope> breakScopes = new ArrayDeque<>();
+  private final Deque<Set<String>> suppressedTryHandlers = new ArrayDeque<>();
 
   private enum BreakKind { LOOP, LOOP_EXIT, SWITCH_JOIN }
 
@@ -87,5 +88,25 @@ public final class TranslationContext {
    */
   public boolean isLoopExit(String label) {
     return !loopExitLabels.isEmpty() && loopExitLabels.peek().equals(label);
+  }
+
+  /**
+   * Inside a catch clause, exception-table regions that target one of the
+   * enclosing try's own handlers repeat that handler over this block. The
+   * handler already runs as a sibling clause, so such regions are plumbing and
+   * are skipped instead of rendered as a nested try/catch.
+   */
+  public void enterSuppressedTryHandlers(Set<String> handlerLabels) {
+    suppressedTryHandlers.push(handlerLabels);
+  }
+
+  public void exitSuppressedTryHandlers() { suppressedTryHandlers.pop(); }
+
+  public boolean isSuppressedTryHandler(String handlerLabel) {
+    if (handlerLabel == null) return false;
+    for (Set<String> handlers : suppressedTryHandlers) {
+      if (handlers.contains(handlerLabel)) return true;
+    }
+    return false;
   }
 }

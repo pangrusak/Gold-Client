@@ -54,6 +54,13 @@ public final class JavaTranslator {
       IrOperationModel operation = operations.get(i);
 
       if ("TRY_BEGIN".equals(operation.kind())) {
+        // A region whose handler is a sibling clause of the enclosing catch
+        // block repeats that handler over this block (try-with-resources and
+        // catch-all plumbing); the handler is rendered once, after it.
+        if (operation.operands().size() >= 3
+            && context.isSuppressedTryHandler(labelKey(operation.operands().get(2)))) {
+          continue;
+        }
         ConditionalRender guarded = renderTryCatch(
             operations, i, end, indent, context, labels);
         if (guarded != null) {
@@ -342,7 +349,363 @@ public final class JavaTranslator {
    * Complex/malformed regions are left explicitly incomplete rather than
    * silently claiming that exception behavior was preserved.
    */
+  private static ConditionalRender renderGroupedTryCatch(
+      List<IrOperationModel> operations, int begin, int end, int indent,
+      TranslationContext context, Map<String, Integer> labels) {
+    List<String> metadata = operations.get(begin).operands();
+    if (metadata.size() < 4) return null;
+    String startLabel = metadata.get(0);
+    String endLabel = metadata.get(1);
+    String handlerLabel = metadata.get(2);
+    String exceptionType = metadata.get(3);
+    // Group this protected range's exception-table entries by handler. Entries
+    // that share one handler are a JVM multi-catch; distinct handlers become
+    // distinct catch clauses.
+    List<String> handlerLabels = new java.util.ArrayList<>();
+    Map<String, Set<String>> handlerTypes = new java.util.LinkedHashMap<>();
+    for (IrOperationModel candidate : operations) {
+      if (!"TRY_BEGIN".equals(candidate.kind()) || candidate.operands().size() < 4) continue;
+      List<String> candidateMetadata = candidate.operands();
+      if (!labelKey(startLabel).equals(labelKey(candidateMetadata.get(0)))
+          || !labelKey(endLabel).equals(labelKey(candidateMetadata.get(1)))) continue;
+      String candidateHandler = labelKey(candidateMetadata.get(2));
+      if (!handlerTypes.containsKey(candidateHandler)) {
+        handlerLabels.add(candidateHandler);
+        handlerTypes.put(candidateHandler, new java.util.LinkedHashSet<>());
+      }
+      handlerTypes.get(candidateHandler).add(candidateMetadata.get(3));
+    }
+    if (handlerLabels.isEmpty()) {
+      handlerLabels.add(labelKey(handlerLabel));
+      handlerTypes.put(labelKey(handlerLabel), new java.util.LinkedHashSet<>());
+      handlerTypes.get(labelKey(handlerLabel)).add(exceptionType);
+    }
+
+    int tryEnd = -1;
+    int[] handlerBegins = new int[handlerLabels.size()];
+    java.util.Arrays.fill(handlerBegins, -1);
+    for (int i = begin + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (operation.operands().size() < 3) continue;
+      if (!labelKey(startLabel).equals(labelKey(operation.operands().get(0)))
+          || !labelKey(endLabel).equals(labelKey(operation.operands().get(1)))) continue;
+      int slot = handlerLabels.indexOf(labelKey(operation.operands().get(2)));
+      if (slot < 0) continue;
+      if ("TRY_END".equals(operation.kind())) tryEnd = i;
+      if ("CATCH_BEGIN".equals(operation.kind()) && handlerBegins[slot] < 0) {
+        handlerBegins[slot] = i;
+      }
+    }
+    if (tryEnd <= begin || handlerBegins[0] <= tryEnd) {
+      // Some javac/ASM exception tables carry normalized labels that no
+      // longer match the marker operands after nested-region reconstruction.
+      // If the structural markers are still ordered, preserve the exception
+      // boundary instead of discarding the whole region.
+      tryEnd = -1;
+      java.util.Arrays.fill(handlerBegins, -1);
+      int slot = 0;
+      for (int i = begin + 1; i < end && slot < handlerBegins.length; i++) {
+        if (tryEnd < 0 && "TRY_END".equals(operations.get(i).kind())) tryEnd = i;
+        if (tryEnd >= 0 && "CATCH_BEGIN".equals(operations.get(i).kind())) {
+          handlerBegins[slot++] = i;
+        }
+      }
+      if (tryEnd <= begin || handlerBegins[0] <= tryEnd) return null;
+    }
+    for (int slot = 1; slot < handlerBegins.length; slot++) {
+      if (handlerBegins[slot] < 0) return null;
+    }
+    // Keep handlers in source order even when the exception table lists them
+    // in another order.
+    for (int a = 0; a < handlerBegins.length; a++) {
+      for (int b = a + 1; b < handlerBegins.length; b++) {
+        if (handlerBegins[b] < handlerBegins[a]) {
+          int marker = handlerBegins[a];
+          handlerBegins[a] = handlerBegins[b];
+          handlerBegins[b] = marker;
+          String label = handlerLabels.get(a);
+          handlerLabels.set(a, handlerLabels.get(b));
+          handlerLabels.set(b, label);
+        }
+      }
+    }
+    int lastCatchBegin = handlerBegins[handlerBegins.length - 1];
+
+    String normalJoinLabel = null;
+    for (int i = tryEnd + 1; i < handlerBegins[0]; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (!"JUMP".equals(operation.kind()) || operation.operands().isEmpty()) continue;
+      String candidateJoin = operation.operands().get(0);
+      Integer candidateJoinIndex = labels.get(labelKey(candidateJoin));
+      if (candidateJoinIndex != null && candidateJoinIndex > lastCatchBegin) {
+        normalJoinLabel = candidateJoin;
+      }
+    }
+
+    int handlerEnd = end;
+    String joinLabel = null;
+    for (int i = lastCatchBegin + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+
+      // Nested close()/cleanup regions may have their own joins; structure them
+      // first and don't mistake their internal branches for the outer handler exit.
+      if ("TRY_BEGIN".equals(operation.kind())) {
+        ConditionalRender nested = renderTryCatch(
+            operations, i, end, indent, context, labels);
+        if (nested != null) {
+          i = nested.lastIndex();
+          continue;
+        }
+      }
+
+      if (normalJoinLabel != null) {
+        if ("LABEL".equals(operation.kind()) && !operation.operands().isEmpty()
+            && labelKey(normalJoinLabel).equals(labelKey(operation.operands().get(0)))) {
+          handlerEnd = i;
+          joinLabel = normalJoinLabel;
+          break;
+        }
+        if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+            && labelKey(normalJoinLabel).equals(labelKey(operation.operands().get(0)))) {
+          handlerEnd = i;
+          joinLabel = normalJoinLabel;
+          break;
+        }
+      } else if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        String target = operation.operands().get(0);
+        Integer targetIndex = labels.get(labelKey(target));
+        Integer protectedEnd = labels.get(labelKey(endLabel));
+        // Backward jumps are loop/continue edges inside the handler, not joins.
+        if (targetIndex != null && targetIndex > i
+            && protectedEnd != null && targetIndex > protectedEnd) {
+          handlerEnd = i;
+          joinLabel = target;
+          break;
+        }
+      }
+      if ("RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())
+          || "TERMINATE".equals(operation.kind())) {
+        handlerEnd = i + 1;
+        break;
+      }
+    }
+    if (handlerEnd <= lastCatchBegin + 1) return null;
+
+    // Each handler before the last one ends where the next handler's marker
+    // begins. A trailing jump that reaches the point where a JavaScript catch
+    // clause resumes anyway is dropped; a jump that leaves the region for a
+    // block past the handlers keeps its own path by rendering that block inside
+    // the clause or leaving it through a labeled break.
+    String continuationLabel = joinLabel != null ? joinLabel : normalJoinLabel;
+    int resumeIndex = joinLabel == null ? handlerEnd : handlerEnd + 1;
+
+    // The normal path may jump to a block that is laid out before the
+    // continuation its catch clauses fall out to (javac places catch-only code
+    // first and shares the tail). A plain fall-out of the try block would run
+    // that catch-only code, so the path either continues inside the try body or
+    // leaves it through a labeled break.
+    int normalCompletionEnd = handlerBegins[0];
+    int normalCompletionJump = -1;
+    if (normalJoinLabel != null) {
+      for (int i = tryEnd + 1; i < handlerBegins[0]; i++) {
+        IrOperationModel operation = operations.get(i);
+        if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+            && labelKey(normalJoinLabel).equals(labelKey(operation.operands().get(0)))) {
+          normalCompletionEnd = i;
+          normalCompletionJump = i;
+        }
+      }
+    }
+    Integer normalTarget =
+        normalJoinLabel == null ? null : labels.get(labelKey(normalJoinLabel));
+    boolean escapingNormalPath = normalCompletionJump >= 0 && normalTarget != null
+        && normalTarget > resumeIndex
+        && !fallsThroughTo(normalTarget, resumeIndex, operations);
+    boolean inlineTailBlock = escapingNormalPath && canInlineJumpBlock(operations, end);
+    String breakLabel = escapingNormalPath && !inlineTailBlock ? "_try" + begin : null;
+
+    int[] handlerEnds = new int[handlerBegins.length];
+    int[] handlerTailBlocks = new int[handlerBegins.length];
+    boolean[] handlerBreaksToNormal = new boolean[handlerBegins.length];
+    java.util.Arrays.fill(handlerTailBlocks, -1);
+    handlerEnds[handlerBegins.length - 1] = handlerEnd;
+    for (int slot = 0; slot + 1 < handlerBegins.length; slot++) {
+      int limit = handlerBegins[slot + 1];
+      int tailIndex = limit - 1;
+      while (tailIndex > handlerBegins[slot]
+          && isLoopExitMetadata(operations.get(tailIndex))) tailIndex--;
+      if (tailIndex > handlerBegins[slot]) {
+        IrOperationModel tail = operations.get(tailIndex);
+        if ("JUMP".equals(tail.kind()) && !tail.operands().isEmpty()) {
+          Integer tailTarget = labels.get(labelKey(tail.operands().get(0)));
+          boolean sameContinuation = continuationLabel != null
+              && labelKey(continuationLabel).equals(labelKey(tail.operands().get(0)));
+          if (sameContinuation
+              || (tailTarget != null && fallsThroughTo(tailTarget, resumeIndex, operations))) {
+            limit = tailIndex;
+          } else if (breakLabel != null && tailTarget != null
+              && tailTarget.equals(normalTarget)) {
+            handlerBreaksToNormal[slot] = true;
+            limit = tailIndex;
+          } else if (tailTarget != null && canInlineJumpBlock(operations, end)) {
+            handlerTailBlocks[slot] = tailTarget;
+            limit = tailIndex;
+          }
+        }
+      }
+      handlerEnds[slot] = limit;
+    }
+
+    // Multiple exception-table entries can share a protected range and handler
+    // (Java multi-catch). Start after the actual start label so adjacent
+    // TRY_BEGIN metadata records are never mistaken for executable nested regions.
+    Integer startIndex = labels.get(labelKey(startLabel));
+    int bodyStart = startIndex == null ? begin + 1 : startIndex + 1;
+    while (bodyStart < tryEnd
+        && ("LABEL".equals(operations.get(bodyStart).kind())
+            || "TRY_BEGIN".equals(operations.get(bodyStart).kind()))) bodyStart++;
+    RenderResult tryBodyCore = renderRange(
+        operations, bodyStart, tryEnd, indent + 1, context, labels);
+    StringBuilder tryBodySource = new StringBuilder(tryBodyCore.source());
+    boolean tryBodyComplete = tryBodyCore.complete();
+    // The normal path often contains its return/cleanup immediately after
+    // TRY_END. Keep that path inside the generated try block instead of
+    // skipping it when the catch handlers are consumed.
+    if (normalCompletionEnd > tryEnd + 1
+        && isSimpleNormalCompletion(operations, tryEnd + 1, normalCompletionEnd)) {
+      RenderResult normalCompletion = renderRange(
+          operations, tryEnd + 1, normalCompletionEnd, indent + 1, context, labels);
+      tryBodySource.append(normalCompletion.source());
+      tryBodyComplete &= normalCompletion.complete();
+    }
+    if (escapingNormalPath) {
+      if (inlineTailBlock) {
+        RenderResult tailBlock = renderRange(
+            operations, inlinedBlockStart(operations, normalTarget, labels), end,
+            indent + 1, context, labels);
+        tryBodySource.append(tailBlock.source());
+        tryBodyComplete &= tailBlock.complete();
+      } else {
+        tryBodySource.append(indent(indent + 1)).append("break ").append(breakLabel)
+            .append(";\n");
+      }
+    }
+
+    StringBuilder source = new StringBuilder();
+    if (breakLabel != null) {
+      source.append(indent(indent)).append(breakLabel).append(": {\n");
+    }
+    source.append(indent(indent)).append("try {\n").append(tryBodySource);
+    boolean complete = tryBodyComplete;
+    for (int slot = 0; slot < handlerBegins.length; slot++) {
+      int handlerStart = handlerBegins[slot] + 1;
+      int slotEnd = handlerEnds[slot];
+      String exceptionVariable = "caughtException";
+      // A handler label is normally the first instruction after CATCH_BEGIN.
+      // Skip labels, remaining marker entries, and protective region records
+      // before looking for the JVM's exception-stack-to-local store.
+      while (handlerStart < slotEnd
+          && ("LABEL".equals(operations.get(handlerStart).kind())
+              || "CATCH_BEGIN".equals(operations.get(handlerStart).kind())
+              || "TRY_BEGIN".equals(operations.get(handlerStart).kind()))) {
+        handlerStart++;
+      }
+      if (handlerStart < slotEnd) {
+        IrOperationModel first = operations.get(handlerStart);
+        if ("LOCAL_WRITE".equals(first.kind()) && first.operands().size() >= 2
+            && "<exception>".equals(first.operands().get(1))) {
+          exceptionVariable = first.operands().get(0);
+          handlerStart++;
+        }
+      }
+      context.enterSuppressedTryHandlers(handlerTypes.keySet());
+      StringBuilder clauseBody = new StringBuilder();
+      try {
+        RenderResult catchBody = renderRange(
+            operations, handlerStart, slotEnd, indent + 1, context, labels);
+        complete &= catchBody.complete();
+        clauseBody.append(catchBody.source());
+        if (handlerTailBlocks[slot] >= 0) {
+          RenderResult tailBlock = renderRange(
+              operations, inlinedBlockStart(operations, handlerTailBlocks[slot], labels),
+              end, indent + 1, context, labels);
+          complete &= tailBlock.complete();
+          clauseBody.append(tailBlock.source());
+        }
+        if (handlerBreaksToNormal[slot]) {
+          clauseBody.append(indent(indent + 1)).append("break ").append(breakLabel)
+              .append(";\n");
+        }
+      } finally {
+        context.exitSuppressedTryHandlers();
+      }
+      Set<String> types = handlerTypes.get(handlerLabels.get(slot));
+      if (types == null || types.isEmpty()) types = java.util.Set.of(exceptionType);
+      source.append(indent(indent)).append("} catch (");
+      if (types.size() > 1) {
+        // JVM multi-catch shares one handler for several exception-table entries.
+        // JavaScript has one catch clause, so dispatch by runtime type and rethrow
+        // exceptions that do not match any listed alternative.
+        source.append("caughtException) {\n");
+        source.append(indent(indent + 1)).append("if (!(");
+        int typeIndex = 0;
+        for (String type : types) {
+          if (typeIndex++ > 0) source.append(" || ");
+          source.append("GoldClientRuntime.instanceOf(caughtException, \"")
+              .append(escapeJava(type)).append("\")");
+        }
+        source.append(")) throw caughtException;\n");
+        if (!"caughtException".equals(exceptionVariable)) {
+          source.append(indent(indent + 1)).append("var ").append(exceptionVariable)
+              .append(" = caughtException;\n");
+        }
+        source.append(clauseBody);
+      } else {
+        source.append(types.iterator().next()).append(" ").append(exceptionVariable)
+            .append(") {\n")
+            .append(clauseBody);
+      }
+    }
+    source.append(indent(indent)).append("}\n");
+    // Code between the point the catch clauses fall out to and the block the
+    // normal path jumps to only runs when an exception was handled.
+    int normalBlockStart = normalTarget == null
+        ? -1 : inlinedBlockStart(operations, normalTarget, labels);
+    if (breakLabel != null) {
+      RenderResult catchOnly = renderRange(
+          operations, resumeIndex, normalBlockStart, indent + 1, context, labels);
+      complete &= catchOnly.complete();
+      source.append(catchOnly.source());
+      source.append(indent(indent)).append("}\n");
+    }
+    // A handler may legitimately terminate with return/throw instead of
+    // jumping to a shared continuation. That is structured control flow, not
+    // evidence that the exception region was only partially rendered.
+    int lastHandlerEnd = handlerEnds[handlerEnds.length - 1];
+    if (joinLabel == null && lastHandlerEnd < end
+        && !isTerminal(operations.get(lastHandlerEnd - 1))) complete = false;
+    int last = breakLabel != null
+        ? normalBlockStart - 1
+        : (joinLabel == null ? lastHandlerEnd - 1 : lastHandlerEnd);
+    return new ConditionalRender(source.toString(), complete, last);
+  }
+
+  /**
+   * Structures a protected region. The grouped path renders every handler in
+   * the exception table as its own catch clause; the merged path is the
+   * historical single-handler rendering used when a region's markers are
+   * interleaved with try-with-resources plumbing.
+   */
   private static ConditionalRender renderTryCatch(
+      List<IrOperationModel> operations, int begin, int end, int indent,
+      TranslationContext context, Map<String, Integer> labels) {
+    ConditionalRender grouped = renderGroupedTryCatch(
+        operations, begin, end, indent, context, labels);
+    if (grouped != null) return grouped;
+    return renderMergedTryCatch(operations, begin, end, indent, context, labels);
+  }
+
+  private static ConditionalRender renderMergedTryCatch(
       List<IrOperationModel> operations, int begin, int end, int indent,
       TranslationContext context, Map<String, Integer> labels) {
     List<String> metadata = operations.get(begin).operands();
@@ -551,6 +914,7 @@ public final class JavaTranslator {
     int last = joinLabel == null ? handlerEnd - 1 : handlerEnd;
     return new ConditionalRender(source.toString(), complete, last);
   }
+
 
   private static ConditionalRender renderSwitch(
       List<IrOperationModel> operations,
@@ -2308,6 +2672,52 @@ public final class JavaTranslator {
       return false;
     }
     return true;
+  }
+
+  /**
+   * True when leaving a catch clause reaches the jump's destination: the
+   * destination is the point where the enclosing try/catch resumes, possibly
+   * behind only labels and exception-table metadata.
+   */
+  private static boolean fallsThroughTo(
+      int targetIndex, int resumeIndex, List<IrOperationModel> operations) {
+    if (targetIndex == resumeIndex) return true;
+    int from = Math.min(targetIndex, resumeIndex);
+    int to = Math.max(targetIndex, resumeIndex);
+    for (int i = from; i < to; i++) {
+      if ("LABEL".equals(operations.get(i).kind())) continue;
+      if (!isLoopExitMetadata(operations.get(i))) return false;
+    }
+    return true;
+  }
+
+  /**
+   * A jump destination may be the start label of an exception region. Widening
+   * the destination to the region record keeps a try/catch that the compiler
+   * attributed to that block.
+   */
+  private static int inlinedBlockStart(
+      List<IrOperationModel> operations, int targetIndex, Map<String, Integer> labels) {
+    int start = targetIndex;
+    while (start > 0 && "TRY_BEGIN".equals(operations.get(start - 1).kind())) {
+      List<String> metadata = operations.get(start - 1).operands();
+      if (metadata.size() < 3
+          || !Integer.valueOf(targetIndex).equals(
+              labels.get(labelKey(metadata.get(0))))) break;
+      start--;
+    }
+    return start;
+  }
+
+  /**
+   * Jump destinations can only be rendered in place when the whole method tail
+   * is available and ends in return/throw; otherwise the rendered copy could
+   * silently fall out of the enclosing range.
+   */
+  private static boolean canInlineJumpBlock(
+      List<IrOperationModel> operations, int end) {
+    return end == operations.size() && end > 0
+        && isTerminal(operations.get(end - 1));
   }
 
   private static boolean onlyMetadataBetween(
