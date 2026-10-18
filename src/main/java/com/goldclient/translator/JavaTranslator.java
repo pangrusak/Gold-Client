@@ -118,6 +118,16 @@ public final class JavaTranslator {
             i = loopBranch + 1;
             continue;
           }
+          LoopShape breakLoop = findBreakLoopBackEdge(
+              operations, i, end, operation.operands().get(0), labels);
+          if (breakLoop != null) {
+            ConditionalRender loop = renderBreakLoop(
+                operations, i, end, breakLoop, indent, context, labels);
+            source.append(loop.source());
+            complete &= loop.complete();
+            i = loop.lastIndex();
+            continue;
+          }
         }
         continue;
       }
@@ -136,6 +146,14 @@ public final class JavaTranslator {
 
       if ("CONDITIONAL_BRANCH".equals(operation.kind())
           && operation.operands().size() >= 2) {
+        if (context.isLoopExit(labelKey(operation.operands().get(1)))) {
+          // An early exit of the enclosing break-loop: the taken edge leaves
+          // the loop, so the branch is a break guard.
+          source.append(indent(indent)).append("if (")
+              .append(normalizeCondition(operation.operands().get(0)))
+              .append(") break;\n");
+          continue;
+        }
         ConditionalRender booleanReturn = renderBooleanReturnChain(
             operations, i, end, indent, context, labels);
         if (booleanReturn != null) {
@@ -166,6 +184,14 @@ public final class JavaTranslator {
           source.append(branchChain.source());
           complete &= branchChain.complete();
           i = branchChain.lastIndex();
+          continue;
+        }
+        ConditionalRender chainIfElse = renderChainIfElse(
+            operations, i, end, indent, context, labels);
+        if (chainIfElse != null) {
+          source.append(chainIfElse.source());
+          complete &= chainIfElse.complete();
+          i = chainIfElse.lastIndex();
           continue;
         }
         ConditionalRender branchReturn = renderBranchToReturn(
@@ -223,6 +249,11 @@ public final class JavaTranslator {
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
         String target = operation.operands().get(0);
         Integer targetIndex = labels.get(labelKey(target));
+
+        if (context.isLoopExit(labelKey(target))) {
+          source.append(indent(indent)).append("break;\n");
+          continue;
+        }
 
         if (context.isActiveLoop(labelKey(target))) {
           source.append(indent(indent)).append("continue;\n");
@@ -923,6 +954,126 @@ public final class JavaTranslator {
         joinIndex - 1);
   }
 
+  /**
+   * Structures condition chains that converge on a shared then/else pair.
+   * javac lowers {@code if (a || b) { ... } else { ... }} so that several
+   * conditional edges at the top lead to two blocks: the then block (reached
+   * when no condition holds, since it sits right after the chain) and the else
+   * block. The then block ends with a jump to the join after the else block.
+   * Every condition folds into one guard expression that preserves evaluation
+   * order, and both blocks render once as an if/else pair.
+   */
+  private static ConditionalRender renderChainIfElse(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    IrOperationModel firstBranch = operations.get(branchIndex);
+    if (firstBranch.operands().size() < 2) return null;
+    Integer thenIndex = labels.get(labelKey(firstBranch.operands().get(1)));
+    if (thenIndex == null || thenIndex <= branchIndex || thenIndex >= end) return null;
+
+    List<String> chainConditions = new java.util.ArrayList<>();
+    List<Boolean> chainTargetsThen = new java.util.ArrayList<>();
+    chainConditions.add(firstBranch.operands().get(0));
+    chainTargetsThen.add(true);
+    int elseIndex = -1;
+    for (int i = branchIndex + 1; i < thenIndex; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("CONDITIONAL_BRANCH".equals(operation.kind())) {
+        if (operation.operands().size() < 2) return null;
+        Integer target = labels.get(labelKey(operation.operands().get(1)));
+        if (target == null || target <= i || target >= end) return null;
+        if (target.equals(thenIndex)) {
+          chainConditions.add(operation.operands().get(0));
+          chainTargetsThen.add(true);
+        } else {
+          if (elseIndex < 0) {
+            if (target < thenIndex) return null;
+            elseIndex = target;
+          } else if (!target.equals(elseIndex)) {
+            return null;
+          }
+          chainConditions.add(operation.operands().get(0));
+          chainTargetsThen.add(false);
+        }
+      } else if (isBranchValueMetadata(operation)) {
+        continue;
+      } else if (isExpressionOnly(operation) && !"DROP".equals(operation.kind())) {
+        continue;
+      } else {
+        return null;
+      }
+    }
+    if (elseIndex < 0 || thenIndex > elseIndex) return null;
+
+    int thenJumpIndex = -1;
+    Integer joinIndex = null;
+    for (int i = thenIndex + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        Integer target = labels.get(labelKey(operation.operands().get(0)));
+        if (target == null || target <= elseIndex || target >= end) return null;
+        thenJumpIndex = i;
+        joinIndex = target;
+        break;
+      }
+      if ("CONDITIONAL_BRANCH".equals(operation.kind()) || "LABEL".equals(operation.kind())
+          || "RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())
+          || "TRY_BEGIN".equals(operation.kind()) || "TRY_END".equals(operation.kind())
+          || "CATCH_BEGIN".equals(operation.kind())) {
+        return null;
+      }
+    }
+    if (thenJumpIndex < 0 || joinIndex == null) return null;
+
+    int elseEnd = joinIndex;
+    int lastExecutable = -1;
+    for (int i = elseIndex + 1; i < elseEnd; i++) {
+      if (!isBranchValueMetadata(operations.get(i))) lastExecutable = i;
+    }
+    if (lastExecutable < 0) return null;
+    IrOperationModel elseTail = operations.get(lastExecutable);
+    if ("JUMP".equals(elseTail.kind()) && !elseTail.operands().isEmpty()
+        && labelKey(elseTail.operands().get(0))
+            .equals(labelKey(operations.get(joinIndex).operands().get(0)))) {
+      elseEnd = lastExecutable;
+    }
+
+    // Fold the chain backwards in evaluation order. The fall-through path after
+    // the chain reaches the then block, so the guard starts as always-taken;
+    // each condition then extends it: a condition selecting the then block
+    // short-circuits it, while one selecting the else block guards the rest.
+    String guard = "true";
+    for (int k = chainConditions.size() - 1; k >= 0; k--) {
+      String condition = normalizeCondition(chainConditions.get(k));
+      if (Boolean.TRUE.equals(chainTargetsThen.get(k))) {
+        guard = "true".equals(guard) ? "true" : "(" + condition + " || " + guard + ")";
+      } else {
+        guard = "true".equals(guard)
+            ? negateCondition(condition)
+            : "(" + negateCondition(condition) + " && " + guard + ")";
+      }
+    }
+    if ("true".equals(guard)) return null;
+
+    RenderResult thenBody = renderRange(
+        operations, thenIndex + 1, thenJumpIndex, indent + 1, context, labels);
+    RenderResult elseBody = renderRange(
+        operations, elseIndex + 1, elseEnd, indent + 1, context, labels);
+
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("if (").append(guard).append(") {\n");
+    source.append(thenBody.source());
+    source.append(indent(indent)).append("} else {\n");
+    source.append(elseBody.source());
+    source.append(indent(indent)).append("}\n");
+    return new ConditionalRender(source.toString(),
+        thenBody.complete() && elseBody.complete(), joinIndex - 1);
+  }
+
   private static ConditionalRender renderBranchToReturn(
       List<IrOperationModel> operations,
       int branchIndex,
@@ -1419,6 +1570,19 @@ public final class JavaTranslator {
         operations, branchIndex + 1, targetIndex, end, labels);
     if (jumpIndex >= 0) {
       IrOperationModel jump = operations.get(jumpIndex);
+      if (!jump.operands().isEmpty()
+          && context.isLoopExit(labelKey(jump.operands().get(0)))) {
+        // The fall-through path immediately leaves the enclosing break-loop
+        // while the taken path stays inside: guard the fall-through with a
+        // break and render the taken body.
+        RenderResult takenBody = renderRange(
+            operations, targetIndex + 1, end, indent, context, labels);
+        StringBuilder source = new StringBuilder();
+        source.append(indent(indent)).append("if (")
+            .append(negateCondition(condition)).append(") break;\n")
+            .append(takenBody.source());
+        return new ConditionalRender(source.toString(), takenBody.complete(), end - 1);
+      }
       if (!jump.operands().isEmpty()) {
         Integer endIndex = labels.get(labelKey(jump.operands().get(0)));
         if (endIndex != null && endIndex > targetIndex) {
@@ -1601,6 +1765,85 @@ public final class JavaTranslator {
       body = renderRange(
           operations, loopHeaderIndex + 1, loop.backEdgeIndex(), indent + 1, context, labels);
     } finally {
+      context.exitLoop();
+    }
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("while (true) {\n")
+        .append(body.source())
+        .append(indent(indent)).append("}\n");
+    return new ConditionalRender(source.toString(), body.complete(), loop.backEdgeIndex());
+  }
+
+  /**
+   * Finds the loop shape javac emits for {@code while (true)} bodies that leave
+   * early: the last jump back to the header is the loop's back edge and the
+   * first label after it is the exit target used by break edges. The shape is
+   * only accepted when the body actually branches or jumps to that exit label,
+   * so ordinary infinite loops keep their existing rendering.
+   */
+  private static LoopShape findBreakLoopBackEdge(
+      List<IrOperationModel> operations,
+      int loopHeaderIndex,
+      int end,
+      String loopLabel,
+      Map<String, Integer> labels) {
+    Integer header = labels.get(labelKey(loopLabel));
+    if (header == null || header != loopHeaderIndex) return null;
+    int backEdgeIndex = -1;
+    for (int i = loopHeaderIndex + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(loopLabel).equals(labelKey(operation.operands().get(0)))) {
+        backEdgeIndex = i;
+      }
+    }
+    if (backEdgeIndex < 0) return null;
+    int exitIndex = -1;
+    for (int i = backEdgeIndex + 1; i < end; i++) {
+      if ("LABEL".equals(operations.get(i).kind())) {
+        exitIndex = i;
+        break;
+      }
+    }
+    if (exitIndex < 0) return null;
+    String exitLabel = labelKey(operations.get(exitIndex).operands().get(0));
+    boolean hasEarlyExit = false;
+    for (int i = loopHeaderIndex + 1; i < backEdgeIndex; i++) {
+      IrOperationModel operation = operations.get(i);
+      String target = null;
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        target = operation.operands().get(0);
+      } else if ("CONDITIONAL_BRANCH".equals(operation.kind())
+          && operation.operands().size() >= 2) {
+        target = operation.operands().get(1);
+      }
+      if (target != null && exitLabel.equals(labelKey(target))) {
+        hasEarlyExit = true;
+        break;
+      }
+    }
+    if (!hasEarlyExit) return null;
+    return new LoopShape(-1, backEdgeIndex, exitIndex);
+  }
+
+  private static ConditionalRender renderBreakLoop(
+      List<IrOperationModel> operations,
+      int loopHeaderIndex,
+      int end,
+      LoopShape loop,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
+    String exitLabel = labelKey(operations.get(loop.exitIndex()).operands().get(0));
+    context.enterLoop(loopLabel);
+    context.enterLoopExit(exitLabel);
+    RenderResult body;
+    try {
+      body = renderRange(
+          operations, loopHeaderIndex + 1, loop.backEdgeIndex(), indent + 1, context, labels);
+    } finally {
+      context.exitLoopExit();
       context.exitLoop();
     }
     StringBuilder source = new StringBuilder();
