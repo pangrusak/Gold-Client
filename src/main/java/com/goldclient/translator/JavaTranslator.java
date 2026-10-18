@@ -152,6 +152,14 @@ public final class JavaTranslator {
           i = ternaryValue.lastIndex();
           continue;
         }
+        ConditionalRender constantMerge = renderConstantMergeChain(
+            operations, i, end, indent, context, labels);
+        if (constantMerge != null) {
+          source.append(constantMerge.source());
+          complete &= constantMerge.complete();
+          i = constantMerge.lastIndex();
+          continue;
+        }
         ConditionalRender branchChain = renderConditionalValueChain(
             operations, i, end, indent, context, labels);
         if (branchChain != null) {
@@ -1036,6 +1044,153 @@ public final class JavaTranslator {
     if (lowered == null || lowered.isBlank()) return null;
     source.append(indent(indent)).append(lowered).append("\n");
     return new ConditionalRender(source.toString(), true, sinkIndex);
+  }
+
+  /**
+   * Structures a short-circuit chain: several conditionals whose taken edges
+   * lead to two expression-valued blocks that merge into one sink. This is the
+   * JVM shape for {@code return a || b || c;} and similar boolean materialized
+   * returns, where javac emits constants in two blocks and a shared exit. Each
+   * condition becomes a guard for its block value; the block reached by
+   * fall-through supplies the remaining value.
+   */
+  private static ConditionalRender renderConstantMergeChain(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    IrOperationModel firstBranch = operations.get(branchIndex);
+    if (firstBranch.operands().size() < 2) return null;
+    Integer firstTarget = labels.get(labelKey(firstBranch.operands().get(1)));
+    if (firstTarget == null || firstTarget <= branchIndex || firstTarget >= end) return null;
+
+    List<Integer> branchIndices = new java.util.ArrayList<>();
+    List<Integer> branchTargets = new java.util.ArrayList<>();
+    int secondTarget = -1;
+    int limit = firstTarget;
+    for (int i = branchIndex; i < limit; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("CONDITIONAL_BRANCH".equals(operation.kind())) {
+        if (operation.operands().size() < 2) return null;
+        Integer target = labels.get(labelKey(operation.operands().get(1)));
+        if (target == null || target <= i || target >= end) return null;
+        if (secondTarget < 0) {
+          if (target != firstTarget) {
+            secondTarget = target;
+            if (secondTarget < limit) limit = secondTarget;
+          }
+        } else if (target != firstTarget && target != secondTarget) {
+          return null;
+        }
+        branchIndices.add(i);
+        branchTargets.add(target);
+      } else if (isBranchValueMetadata(operation) || isExpressionOnly(operation)) {
+        continue;
+      } else {
+        return null;
+      }
+    }
+    if (secondTarget < 0 || branchIndices.isEmpty()) return null;
+
+    int earlier = Math.min(firstTarget, secondTarget);
+    int later = Math.max(firstTarget, secondTarget);
+    String earlierValue = constantBlockValue(operations, earlier, end);
+    String laterValue = constantBlockValue(operations, later, end);
+    if (earlierValue == null || laterValue == null) return null;
+    Integer earlierJoin = constantBlockJoin(operations, earlier, end, labels);
+    Integer laterJoin = constantBlockJoin(operations, later, end, labels);
+    if (earlierJoin == null || laterJoin == null || !earlierJoin.equals(laterJoin)) return null;
+    int joinIndex = earlierJoin;
+    if (joinIndex <= later || joinIndex >= end) return null;
+
+    int sinkIndex = findValueMergeSink(operations, joinIndex + 1, end);
+    if (sinkIndex < 0) return null;
+    IrOperationModel sink = operations.get(sinkIndex);
+    long unknownCount = sink.operands().stream()
+        .mapToLong(value -> occurrences(value, "<unknown>")).sum();
+    if (unknownCount != 1) return null;
+
+    if ("RETURN".equals(sink.kind())) {
+      StringBuilder source = new StringBuilder();
+      boolean complete = true;
+      int previous = branchIndex;
+      for (int k = 0; k < branchIndices.size(); k++) {
+        int current = branchIndices.get(k);
+        RenderResult prefix = renderRange(
+            operations, previous + (k == 0 ? 0 : 1), current, indent, context, labels);
+        source.append(prefix.source());
+        complete &= prefix.complete();
+        source.append(indent(indent)).append("if (")
+            .append(normalizeCondition(operations.get(current).operands().get(0)))
+            .append(") return ")
+            .append(branchTargets.get(k) == earlier ? earlierValue : laterValue)
+            .append(";\n");
+        previous = current;
+      }
+      RenderResult tail = renderRange(operations, previous + 1, earlier, indent, context, labels);
+      source.append(tail.source());
+      complete &= tail.complete();
+      source.append(indent(indent)).append("return ").append(earlierValue).append(";\n");
+      return new ConditionalRender(source.toString(), complete, sinkIndex);
+    }
+
+    for (int i = branchIndex; i < earlier; i++) {
+      if ("DROP".equals(operations.get(i).kind())) return null;
+    }
+    String folded = earlierValue;
+    for (int k = branchIndices.size() - 1; k >= 0; k--) {
+      folded = "(" + normalizeCondition(operations.get(branchIndices.get(k)).operands().get(0))
+          + " ? " + (branchTargets.get(k) == earlier ? earlierValue : laterValue)
+          + " : " + folded + ")";
+    }
+    StringBuilder source = new StringBuilder();
+    if ("LOCAL_WRITE".equals(sink.kind()) && sink.operands().size() >= 2
+        && "<unknown>".equals(sink.operands().get(1))) {
+      String local = sink.operands().get(0);
+      String assignment = context.declareLocal(local) ? "var " + local : local;
+      source.append(indent(indent)).append(assignment).append(" = ").append(folded).append(";\n");
+      return new ConditionalRender(source.toString(), true, sinkIndex);
+    }
+    if (!List.of("FIELD_WRITE", "METHOD_CALL", "RETURN").contains(sink.kind())) return null;
+    final String foldedValue = folded;
+    List<String> replacedOperands = sink.operands().stream()
+        .map(value -> value.replace("<unknown>", foldedValue)).toList();
+    IrOperationModel replaced = new IrOperationModel(
+        sink.kind(), replacedOperands, sink.sourceInstruction());
+    String lowered = translateOperation(replaced, context);
+    if (lowered == null || lowered.isBlank()) return null;
+    source.append(indent(indent)).append(lowered).append("\n");
+    return new ConditionalRender(source.toString(), true, sinkIndex);
+  }
+
+  private static String constantBlockValue(
+      List<IrOperationModel> operations, int labelIndex, int end) {
+    int valueIndex = nextExecutableIndex(operations, labelIndex + 1, end);
+    if (valueIndex < 0) return null;
+    IrOperationModel value = operations.get(valueIndex);
+    if (!isExpressionOnly(value) || "DROP".equals(value.kind())
+        || "DUP".equals(value.kind()) || "SWAP".equals(value.kind())
+        || "STACK_OPERATION".equals(value.kind())) return null;
+    return expressionFromOperation(value);
+  }
+
+  private static Integer constantBlockJoin(
+      List<IrOperationModel> operations, int labelIndex, int end, Map<String, Integer> labels) {
+    int valueIndex = nextExecutableIndex(operations, labelIndex + 1, end);
+    if (valueIndex < 0) return null;
+    for (int i = valueIndex + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        Integer target = labels.get(labelKey(operation.operands().get(0)));
+        return target != null && target > labelIndex ? target : null;
+      }
+      if ("LABEL".equals(operation.kind())) return i;
+      if (isExpressionOnly(operation)) continue;
+      return null;
+    }
+    return null;
   }
 
   private static int findValueMergeSink(

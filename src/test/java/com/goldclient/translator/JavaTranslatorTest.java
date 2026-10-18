@@ -946,6 +946,88 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void structuresShortCircuitChainWithTwoExpressionBlocksIntoReturnGuards() {
+    IrMethodModel method = new IrMethodModel("isOwner", "(Lexample/Player;)Z", List.of(
+        new IrOperationModel("FIELD_READ", List.of("local0", "example.Tile.owner", "local0.owner"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local0.owner == null", "Ltrue"), 1),
+        new IrOperationModel("CALL_VALUE", List.of("local1.getId().equals(local0.owner)"), 2),
+        new IrOperationModel("CONDITIONAL_BRANCH",
+            List.of("local1.getId().equals(local0.owner) != 0", "Ltrue"), 3),
+        new IrOperationModel("FIELD_READ",
+            List.of("local1.creative", "example.Player.creative", "local1.creative"), 4),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local1.creative == 0", "Lfalse"), 5),
+        new IrOperationModel("LABEL", List.of("Ltrue"), 6),
+        new IrOperationModel("CONSTANT", List.of("1"), 7),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 8),
+        new IrOperationModel("LABEL", List.of("Lfalse"), 9),
+        new IrOperationModel("CONSTANT", List.of("0"), 10),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 11),
+        new IrOperationModel("RETURN", List.of("<unknown>"), 12)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (local0.owner == null) return 1;"), result.source());
+    assertTrue(result.source().contains(
+        "if (local1.getId().equals(local0.owner) != 0) return 1;"), result.source());
+    assertTrue(result.source().contains("if (local1.creative == 0) return 0;"), result.source());
+    assertTrue(result.source().contains("return 1;"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void structuresShortCircuitChainWithTwoExpressionBlocksIntoLocalTernary() {
+    IrMethodModel method = new IrMethodModel("isVisible", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("a == 0", "Ltrue"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("b == 0", "Ltrue"), 1),
+        new IrOperationModel("CALL_VALUE", List.of("c.hasNext()"), 2),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("c.hasNext() == 0", "Lfalse"), 3),
+        new IrOperationModel("LABEL", List.of("Ltrue"), 4),
+        new IrOperationModel("CONSTANT", List.of("1"), 5),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 6),
+        new IrOperationModel("LABEL", List.of("Lfalse"), 7),
+        new IrOperationModel("CONSTANT", List.of("0"), 8),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 9),
+        new IrOperationModel("LOCAL_WRITE", List.of("local3", "<unknown>"), 10),
+        new IrOperationModel("RETURN", List.of("local3"), 11)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "var local3 = (a == 0 ? 1 : (b == 0 ? 1 : (c.hasNext() == 0 ? 0 : 1)));"),
+        result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void structuresShortCircuitChainIntoMethodArgumentSink() {
+    IrMethodModel method = new IrMethodModel("updateVisibility", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("error == null", "Lactive"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH",
+            List.of("error.type.allowsTransfer == 0", "Linactive"), 1),
+        new IrOperationModel("LABEL", List.of("Lactive"), 2),
+        new IrOperationModel("CONSTANT", List.of("1"), 3),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 4),
+        new IrOperationModel("LABEL", List.of("Linactive"), 5),
+        new IrOperationModel("CONSTANT", List.of("0"), 6),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 7),
+        new IrOperationModel("METHOD_CALL", List.of("button.setVisible(<unknown>)"), 8),
+        new IrOperationModel("RETURN", List.of(), 9)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "button.setVisible((error == null ? 1 : (error.type.allowsTransfer == 0 ? 0 : 1)));"),
+        result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
   void structuresInfiniteLoopWithEarlyReturnsAndContinue() {
     IrMethodModel method = new IrMethodModel("findEntry", "()Z", List.of(
         new IrOperationModel("LABEL", List.of("Lloop"), 0),
