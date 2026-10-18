@@ -795,6 +795,88 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void builtinAdapterManifestMatchesRuntimeAndCoversCommonEnumsAndLists() throws Exception {
+    Path output = tempDir.resolve("adapter-manifest");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+
+    String manifestJson = new String(
+        getClass().getResourceAsStream("/com/goldclient/translator/gold-client-adapters.json").readAllBytes(),
+        StandardCharsets.UTF_8);
+    java.util.List<String> manifestOwners = new java.util.ArrayList<>();
+    for (var element : com.google.gson.JsonParser.parseString(manifestJson).getAsJsonObject()
+        .getAsJsonArray("adapters")) {
+      manifestOwners.add(element.getAsJsonObject().get("owner").getAsString());
+    }
+    manifestOwners.sort(String::compareTo);
+    assertFalse(manifestOwners.isEmpty(), "adapter manifest must list at least one owner");
+
+    Path runner = output.resolve("adapter-manifest-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const gray = r.getStaticField("net.minecraft.util.text.TextFormatting", "GRAY");
+        if (gray.toString() !== String.fromCharCode(167) + "7") throw new Error("TextFormatting.GRAY rendering");
+        if (gray.getColorIndex() !== 7 || gray.getFriendlyName() !== "Gray"
+            || gray.name() !== "GRAY" || gray.ordinal() !== 7) {
+          throw new Error("TextFormatting.GRAY members");
+        }
+        const values = r.invokePlatformStatic("net.minecraft.util.text.TextFormatting", "values");
+        if (values.length !== 22 || values[0].name() !== "BLACK" || values[15].name() !== "WHITE") {
+          throw new Error("TextFormatting.values ordering");
+        }
+        const red = r.invokePlatformStatic("net.minecraft.util.text.TextFormatting", "fromColorIndex", 12);
+        if (red !== r.getStaticField("net.minecraft.util.text.TextFormatting", "RED")) {
+          throw new Error("TextFormatting.fromColorIndex");
+        }
+        if (r.invokePlatformStatic("net.minecraft.util.text.TextFormatting", "fromColorIndex", 99) !== null) {
+          throw new Error("TextFormatting.fromColorIndex must miss unmapped indexes");
+        }
+        if (r.invokePlatformStatic("net.minecraft.util.text.TextFormatting", "valueOf", "GOLD").getColorIndex() !== 6) {
+          throw new Error("TextFormatting.valueOf");
+        }
+        const rare = r.getStaticField("net.minecraft.item.EnumRarity", "RARE");
+        if (rare.getColor() !== r.getStaticField("net.minecraft.util.text.TextFormatting", "AQUA")
+            || rare.getRarityName() !== "Rare") {
+          throw new Error("EnumRarity members");
+        }
+        const list = r.invokePlatformStatic("net.minecraft.util.NonNullList", "withSize", 3, "x");
+        if (list.size() !== 3 || list.get(0) !== "x" || list.get(2) !== "x") {
+          throw new Error("NonNullList.withSize");
+        }
+        list.set(1, "y");
+        if (list.get(1) !== "y") throw new Error("NonNullList.set");
+        let nullRejected = false;
+        try { list.set(0, null); } catch (error) { nullRejected = /NullPointerException/.test(error.message); }
+        if (!nullRejected) throw new Error("NonNullList must reject null elements");
+        const empty = r.invokePlatformStatic("net.minecraft.util.NonNullList", "create");
+        empty.add("a");
+        if (empty.size() !== 1 || empty.get(0) !== "a") throw new Error("NonNullList.create");
+        const defaulted = r.invokePlatformStatic("net.minecraft.util.NonNullList", "create", "seed");
+        if (defaulted.size() !== 0 || defaulted.getDefault() !== "seed") throw new Error("NonNullList.create(default)");
+        console.log(JSON.stringify({
+          status: "minecraft-adapter-extensions-ok",
+          owners: r.builtinAdapterOwners()
+        }));
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "built-in adapter runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    var result = com.google.gson.JsonParser.parseString(outputText).getAsJsonObject();
+    assertEquals("minecraft-adapter-extensions-ok", result.get("status").getAsString());
+    java.util.List<String> runtimeOwners = new java.util.ArrayList<>();
+    for (var element : result.getAsJsonArray("owners")) runtimeOwners.add(element.getAsString());
+    runtimeOwners.sort(String::compareTo);
+    assertEquals(manifestOwners, runtimeOwners,
+        "gold-client-adapters.json must list exactly the runtime's built-in adapter owners");
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);

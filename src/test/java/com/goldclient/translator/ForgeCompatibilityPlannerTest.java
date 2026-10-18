@@ -147,6 +147,72 @@ class ForgeCompatibilityPlannerTest {
   }
 
   @Test
+  void marksRuntimeAdapterOwnersAsCoveredWithoutClaimingHostBindings() {
+    ClassModel mod = new ClassModel("sample/UsesAdapters", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(),
+        List.of(method("render",
+            "(Lnet/minecraft/util/NonNullList;Lnet/minecraft/item/ItemStack;)V", Opcodes.ACC_PUBLIC,
+            List.of(
+                op("FIELD_READ", "net.minecraft.util.text.TextFormatting.GRAY"),
+                op("METHOD_CALL", "net.minecraft.util.math.MathHelper.clamp(double, double, double)"),
+                op("METHOD_CALL", "net/minecraft/client/Minecraft.getMinecraft()")))), List.of());
+
+    var plan = new ForgeCompatibilityPlanner().plan(List.of(mod));
+    assertTrue(plan.references().stream().anyMatch(ref ->
+        ref.owner().equals("net/minecraft/util/text/TextFormatting/GRAY")
+            && ref.supportLevel().equals("RUNTIME_BUILTIN_ADAPTER")),
+        "adapter-backed field references are reported as covered, not as missing bindings");
+    assertTrue(plan.references().stream().anyMatch(ref ->
+        ref.owner().equals("net/minecraft/util/NonNullList")
+            && ref.supportLevel().equals("RUNTIME_BUILTIN_ADAPTER")),
+        "class references listed in the adapter manifest are covered");
+    assertTrue(plan.references().stream().anyMatch(ref ->
+        ref.owner().equals("net/minecraft/util/math/MathHelper")
+            && ref.supportLevel().equals("RUNTIME_BUILTIN_ADAPTER")),
+        "static-call operands expose their class owner so adapter coverage is complete");
+    assertTrue(plan.references().stream().anyMatch(ref ->
+        ref.owner().equals("net/minecraft/item/ItemStack")
+            && ref.supportLevel().equals("TARGET_BINDING_REQUIRED")),
+        "owners without a built-in adapter must still require host bindings");
+    assertTrue(plan.references().stream().anyMatch(ref ->
+        ref.owner().equals("net/minecraft/client/Minecraft")
+            && ref.supportLevel().equals("TARGET_BINDING_REQUIRED")),
+        "Minecraft itself is supplied by the host, never by a value adapter");
+    assertTrue(plan.nextActions().stream().anyMatch(action ->
+        action.contains("Built-in runtime adapters cover")));
+    assertTrue(plan.nextActions().stream().anyMatch(action ->
+        action.contains("Eaglercraft") && action.contains("does not cover")));
+  }
+
+  @Test
+  void doesNotTreatLocalReceiverCallsAsClassOwners() {
+    ClassModel mod = new ClassModel("sample/LocalCalls", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(),
+        List.of(method("run", "()V", Opcodes.ACC_PUBLIC,
+            List.of(op("METHOD_CALL", "local3.getDisplayName()")))), List.of());
+
+    var plan = new ForgeCompatibilityPlanner().plan(List.of(mod));
+    assertTrue(plan.references().stream().noneMatch(ref -> ref.owner().contains("local3")),
+        "instance calls on stack expressions are not API owners");
+    assertEquals(1, plan.references().size(), "only the superclass reference is reported");
+  }
+
+  @Test
+  void onlyMemberShapedFieldTailsResolveToAdapterOwners() {
+    ClassModel mod = new ClassModel("sample/Tails", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(),
+        List.of(method("run", "()V", Opcodes.ACC_PUBLIC,
+            List.of(op("FIELD_READ", "net.minecraft.util.EnumFacing.Axis")))),
+        List.of());
+
+    var plan = new ForgeCompatibilityPlanner().plan(List.of(mod));
+    assertTrue(plan.references().stream().anyMatch(ref ->
+        ref.owner().equals("net/minecraft/util/EnumFacing/Axis")
+            && ref.supportLevel().equals("TARGET_BINDING_REQUIRED")),
+        "title-cased tails may be nested classes and must not strip to an adapter owner");
+  }
+
+  @Test
   void ignoresLowercaseResourcePathsWhenScanningOperandText() {
     ClassModel mod = new ClassModel("sample/Resources", "java/lang/Object", List.of(),
         Opcodes.ACC_PUBLIC, null, List.of(), List.of(),

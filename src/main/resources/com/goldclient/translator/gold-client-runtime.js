@@ -1046,6 +1046,324 @@ class GoldClientMinecraftVec3d {
 }
 GoldClientMinecraftVec3d.ZERO = new GoldClientMinecraftVec3d(0, 0, 0);
 
+// TextFormatting is a deterministic enum of colour/style codes. Only members
+// mods actually use are implemented: constants, values/valueOf, colour
+// indexes, friendly names, section-sign rendering, and code lookup.
+class GoldClientMinecraftTextFormatting {
+  constructor(constantName, code, colorIndex, friendlyName, fancy = false) {
+    this.constantName = constantName;
+    this.formattingCode = code;
+    this.colorIndex = colorIndex;
+    this.friendlyName = friendlyName;
+    this.fancy = fancy;
+  }
+  name() { return this.constantName; }
+  ordinal() { return GoldClientMinecraftTextFormatting.VALUES.indexOf(this); }
+  getColorIndex() { return this.colorIndex; }
+  getFriendlyName() { return this.friendlyName; }
+  isFancyStyling() { return this.fancy; }
+  toString() { return "\u00a7" + this.formattingCode; }
+  equals(other) { return other != null && this.constantName === other.constantName; }
+  hashCode() { return Math.imul(this.constantName.length, 31) + this.ordinal(); }
+  compareTo(other) { return Math.sign((other?.ordinal?.() ?? 0) - this.ordinal()); }
+  static values() { return GoldClientMinecraftTextFormatting.VALUES.slice(); }
+  static valueOf(name) {
+    const found = GoldClientMinecraftTextFormatting.VALUES.find(value => value.constantName === String(name));
+    if (!found) throw new TypeError("IllegalArgumentException: No enum constant net.minecraft.util.text.TextFormatting." + name);
+    return found;
+  }
+  static fromColorIndex(index) {
+    const wanted = Number(index);
+    return GoldClientMinecraftTextFormatting.VALUES.find(value => value.colorIndex === wanted) ?? null;
+  }
+  static getByCode(code) {
+    const text = String(code);
+    return text.length === 1
+      ? GoldClientMinecraftTextFormatting.VALUES.find(value => value.formattingCode === text) ?? null
+      : null;
+  }
+}
+const __goldTextFormatting = (name, code, colorIndex, friendlyName, fancy = false) =>
+  new GoldClientMinecraftTextFormatting(name, code, colorIndex, friendlyName, fancy);
+GoldClientMinecraftTextFormatting.BLACK = __goldTextFormatting("BLACK", "0", 0, "Black");
+GoldClientMinecraftTextFormatting.DARK_BLUE = __goldTextFormatting("DARK_BLUE", "1", 1, "Dark Blue");
+GoldClientMinecraftTextFormatting.DARK_GREEN = __goldTextFormatting("DARK_GREEN", "2", 2, "Dark Green");
+GoldClientMinecraftTextFormatting.DARK_AQUA = __goldTextFormatting("DARK_AQUA", "3", 3, "Dark Aqua");
+GoldClientMinecraftTextFormatting.DARK_RED = __goldTextFormatting("DARK_RED", "4", 4, "Dark Red");
+GoldClientMinecraftTextFormatting.DARK_PURPLE = __goldTextFormatting("DARK_PURPLE", "5", 5, "Dark Purple");
+GoldClientMinecraftTextFormatting.GOLD = __goldTextFormatting("GOLD", "6", 6, "Gold");
+GoldClientMinecraftTextFormatting.GRAY = __goldTextFormatting("GRAY", "7", 7, "Gray");
+GoldClientMinecraftTextFormatting.DARK_GRAY = __goldTextFormatting("DARK_GRAY", "8", 8, "Dark Gray");
+GoldClientMinecraftTextFormatting.BLUE = __goldTextFormatting("BLUE", "9", 9, "Blue");
+GoldClientMinecraftTextFormatting.GREEN = __goldTextFormatting("GREEN", "a", 10, "Green");
+GoldClientMinecraftTextFormatting.AQUA = __goldTextFormatting("AQUA", "b", 11, "Aqua");
+GoldClientMinecraftTextFormatting.RED = __goldTextFormatting("RED", "c", 12, "Red");
+GoldClientMinecraftTextFormatting.LIGHT_PURPLE = __goldTextFormatting("LIGHT_PURPLE", "d", 13, "Light Purple");
+GoldClientMinecraftTextFormatting.YELLOW = __goldTextFormatting("YELLOW", "e", 14, "Yellow");
+GoldClientMinecraftTextFormatting.WHITE = __goldTextFormatting("WHITE", "f", 15, "White");
+GoldClientMinecraftTextFormatting.OBFUSCATED = __goldTextFormatting("OBFUSCATED", "k", -1, "Obfuscated", true);
+GoldClientMinecraftTextFormatting.BOLD = __goldTextFormatting("BOLD", "l", -1, "Bold", true);
+GoldClientMinecraftTextFormatting.STRIKETHROUGH = __goldTextFormatting("STRIKETHROUGH", "m", -1, "Strikethrough", true);
+GoldClientMinecraftTextFormatting.UNDERLINE = __goldTextFormatting("UNDERLINE", "n", -1, "Underline", true);
+GoldClientMinecraftTextFormatting.ITALIC = __goldTextFormatting("ITALIC", "o", -1, "Italic", true);
+GoldClientMinecraftTextFormatting.RESET = __goldTextFormatting("RESET", "r", -1, "Reset");
+GoldClientMinecraftTextFormatting.VALUES = [
+  GoldClientMinecraftTextFormatting.BLACK, GoldClientMinecraftTextFormatting.DARK_BLUE,
+  GoldClientMinecraftTextFormatting.DARK_GREEN, GoldClientMinecraftTextFormatting.DARK_AQUA,
+  GoldClientMinecraftTextFormatting.DARK_RED, GoldClientMinecraftTextFormatting.DARK_PURPLE,
+  GoldClientMinecraftTextFormatting.GOLD, GoldClientMinecraftTextFormatting.GRAY,
+  GoldClientMinecraftTextFormatting.DARK_GRAY, GoldClientMinecraftTextFormatting.BLUE,
+  GoldClientMinecraftTextFormatting.GREEN, GoldClientMinecraftTextFormatting.AQUA,
+  GoldClientMinecraftTextFormatting.RED, GoldClientMinecraftTextFormatting.LIGHT_PURPLE,
+  GoldClientMinecraftTextFormatting.YELLOW, GoldClientMinecraftTextFormatting.WHITE,
+  GoldClientMinecraftTextFormatting.OBFUSCATED, GoldClientMinecraftTextFormatting.BOLD,
+  GoldClientMinecraftTextFormatting.STRIKETHROUGH, GoldClientMinecraftTextFormatting.UNDERLINE,
+  GoldClientMinecraftTextFormatting.ITALIC, GoldClientMinecraftTextFormatting.RESET
+];
+
+class GoldClientMinecraftEnumRarity {
+  constructor(constantName, color, rarityName) {
+    this.constantName = constantName;
+    this.rarityColor = color;
+    this.rarityName = rarityName;
+  }
+  name() { return this.constantName; }
+  ordinal() { return GoldClientMinecraftEnumRarity.VALUES.indexOf(this); }
+  getColor() { return this.rarityColor; }
+  getRarityName() { return this.rarityName; }
+  toString() { return this.constantName; }
+  equals(other) { return other != null && this.constantName === other.constantName; }
+  hashCode() { return Math.imul(this.constantName.length, 31) + this.ordinal(); }
+  compareTo(other) { return Math.sign((other?.ordinal?.() ?? 0) - this.ordinal()); }
+  static values() { return GoldClientMinecraftEnumRarity.VALUES.slice(); }
+  static valueOf(name) {
+    const found = GoldClientMinecraftEnumRarity.VALUES.find(value => value.constantName === String(name));
+    if (!found) throw new TypeError("IllegalArgumentException: No enum constant net.minecraft.item.EnumRarity." + name);
+    return found;
+  }
+}
+GoldClientMinecraftEnumRarity.COMMON = new GoldClientMinecraftEnumRarity("COMMON", GoldClientMinecraftTextFormatting.WHITE, "Common");
+GoldClientMinecraftEnumRarity.UNCOMMON = new GoldClientMinecraftEnumRarity("UNCOMMON", GoldClientMinecraftTextFormatting.YELLOW, "Uncommon");
+GoldClientMinecraftEnumRarity.RARE = new GoldClientMinecraftEnumRarity("RARE", GoldClientMinecraftTextFormatting.AQUA, "Rare");
+GoldClientMinecraftEnumRarity.EPIC = new GoldClientMinecraftEnumRarity("EPIC", GoldClientMinecraftTextFormatting.LIGHT_PURPLE, "Epic");
+GoldClientMinecraftEnumRarity.VALUES = [
+  GoldClientMinecraftEnumRarity.COMMON, GoldClientMinecraftEnumRarity.UNCOMMON,
+  GoldClientMinecraftEnumRarity.RARE, GoldClientMinecraftEnumRarity.EPIC
+];
+
+function goldClientNonNullListElement(value) {
+  if (value === null || value === undefined) {
+    throw new TypeError("NullPointerException: NonNullList rejects null elements");
+  }
+  return value;
+}
+
+// NonNullList matches the 1.12.2 usage patterns: create()/create(default) start
+// empty and callers add elements, while withSize(size, default) pre-fills every
+// slot. All mutators reject null elements.
+class GoldClientMinecraftNonNullList extends GoldClientJavaList {
+  constructor(items = [], defaultElement = null) {
+    super(items);
+    this.defaultElement = defaultElement ?? null;
+  }
+  getDefault() { return this.defaultElement; }
+  add(...args) {
+    if (args.length > 1) return this.addAt(args[0], args[1]);
+    super.add(goldClientNonNullListElement(args[0]));
+    return true;
+  }
+  addAt(index, value) { return super.addAt(index, goldClientNonNullListElement(value)); }
+  addAll(values) {
+    return super.addAll(Array.from(values?.items ?? values ?? []).map(goldClientNonNullListElement));
+  }
+  set(index, value) { return super.set(index, goldClientNonNullListElement(value)); }
+  setAll(valuesOrElement) {
+    const candidate = valuesOrElement?.items ?? valuesOrElement;
+    const isCollection = Array.isArray(candidate)
+      || (candidate != null && typeof candidate !== "string"
+          && typeof candidate[Symbol.iterator] === "function");
+    if (isCollection) {
+      const copy = Array.from(candidate).map(goldClientNonNullListElement);
+      if (copy.length !== this.items.length) {
+        throw new RangeError("IllegalArgumentException: setAll collection size must match the list size");
+      }
+      this.items = copy;
+      return true;
+    }
+    this.items = this.items.map(() => goldClientNonNullListElement(valuesOrElement));
+    return true;
+  }
+  static create(...args) {
+    return new GoldClientMinecraftNonNullList([], args.length ? args[0] : null);
+  }
+  static withSize(size, defaultElement) {
+    const count = Number(size);
+    if (!Number.isInteger(count) || count < 0) {
+      throw new RangeError("IllegalArgumentException: invalid NonNullList size");
+    }
+    return new GoldClientMinecraftNonNullList(Array(count).fill(defaultElement ?? null), defaultElement ?? null);
+  }
+}
+
+// Built-in platform adapters. These registrations are the runtime's single
+// source of truth for owners served without host bindings;
+// gold-client-adapters.json mirrors them for the Java compatibility planner and
+// JavaScriptModTranslationExporterTest keeps both lists in sync.
+const GoldClientMinecraftAdapters = new Map();
+function registerMinecraftAdapter(owner, definition) {
+  if (GoldClientMinecraftAdapters.has(owner)) {
+    throw new Error("Duplicate built-in adapter: " + owner);
+  }
+  GoldClientMinecraftAdapters.set(owner, Object.freeze({ owner, kind: "value-type", ...definition }));
+}
+
+registerMinecraftAdapter("net.minecraft.util.ResourceLocation", {
+  kind: "value-type",
+  construct: args => new GoldClientMinecraftResourceLocation(...args)
+});
+registerMinecraftAdapter("net.minecraft.util.math.BlockPos", {
+  kind: "value-type",
+  construct: args => new GoldClientMinecraftBlockPos(...args),
+  staticFields: { ORIGIN: GoldClientMinecraftBlockPos.ORIGIN },
+  staticMethods: {
+    fromLong: args => GoldClientMinecraftBlockPos.fromLong(args[0])
+  }
+});
+registerMinecraftAdapter("net.minecraft.util.math.Vec3d", {
+  kind: "value-type",
+  construct: args => new GoldClientMinecraftVec3d(...args),
+  staticFields: { ZERO: GoldClientMinecraftVec3d.ZERO }
+});
+registerMinecraftAdapter("net.minecraft.util.math.AxisAlignedBB", {
+  kind: "value-type",
+  construct: args => new GoldClientMinecraftAxisAlignedBB(...args)
+});
+registerMinecraftAdapter("net.minecraft.util.EnumFacing", {
+  kind: "enum",
+  staticFields: GoldClientMinecraftEnumFacing,
+  staticMethods: {
+    values: () => GoldClientMinecraftEnumFacing.VALUES.slice(),
+    getFront: args => GoldClientMinecraftEnumFacing.getFront(args[0]),
+    getHorizontal: args => GoldClientMinecraftEnumFacing.getHorizontal(args[0]),
+    byName: args => GoldClientMinecraftEnumFacing.byName(args[0]),
+    getFacingFromVector: args => {
+      const [x, y, z] = args.map(Number);
+      if (Math.abs(x) > Math.abs(y) && Math.abs(x) > Math.abs(z)) {
+        return x < 0 ? GoldClientMinecraftEnumFacing.WEST : GoldClientMinecraftEnumFacing.EAST;
+      }
+      if (Math.abs(y) > Math.abs(z)) {
+        return y < 0 ? GoldClientMinecraftEnumFacing.DOWN : GoldClientMinecraftEnumFacing.UP;
+      }
+      return z < 0 ? GoldClientMinecraftEnumFacing.NORTH : GoldClientMinecraftEnumFacing.SOUTH;
+    }
+  }
+});
+registerMinecraftAdapter("net.minecraft.util.EnumFacing$Axis", {
+  kind: "enum",
+  staticFields: GoldClientMinecraftEnumAxis,
+  staticMethods: {
+    values: () => GoldClientMinecraftEnumAxis.VALUES.slice(),
+    byName: args => GoldClientMinecraftEnumAxis.VALUES.find(value => value.getName() === String(args[0]).toLowerCase()) ?? null
+  }
+});
+registerMinecraftAdapter("net.minecraft.util.EnumFacing$AxisDirection", {
+  kind: "enum",
+  staticFields: GoldClientMinecraftAxisDirection,
+  staticMethods: {
+    values: () => GoldClientMinecraftAxisDirection.VALUES.slice(),
+    byName: args => GoldClientMinecraftAxisDirection.VALUES.find(value => value.getName() === String(args[0]).toLowerCase()) ?? null
+  }
+});
+registerMinecraftAdapter("net.minecraft.util.math.MathHelper", {
+  kind: "static-utils",
+  staticMethods: {
+    clamp: args => Math.max(Number(args[1]), Math.min(Number(args[2]), Number(args[0]))),
+    clamp_float: args => Math.max(Number(args[1]), Math.min(Number(args[2]), Number(args[0]))),
+    clamp_int: args => Math.trunc(Math.max(Number(args[1]), Math.min(Number(args[2]), Number(args[0])))),
+    floor: args => Math.floor(Number(args[0])),
+    floor_double: args => Math.floor(Number(args[0])),
+    fastFloor: args => Math.floor(Number(args[0])),
+    ceil: args => Math.ceil(Number(args[0])),
+    ceil_double: args => Math.ceil(Number(args[0])),
+    abs: args => Math.abs(Number(args[0])),
+    abs_int: args => Math.abs(Number(args[0])),
+    sqrt: args => Math.sqrt(Number(args[0])),
+    sqrt_double: args => Math.sqrt(Number(args[0])),
+    sin: args => Math.sin(Number(args[0])),
+    cos: args => Math.cos(Number(args[0])),
+    atan2: args => Math.atan2(Number(args[0]), Number(args[1])),
+    wrapDegrees: args => {
+      let degrees = Number(args[0]) % 360;
+      if (degrees >= 180) degrees -= 360;
+      if (degrees < -180) degrees += 360;
+      return degrees;
+    },
+    normalizeAngle: args => {
+      const bound = Number(args[1]);
+      return bound === 0 ? 0 : ((Number(args[0]) % bound) + bound) % bound;
+    },
+    denormalizeClamp: args => {
+      const start = Number(args[0]), end = Number(args[1]);
+      const amount = Math.max(0, Math.min(1, Number(args[2])));
+      return start + (end - start) * amount;
+    },
+    pct: args => Number(args[0]) / Number(args[1]),
+    average: args => {
+      const values = Array.from(args[0] ?? []);
+      return values.length ? values.reduce((sum, item) => sum + Number(item), 0) / values.length : 0;
+    },
+    getInt: args => {
+      const random = args[0], min = Number(args[1]), max = Number(args[2]);
+      return min >= max ? min : min + random.nextInt(max - min + 1);
+    },
+    getRandomIntegerInRange: args => {
+      const random = args[0], min = Number(args[1]), max = Number(args[2]);
+      return min >= max ? min : min + random.nextInt(max - min + 1);
+    },
+    getRandomFloat: args => {
+      const random = args[0], min = Number(args[1]), max = Number(args[2]);
+      return min + random.nextFloat() * (max - min);
+    },
+    hsvToRGB: args => {
+      const hue = Number(args[0]), saturation = Number(args[1]), brightness = Number(args[2]);
+      const rawSector = Math.floor(hue * 6);
+      const sector = ((rawSector % 6) + 6) % 6;
+      const fraction = hue * 6 - rawSector;
+      const p = brightness * (1 - saturation);
+      const q = brightness * (1 - fraction * saturation);
+      const t = brightness * (1 - (1 - fraction) * saturation);
+      const rgb = [[brightness,t,p],[q,brightness,p],[p,brightness,t],[p,q,brightness],[t,p,brightness],[brightness,p,q]][sector];
+      return (Math.trunc(rgb[0] * 255) << 16) | (Math.trunc(rgb[1] * 255) << 8) | Math.trunc(rgb[2] * 255);
+    }
+  }
+});
+registerMinecraftAdapter("net.minecraft.util.text.TextFormatting", {
+  kind: "enum",
+  staticFields: GoldClientMinecraftTextFormatting,
+  staticMethods: {
+    values: () => GoldClientMinecraftTextFormatting.values(),
+    valueOf: args => GoldClientMinecraftTextFormatting.valueOf(args[0]),
+    fromColorIndex: args => GoldClientMinecraftTextFormatting.fromColorIndex(args[0]),
+    getByCode: args => GoldClientMinecraftTextFormatting.getByCode(args[0])
+  }
+});
+registerMinecraftAdapter("net.minecraft.item.EnumRarity", {
+  kind: "enum",
+  staticFields: GoldClientMinecraftEnumRarity,
+  staticMethods: {
+    values: () => GoldClientMinecraftEnumRarity.values(),
+    valueOf: args => GoldClientMinecraftEnumRarity.valueOf(args[0])
+  }
+});
+registerMinecraftAdapter("net.minecraft.util.NonNullList", {
+  kind: "collection",
+  construct: args => new GoldClientMinecraftNonNullList(Array.from(args[0]?.items ?? args[0] ?? []), args[1] ?? null),
+  staticMethods: {
+    create: args => GoldClientMinecraftNonNullList.create(...args),
+    withSize: args => GoldClientMinecraftNonNullList.withSize(args[0], args[1])
+  }
+});
+
 export const GoldClientRuntime = Object.freeze({
   intDiv(a, b) {
     if (b === 0) throw new Error("ArithmeticException: / by zero");
@@ -1299,20 +1617,11 @@ export const GoldClientRuntime = Object.freeze({
     }
   },
   getStaticField(className, fieldName) {
-    if (className === "net.minecraft.util.EnumFacing$Axis"
-        && Object.prototype.hasOwnProperty.call(GoldClientMinecraftEnumAxis, fieldName)) {
-      return GoldClientMinecraftEnumAxis[fieldName];
+    const adapter = GoldClientMinecraftAdapters.get(className);
+    if (adapter?.staticFields
+        && Object.prototype.hasOwnProperty.call(adapter.staticFields, fieldName)) {
+      return adapter.staticFields[fieldName];
     }
-    if (className === "net.minecraft.util.EnumFacing$AxisDirection"
-        && Object.prototype.hasOwnProperty.call(GoldClientMinecraftAxisDirection, fieldName)) {
-      return GoldClientMinecraftAxisDirection[fieldName];
-    }
-    if (className === "net.minecraft.util.EnumFacing"
-        && Object.prototype.hasOwnProperty.call(GoldClientMinecraftEnumFacing, fieldName)) {
-      return GoldClientMinecraftEnumFacing[fieldName];
-    }
-    if (className === "net.minecraft.util.math.BlockPos" && fieldName === "ORIGIN") return GoldClientMinecraftBlockPos.ORIGIN;
-    if (className === "net.minecraft.util.math.Vec3d" && fieldName === "ZERO") return GoldClientMinecraftVec3d.ZERO;
     if (className === "java.util.concurrent.TimeUnit") return GoldClientJavaTimeUnit.named(fieldName);
     if (className === "java.util.Locale") {
       const locales = { ROOT: new GoldClientJavaLocale(), US: new GoldClientJavaLocale("en", "US"),
@@ -1361,82 +1670,13 @@ export const GoldClientRuntime = Object.freeze({
     if (owner.startsWith("net.minecraftforge.")) return "forge";
     return null;
   },
+  builtinAdapterOwners() {
+    return Array.from(GoldClientMinecraftAdapters.keys()).sort();
+  },
   invokePlatformStatic(owner, method, ...args) {
-    if (owner === "net.minecraft.util.math.MathHelper") {
-      const value = Number(args[0]);
-      if (method === "clamp" || method === "clamp_float" || method === "clamp_int") {
-        const clamped = Math.max(Number(args[1]), Math.min(Number(args[2]), value));
-        return method === "clamp_int" ? Math.trunc(clamped) : clamped;
-      }
-      if (method === "floor" || method === "floor_double" || method === "fastFloor") return Math.floor(value);
-      if (method === "ceil" || method === "ceil_double") return Math.ceil(value);
-      if (method === "abs" || method === "abs_int") return Math.abs(value);
-      if (method === "sqrt" || method === "sqrt_double") return Math.sqrt(value);
-      if (method === "sin") return Math.sin(value);
-      if (method === "cos") return Math.cos(value);
-      if (method === "atan2") return Math.atan2(Number(args[0]), Number(args[1]));
-      if (method === "wrapDegrees") {
-        let degrees = value % 360;
-        if (degrees >= 180) degrees -= 360;
-        if (degrees < -180) degrees += 360;
-        return degrees;
-      }
-      if (method === "normalizeAngle") {
-        const bound = Number(args[1]);
-        return bound === 0 ? 0 : ((value % bound) + bound) % bound;
-      }
-      if (method === "denormalizeClamp") {
-        const start = Number(args[0]), end = Number(args[1]);
-        const amount = Math.max(0, Math.min(1, Number(args[2])));
-        return start + (end - start) * amount;
-      }
-      if (method === "pct") return Number(args[0]) / Number(args[1]);
-      if (method === "average") {
-        const values = Array.from(args[0] ?? []);
-        return values.length ? values.reduce((sum, item) => sum + Number(item), 0) / values.length : 0;
-      }
-      if (method === "getInt" || method === "getRandomIntegerInRange") {
-        const random = args[0], min = Number(args[1]), max = Number(args[2]);
-        return min >= max ? min : min + random.nextInt(max - min + 1);
-      }
-      if (method === "getRandomFloat") {
-        const random = args[0], min = Number(args[1]), max = Number(args[2]);
-        return min + random.nextFloat() * (max - min);
-      }
-      if (method === "hsvToRGB") {
-        const hue = Number(args[0]), saturation = Number(args[1]), brightness = Number(args[2]);
-        const rawSector = Math.floor(hue * 6);
-        const sector = ((rawSector % 6) + 6) % 6;
-        const fraction = hue * 6 - rawSector;
-        const p = brightness * (1 - saturation);
-        const q = brightness * (1 - fraction * saturation);
-        const t = brightness * (1 - (1 - fraction) * saturation);
-        const rgb = [[brightness,t,p],[q,brightness,p],[p,brightness,t],[p,q,brightness],[t,p,brightness],[brightness,p,q]][sector];
-        return (Math.trunc(rgb[0] * 255) << 16) | (Math.trunc(rgb[1] * 255) << 8) | Math.trunc(rgb[2] * 255);
-      }
-    }
-    if (owner === "net.minecraft.util.EnumFacing$Axis") {
-      if (method === "values") return GoldClientMinecraftEnumAxis.VALUES.slice();
-      if (method === "byName") return GoldClientMinecraftEnumAxis.VALUES.find(value => value.getName() === String(args[0]).toLowerCase()) ?? null;
-    }
-    if (owner === "net.minecraft.util.EnumFacing$AxisDirection") {
-      if (method === "values") return GoldClientMinecraftAxisDirection.VALUES.slice();
-      if (method === "byName") return GoldClientMinecraftAxisDirection.VALUES.find(value => value.getName() === String(args[0]).toLowerCase()) ?? null;
-    }
-    if (owner === "net.minecraft.util.EnumFacing") {
-      if (method === "values") return GoldClientMinecraftEnumFacing.VALUES.slice();
-      if (method === "getFront") return GoldClientMinecraftEnumFacing.getFront(args[0]);
-      if (method === "getHorizontal") return GoldClientMinecraftEnumFacing.getHorizontal(args[0]);
-      if (method === "byName") return GoldClientMinecraftEnumFacing.byName(args[0]);
-      if (method === "getFacingFromVector") {
-        const [x, y, z] = args.map(Number);
-        if (Math.abs(x) > Math.abs(y) && Math.abs(x) > Math.abs(z)) return x < 0 ? GoldClientMinecraftEnumFacing.WEST : GoldClientMinecraftEnumFacing.EAST;
-        if (Math.abs(y) > Math.abs(z)) return y < 0 ? GoldClientMinecraftEnumFacing.DOWN : GoldClientMinecraftEnumFacing.UP;
-        return z < 0 ? GoldClientMinecraftEnumFacing.NORTH : GoldClientMinecraftEnumFacing.SOUTH;
-      }
-    }
-    if (owner === "net.minecraft.util.math.BlockPos" && method === "fromLong") {
-      return GoldClientMinecraftBlockPos.fromLong(args[0]);
+    const adapter = GoldClientMinecraftAdapters.get(owner);
+    if (adapter?.staticMethods && typeof adapter.staticMethods[method] === "function") {
+      return adapter.staticMethods[method](args);
     }
     const service = this.platformService(owner);
     if (!service) return this.unsupported("unknown-platform-class", owner + "." + method);
@@ -1451,10 +1691,8 @@ export const GoldClientRuntime = Object.freeze({
     return this.classes.get(name) ?? null;
   },
   create(name, ...args) {
-    if (name === "net.minecraft.util.ResourceLocation") return new GoldClientMinecraftResourceLocation(...args);
-    if (name === "net.minecraft.util.math.BlockPos") return new GoldClientMinecraftBlockPos(...args);
-    if (name === "net.minecraft.util.math.Vec3d") return new GoldClientMinecraftVec3d(...args);
-    if (name === "net.minecraft.util.math.AxisAlignedBB") return new GoldClientMinecraftAxisAlignedBB(...args);
+    const adapter = GoldClientMinecraftAdapters.get(name);
+    if (adapter?.construct) return adapter.construct(args);
     const constructor = this.classes.get(name);
     if (!constructor) {
       const service = this.platformService(name);
