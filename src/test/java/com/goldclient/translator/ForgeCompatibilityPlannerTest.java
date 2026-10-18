@@ -87,6 +87,60 @@ class ForgeCompatibilityPlannerTest {
     assertEquals(2, plan.translationWarnings().size());
   }
 
+  @Test
+  void extractsOnlyValidInternalNamesFromDescriptorsAndOperandText() {
+    ClassModel mod = new ClassModel("sample/Descriptors", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(),
+        List.of(method("run", "(ILsample/cast/Target;)V", Opcodes.ACC_PUBLIC, List.of(
+            op("FIELD", "VALUES/clone(), \"[Lsample/embedded/Referenced;")))), List.of());
+
+    var plan = new ForgeCompatibilityPlanner().plan(List.of(mod));
+    assertTrue(plan.references().stream().anyMatch(ref -> ref.owner().equals("sample/cast/Target")),
+        "object type after a primitive descriptor slot must still be detected");
+    assertTrue(plan.references().stream().anyMatch(ref -> ref.owner().equals("sample/embedded/Referenced")),
+        "descriptors embedded in operand text must be detected");
+    assertTrue(plan.references().stream().noneMatch(ref ->
+        ref.owner().contains("UES") || ref.owner().contains("(") || ref.owner().contains(" ")),
+        "identifier-embedded L tokens must not produce fake owners");
+  }
+
+  @Test
+  void claimsTranslatedClassExpectationOnlyForOwnersPresentInTheInput() {
+    ClassModel present = new ClassModel("mezz/example/Present", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(),
+        List.of(method("run", "()V", Opcodes.ACC_PUBLIC, List.of(op("RETURN")))), List.of());
+    ClassModel uses = new ClassModel("sample/UsesPresent", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(),
+        List.of(method("call", "()V", Opcodes.ACC_PUBLIC, List.of(
+            op("METHOD_CALL", "mezz/example/Present.run"),
+            op("METHOD_CALL", "it/unimi/dsi/fastutil/ints/IntSet.add")))), List.of());
+
+    var plan = new ForgeCompatibilityPlanner().plan(List.of(present, uses));
+    assertTrue(plan.references().stream().anyMatch(ref ->
+        ref.owner().equals("mezz/example/Present")
+            && ref.family().equals("APPLICATION")
+            && ref.supportLevel().equals("TRANSLATED_CLASS_EXPECTED")));
+    assertTrue(plan.references().stream().anyMatch(ref ->
+        ref.owner().equals("it/unimi/dsi/fastutil/ints/IntSet")
+            && ref.family().equals("THIRD_PARTY")
+            && ref.supportLevel().equals("DEPENDENCY_OR_ADAPTER_REQUIRED")),
+        "fastutil is not in the input jar and must not be reported as translated");
+  }
+
+  @Test
+  void ignoresLowercaseResourcePathsWhenScanningOperandText() {
+    ClassModel mod = new ClassModel("sample/Resources", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(),
+        List.of(method("load", "()V", Opcodes.ACC_PUBLIC, List.of(
+            op("LDC", "icons/arrow_next"),
+            op("LDC", "textures/blocks/stone.png")))), List.of());
+
+    var plan = new ForgeCompatibilityPlanner().plan(List.of(mod));
+    assertTrue(plan.references().stream().noneMatch(ref ->
+        ref.owner().equals("icons/arrow_next") || ref.owner().startsWith("textures/")),
+        "resource path strings are not API owners");
+  }
+
   private static MethodModel method(String name, String descriptor, int access,
       List<IrOperationModel> operations) {
     return new MethodModel(name, descriptor, null, access, List.of(), List.of(), List.of(),

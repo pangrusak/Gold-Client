@@ -28,7 +28,8 @@ import java.util.regex.Pattern;
  * unresolved external owner is retained in the report rather than silently discarded.
  */
 public final class ForgeCompatibilityPlanner {
-  private static final Pattern DESCRIPTOR_OWNER = Pattern.compile("L([^;]+);");
+  private static final Pattern DESCRIPTOR_OWNER = Pattern.compile("L([A-Za-z_$][\\w$]*(?:/[A-Za-z_$][\\w$]*)+);");
+  private static final Pattern INTERNAL_CLASS_NAME = Pattern.compile("[A-Za-z_$][\\w$]*(?:/[A-Za-z_$][\\w$]*)+");
   private static final Pattern INTERNAL_OWNER = Pattern.compile(
       "(?:^|[^A-Za-z0-9_$])([a-zA-Z_$][\\w$]*(?:/[a-zA-Z_$][\\w$]*)+)(?=$|[^A-Za-z0-9_$])");
 
@@ -63,6 +64,8 @@ public final class ForgeCompatibilityPlanner {
   public CompatibilityPlan plan(List<ClassModel> classes) {
     if (classes == null) throw new IllegalArgumentException("Classes must not be null.");
     Map<String, MutableReference> refs = new TreeMap<>();
+    Set<String> inputClasses = new LinkedHashSet<>();
+    for (ClassModel clazz : classes) inputClasses.add(clazz.name());
     int methodCount = 0;
     int complete = 0;
     int incomplete = 0;
@@ -78,16 +81,16 @@ public final class ForgeCompatibilityPlanner {
         else if ("stubbed".equals(status)) stubbed++;
         else incomplete++;
 
-        scanText(clazz.superName(), methodKey, "SUPER", refs);
-        clazz.interfaces().forEach(owner -> scanText(owner, methodKey, "IMPLEMENTS", refs));
-        scanDescriptor(method.descriptor(), methodKey, refs);
-        method.exceptions().forEach(owner -> scanText(owner, methodKey, "THROWS", refs));
+        scanClassName(clazz.superName(), methodKey, "SUPER", inputClasses, refs);
+        clazz.interfaces().forEach(owner -> scanClassName(owner, methodKey, "IMPLEMENTS", inputClasses, refs));
+        scanDescriptor(method.descriptor(), methodKey, inputClasses, refs);
+        method.exceptions().forEach(owner -> scanClassName(owner, methodKey, "THROWS", inputClasses, refs));
 
         for (IrOperationModel operation : method.intermediateRepresentation().operations()) {
           String kind = operation.kind() == null ? "UNKNOWN" : operation.kind();
           for (String operand : operation.operands()) {
-            scanDescriptor(operand, methodKey, refs);
-            scanText(operand, methodKey, kind, refs);
+            scanDescriptor(operand, methodKey, inputClasses, refs);
+            scanText(operand, methodKey, kind, inputClasses, refs);
           }
         }
         if (!"complete".equals(status)) {
@@ -167,36 +170,61 @@ public final class ForgeCompatibilityPlanner {
   }
 
   private static void scanDescriptor(String text, String methodKey,
-      Map<String, MutableReference> refs) {
+      Set<String> inputClasses, Map<String, MutableReference> refs) {
     if (text == null || text.isEmpty()) return;
     Matcher matcher = DESCRIPTOR_OWNER.matcher(text);
-    while (matcher.find()) addReference(matcher.group(1), methodKey, "DESCRIPTOR", refs);
+    while (matcher.find()) addReference(matcher.group(1), methodKey, "DESCRIPTOR", inputClasses, refs);
+  }
+
+  /** Scans an authoritative single internal name; obfuscated lowercase names must survive. */
+  private static void scanClassName(String text, String methodKey, String operation,
+      Set<String> inputClasses, Map<String, MutableReference> refs) {
+    if (text == null || text.isEmpty()) return;
+    String candidate = text.trim();
+    if (INTERNAL_CLASS_NAME.matcher(candidate).matches()) {
+      addReference(candidate, methodKey, operation, inputClasses, refs);
+    }
   }
 
   private static void scanText(String text, String methodKey, String operation,
-      Map<String, MutableReference> refs) {
+      Set<String> inputClasses, Map<String, MutableReference> refs) {
     if (text == null || text.isEmpty()) return;
+    String candidate = text.trim();
+    // Operand text also contains resource paths such as icons/arrow_next; only class-shaped
+    // tokens (capitalized simple name) are treated as owners on this free-form path.
+    if (INTERNAL_CLASS_NAME.matcher(candidate).matches() && looksLikeEmbeddedClassName(candidate)) {
+      addReference(candidate, methodKey, operation, inputClasses, refs);
+      return;
+    }
     // Keep dotted method separators intact so owner extraction never absorbs a method name.
     Matcher matcher = INTERNAL_OWNER.matcher(text);
     while (matcher.find()) {
       String owner = matcher.group(1);
-      if (owner.indexOf('/') >= 0) addReference(owner, methodKey, operation, refs);
+      if (owner.indexOf('/') >= 0 && looksLikeEmbeddedClassName(owner)) {
+        addReference(owner, methodKey, operation, inputClasses, refs);
+      }
     }
     // ASM metadata usually uses internal names; annotations and textual operands may use
     // binary names. Convert only the class-like prefix, never an entire method expression.
-    String candidate = text.trim();
     if (candidate.matches("(?:net|org|com|java|javax)\\.[A-Za-z0-9_$.]+")
         && candidate.indexOf('(') < 0) {
-      addReference(candidate.replace('.', '/'), methodKey, operation, refs);
+      addReference(candidate.replace('.', '/'), methodKey, operation, inputClasses, refs);
     }
   }
 
+  private static boolean looksLikeEmbeddedClassName(String owner) {
+    String simpleName = owner.substring(owner.lastIndexOf('/') + 1);
+    if (simpleName.isEmpty()) return false;
+    char first = simpleName.charAt(0);
+    return Character.isUpperCase(first) || first == '$';
+  }
+
   private static void addReference(String owner, String methodKey, String operation,
-      Map<String, MutableReference> refs) {
+      Set<String> inputClasses, Map<String, MutableReference> refs) {
     if (owner == null || owner.isBlank() || owner.startsWith("[")) return;
     String normalizedOwner = owner.replace('.', '/');
-    if (!normalizedOwner.contains("/")) return;
-    String[] classification = classify(normalizedOwner);
+    if (!INTERNAL_CLASS_NAME.matcher(normalizedOwner).matches()) return;
+    String[] classification = classify(normalizedOwner, inputClasses);
     MutableReference ref = refs.computeIfAbsent(normalizedOwner,
         ignored -> new MutableReference(normalizedOwner, classification[0], classification[1]));
     ref.count++;
@@ -204,19 +232,18 @@ public final class ForgeCompatibilityPlanner {
     ref.usedBy.add(methodKey);
   }
 
-  private static String[] classify(String owner) {
+  private static String[] classify(String owner, Set<String> inputClasses) {
+    // Only claim a class is provided by the translation when it is actually in the input.
+    if (inputClasses.contains(owner)) return new String[] {"APPLICATION", "TRANSLATED_CLASS_EXPECTED"};
     if (owner.startsWith("net/minecraft/")) return new String[] {"MINECRAFT", "TARGET_BINDING_REQUIRED"};
     if (owner.startsWith("net/minecraftforge/")) return new String[] {"FORGE", "TARGET_BINDING_REQUIRED"};
     if (owner.startsWith("java/") || owner.startsWith("javax/")) {
       return new String[] {"JAVA_PLATFORM", "TEAVM_OR_RUNTIME_DEPENDENT"};
     }
     if (owner.startsWith("org/lwjgl/")) return new String[] {"GRAPHICS_INPUT", "TARGET_BINDING_REQUIRED"};
-    if (owner.startsWith("org/apache/") || owner.startsWith("com/google/")) {
+    if (owner.startsWith("org/apache/") || owner.startsWith("com/google/") || owner.startsWith("it/")) {
       return new String[] {"THIRD_PARTY", "DEPENDENCY_OR_ADAPTER_REQUIRED"};
     }
-    if (owner.startsWith("com/") || owner.startsWith("org/")) {
-      return new String[] {"MOD_OR_LIBRARY", "UNBOUND"};
-    }
-    return new String[] {"APPLICATION", "TRANSLATED_CLASS_EXPECTED"};
+    return new String[] {"MOD_OR_LIBRARY", "UNBOUND"};
   }
 }
