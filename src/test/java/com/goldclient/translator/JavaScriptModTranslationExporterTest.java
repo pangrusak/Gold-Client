@@ -108,6 +108,19 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void exportsRuntimeSourceVerbatimFromClasspathResource() throws Exception {
+    Path output = tempDir.resolve("runtime-export");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    String exported = Files.readString(output.resolve("gold-client-runtime.js"), StandardCharsets.UTF_8);
+    String resource = new String(
+        getClass().getResourceAsStream("/com/goldclient/translator/gold-client-runtime.js").readAllBytes(),
+        StandardCharsets.UTF_8).replace("\r\n", "\n");
+    assertEquals(resource, exported);
+    assertTrue(resource.contains("export const GoldClientRuntime"),
+        resource.length() + " byte runtime is missing the GoldClientRuntime export");
+  }
+
+  @Test
   void emitsGenericForgeLifecycleDispatcherFromAnnotations() throws Exception {
     var modAnnotation = new com.goldclient.model.AnnotationData(
         "net.minecraftforge.fml.common.Mod", true, java.util.Map.of("modid", "samplemod"));
