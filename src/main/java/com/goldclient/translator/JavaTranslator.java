@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 
 public final class JavaTranslator {
+
   public TranslationResult translate(IrMethodModel method) {
     List<IrOperationModel> operations = method.operations();
     TranslationContext context = new TranslationContext();
@@ -86,6 +87,14 @@ public final class JavaTranslator {
             i = loop.lastIndex();
             continue;
           }
+          ConditionalRender conditionJump = renderConditionJumpLoop(
+              operations, i, end, indent, context, labels);
+          if (conditionJump != null) {
+            source.append(conditionJump.source());
+            complete &= conditionJump.complete();
+            i = conditionJump.lastIndex();
+            continue;
+          }
           int loopBranch = findBackwardConditional(
               operations, i, end, operation.operands().get(0));
           if (loopBranch > i) {
@@ -117,6 +126,16 @@ public final class JavaTranslator {
             complete &= loop.complete();
             i = loopBranch + 1;
             continue;
+          }
+          if (findTerminalExitLoop(operations, i, end, operation.operands().get(0), labels)) {
+            ConditionalRender loop = renderTerminalExitLoop(
+                operations, i, end, indent, context, labels);
+            if (loop != null) {
+              source.append(loop.source());
+              complete &= loop.complete();
+              i = loop.lastIndex();
+              continue;
+            }
           }
           LoopShape breakLoop = findBreakLoopBackEdge(
               operations, i, end, operation.operands().get(0), labels);
@@ -1809,7 +1828,20 @@ public final class JavaTranslator {
     Integer header = labels.get(labelKey(loopLabel));
     if (header == null || header != loopHeaderIndex) return null;
 
-    for (int branchIndex = loopHeaderIndex + 1; branchIndex < end; branchIndex++) {
+    // The loop's exit test is part of the header block: it must precede the
+    // first jump back to the header, otherwise it belongs to a nested structure
+    // that only happens to end near a back edge.
+    int firstBackEdge = end;
+    for (int i = loopHeaderIndex + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(loopLabel).equals(labelKey(operation.operands().get(0)))) {
+        firstBackEdge = i;
+        break;
+      }
+    }
+
+    for (int branchIndex = loopHeaderIndex + 1; branchIndex < Math.min(end, firstBackEdge); branchIndex++) {
       IrOperationModel branch = operations.get(branchIndex);
       if (!"CONDITIONAL_BRANCH".equals(branch.kind()) || branch.operands().size() < 2) continue;
       Integer exitIndex = labels.get(labelKey(branch.operands().get(1)));
@@ -1824,6 +1856,24 @@ public final class JavaTranslator {
       IrOperationModel backEdge = operations.get(backEdgeIndex);
       if ("JUMP".equals(backEdge.kind()) && !backEdge.operands().isEmpty()
           && labelKey(loopLabel).equals(labelKey(backEdge.operands().get(0)))) {
+        // The exit block must be the loop's continuation, not another nested
+        // region that happens to flow back to the header.
+        boolean reentersLoop = false;
+        for (int i = exitIndex; i < end; i++) {
+          IrOperationModel operation = operations.get(i);
+          String target = null;
+          if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+            target = operation.operands().get(0);
+          } else if ("CONDITIONAL_BRANCH".equals(operation.kind())
+              && operation.operands().size() >= 2) {
+            target = operation.operands().get(1);
+          }
+          if (target != null && labelKey(loopLabel).equals(labelKey(target))) {
+            reentersLoop = true;
+            break;
+          }
+        }
+        if (reentersLoop) continue;
         return new LoopShape(branchIndex, backEdgeIndex, exitIndex);
       }
     }
@@ -1954,6 +2004,176 @@ public final class JavaTranslator {
     return new ConditionalRender(source.toString(), body.complete(), loop.backEdgeIndex());
   }
 
+  /**
+   * A {@code while} loop whose condition short-circuits by jumping into the
+   * body: {@code L: if (a) goto body; if (b) goto body; goto exit; body: ...}.
+   * The body flows back to L, re-evaluating the whole condition. This is the
+   * shape javac emits for {@code while (a || b)}.
+   */
+  private static ConditionalRender renderConditionJumpLoop(
+      List<IrOperationModel> operations, int loopHeaderIndex, int end,
+      int indent, TranslationContext context, Map<String, Integer> labels) {
+    if (operations.get(loopHeaderIndex).operands().isEmpty()) return null;
+    String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
+    Integer header = labels.get(labelKey(loopLabel));
+    if (header == null || header != loopHeaderIndex) return null;
+
+    List<String> conditions = new java.util.ArrayList<>();
+    int bodyIndex = -1;
+    int jumpIndex = -1;
+    for (int i = loopHeaderIndex + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("CONDITIONAL_BRANCH".equals(operation.kind()) && operation.operands().size() >= 2) {
+        Integer target = labels.get(labelKey(operation.operands().get(1)));
+        if (target == null || target <= i) return null;
+        if (bodyIndex < 0) {
+          bodyIndex = target;
+        } else if (bodyIndex != target) {
+          return null;
+        }
+        conditions.add(operation.operands().get(0));
+        continue;
+      }
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        jumpIndex = i;
+        break;
+      }
+      if (!isBranchValueMetadata(operation) && !isExpressionOnly(operation)) return null;
+    }
+    if (conditions.isEmpty() || jumpIndex < 0 || bodyIndex <= jumpIndex
+        || bodyIndex >= end) return null;
+    for (int i = jumpIndex + 1; i < bodyIndex; i++) {
+      if (!isLoopExitMetadata(operations.get(i))) return null;
+    }
+    Integer exitIndex = labels.get(labelKey(operations.get(jumpIndex).operands().get(0)));
+    if (exitIndex == null || exitIndex <= bodyIndex || exitIndex > end) return null;
+
+    // The body must flow back to the condition block, otherwise this is a
+    // two-way branch rather than a loop.
+    boolean backEdge = false;
+    for (int i = bodyIndex; i < exitIndex; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(loopLabel).equals(labelKey(operation.operands().get(0)))) {
+        backEdge = true;
+        break;
+      }
+    }
+    if (!backEdge) return null;
+
+    String condition;
+    if (conditions.size() == 1) {
+      condition = normalizeCondition(conditions.get(0));
+    } else {
+      StringBuilder combined = new StringBuilder("(");
+      for (int k = 0; k < conditions.size(); k++) {
+        if (k > 0) combined.append(" || ");
+        combined.append(normalizeCondition(conditions.get(k)));
+      }
+      condition = combined.append(")").toString();
+    }
+
+    String exitLabel = labelKey(operations.get(exitIndex).operands().get(0));
+    context.enterLoop(loopLabel);
+    context.enterLoopExit(exitLabel);
+    RenderResult body;
+    try {
+      body = renderRange(operations, bodyIndex, exitIndex, indent + 1, context, labels);
+    } finally {
+      context.exitLoopExit();
+      context.exitLoop();
+    }
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("while (").append(condition).append(") {\n")
+        .append(body.source())
+        .append(indent(indent)).append("}\n");
+    return new ConditionalRender(source.toString(), body.complete(), exitIndex - 1);
+  }
+
+  /**
+   * True when the label heads a {@code while (true)} loop whose back edges sit
+   * inside the body and whose exits are all terminal blocks (returns/throws).
+   * Such a loop never falls through, so the enclosing range tail is its body.
+   */
+  private static boolean findTerminalExitLoop(
+      List<IrOperationModel> operations, int loopHeaderIndex, int end,
+      String loopLabel, Map<String, Integer> labels) {
+    Integer header = labels.get(labelKey(loopLabel));
+    if (header == null || header != loopHeaderIndex || end <= loopHeaderIndex + 1) return false;
+
+    int lastBackEdge = -1;
+    for (int i = loopHeaderIndex + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(loopLabel).equals(labelKey(operation.operands().get(0)))) {
+        lastBackEdge = i;
+      }
+    }
+    if (lastBackEdge < 0) return false;
+
+    for (int i = loopHeaderIndex + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      int targetOperand;
+      if ("JUMP".equals(operation.kind())) {
+        targetOperand = 0;
+      } else if ("CONDITIONAL_BRANCH".equals(operation.kind())) {
+        targetOperand = 1;
+      } else {
+        continue;
+      }
+      if (operation.operands().size() <= targetOperand) continue;
+      Integer targetIndex = labels.get(labelKey(operation.operands().get(targetOperand)));
+      if (targetIndex == null || targetIndex == loopHeaderIndex
+          || targetIndex <= lastBackEdge) continue;
+      // Code reached only past the loop's last back edge is continuation code:
+      // rendering it inside the loop would change what executes. Only accept
+      // targets whose block ends in return/throw, which the branch renderers
+      // inline as guards.
+      if (!isTerminalBlock(operations, targetIndex)) return false;
+    }
+    return true;
+  }
+
+  private static ConditionalRender renderTerminalExitLoop(
+      List<IrOperationModel> operations, int loopHeaderIndex, int end,
+      int indent, TranslationContext context, Map<String, Integer> labels) {
+    if (operations.get(loopHeaderIndex).operands().isEmpty()) return null;
+    String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
+    context.enterLoop(loopLabel);
+    RenderResult body;
+    try {
+      body = renderRange(operations, loopHeaderIndex + 1, end, indent + 1, context, labels);
+    } finally {
+      context.exitLoop();
+    }
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("while (true) {\n")
+        .append(body.source())
+        .append(indent(indent)).append("}\n");
+    return new ConditionalRender(source.toString(), body.complete(), end - 1);
+  }
+
+  /** A straight-line block ending in return/throw, reached only through its label. */
+  private static boolean isTerminalBlock(List<IrOperationModel> operations, int start) {
+    if (start < 0 || start >= operations.size()) return false;
+    if (!"LABEL".equals(operations.get(start).kind())) return false;
+    for (int i = start + 1; i < operations.size(); i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())
+          || "TERMINATE".equals(operation.kind())) {
+        return true;
+      }
+      if ("LABEL".equals(operation.kind()) || "TRY_BEGIN".equals(operation.kind())
+          || "TRY_END".equals(operation.kind()) || "CATCH_BEGIN".equals(operation.kind())
+          || "JUMP".equals(operation.kind()) || "CONDITIONAL_BRANCH".equals(operation.kind())
+          || "TABLE_SWITCH".equals(operation.kind())
+          || "LOOKUP_SWITCH".equals(operation.kind())) {
+        return false;
+      }
+    }
+    return false;
+  }
+
   private static ConditionalRender renderForwardExitLoop(
       List<IrOperationModel> operations,
       int loopHeaderIndex,
@@ -1998,6 +2218,22 @@ public final class JavaTranslator {
       int labelIndex,
       int end,
       String label) {
+    // A do-while condition is the loop's only edge back to its header: every
+    // continue in such a loop jumps to the condition, not to the header, so
+    // additional references mean this label is a plain continue target.
+    int references = 0;
+    for (int i = labelIndex + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      String target = null;
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        target = operation.operands().get(0);
+      } else if ("CONDITIONAL_BRANCH".equals(operation.kind())
+          && operation.operands().size() >= 2) {
+        target = operation.operands().get(1);
+      }
+      if (target != null && labelKey(label).equals(labelKey(target))) references++;
+    }
+    if (references != 1) return -1;
     for (int i = labelIndex + 1; i < end; i++) {
       IrOperationModel operation = operations.get(i);
       if ("CONDITIONAL_BRANCH".equals(operation.kind())
