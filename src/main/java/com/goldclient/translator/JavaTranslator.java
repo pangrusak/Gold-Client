@@ -975,18 +975,55 @@ public final class JavaTranslator {
     } else {
       skipReturnJump = -1;
     }
+    String returnStatement = returnOperation.operands().isEmpty()
+        ? "return;\n"
+        : "return " + normalizeExpression(returnOperation.operands().get(0)) + ";\n";
+
+    // The shared return block can also be reached through the fall-through
+    // path. When the fall-through range ends in a branch whose taken edge
+    // leaves the block, render the shared return under the inverse condition.
+    // When it ends in an ordinary statement, the fall-through path completes
+    // by entering the block, so append the shared return. Skipping either case
+    // would silently drop a path that never executes its own return.
+    int trailingBranchIndex = -1;
+    String trailingCondition = null;
+    boolean completesIntoTarget = false;
+    if (skipReturnJump < 0 && fallthroughEnd == targetIndex) {
+      int lastExecutable = -1;
+      for (int i = branchIndex + 1; i < fallthroughEnd; i++) {
+        if (!isBranchValueMetadata(operations.get(i))) lastExecutable = i;
+      }
+      if (lastExecutable >= 0) {
+        IrOperationModel tail = operations.get(lastExecutable);
+        if ("CONDITIONAL_BRANCH".equals(tail.kind()) && tail.operands().size() >= 2) {
+          Integer tailTarget = labels.get(labelKey(tail.operands().get(1)));
+          if (tailTarget != null && tailTarget > returnIndex) {
+            trailingBranchIndex = lastExecutable;
+            trailingCondition = negateCondition(tail.operands().get(0));
+          }
+        } else if (!"RETURN".equals(tail.kind()) && !"THROW".equals(tail.kind())
+            && !"JUMP".equals(tail.kind())) {
+          completesIntoTarget = true;
+        }
+      }
+    }
+
     RenderResult fallthrough = renderRange(
-        operations, branchIndex + 1, fallthroughEnd, indent, context, labels);
+        operations, branchIndex + 1,
+        trailingBranchIndex >= 0 ? trailingBranchIndex : fallthroughEnd,
+        indent, context, labels);
     StringBuilder source = new StringBuilder();
     source.append(indent(indent)).append("if (")
         .append(normalizeCondition(branch.operands().get(0))).append(") {\n");
-    if (returnOperation.operands().isEmpty()) {
-      source.append(indent(indent + 1)).append("return;\n");
-    } else {
-      source.append(indent(indent + 1)).append("return ")
-          .append(normalizeExpression(returnOperation.operands().get(0))).append(";\n");
-    }
+    source.append(indent(indent + 1)).append(returnStatement);
     source.append(indent(indent)).append("}\n").append(fallthrough.source());
+    if (trailingCondition != null) {
+      source.append(indent(indent)).append("if (").append(trailingCondition).append(") {\n")
+          .append(indent(indent + 1)).append(returnStatement)
+          .append(indent(indent)).append("}\n");
+    } else if (completesIntoTarget) {
+      source.append(indent(indent)).append(returnStatement);
+    }
     return new ConditionalRender(source.toString(), fallthrough.complete(), returnIndex);
   }
 
@@ -1440,7 +1477,10 @@ public final class JavaTranslator {
     source.append(body.source());
     source.append(indent(indent)).append("}\n");
 
-    int lastIndex = fallthroughEnd < targetIndex ? fallthroughEnd - 1 : targetIndex;
+    // Leave the branch target label itself for the enclosing range: the label
+    // may be a loop header, and consuming it here would hide the loop's back
+    // edges from the loop finders.
+    int lastIndex = fallthroughEnd < targetIndex ? fallthroughEnd - 1 : targetIndex - 1;
     return new ConditionalRender(source.toString(), body.complete(), lastIndex);
   }
 
