@@ -2,23 +2,15 @@
 
 Gold Client is an experimental tool for analyzing Minecraft Modrinth JARs and preparing them for translation to Eaglercraft-compatible code.
 
-## Current goal
+## Current status (October 2026)
 
-The first milestone is **analysis**, not translation. Given a mod JAR, Gold Client should be able to report:
+Gold Client is an experimental Java-bytecode-to-JavaScript translation pipeline aimed at Forge 1.12.2 mods and an Eaglercraft 1.12.2 client. It is beyond metadata analysis: it can export per-class JavaScript modules, a mod index/manifest, preserved resources, diagnostics, and a Forge startup bridge. The translator handles a growing subset of Java control flow, exceptions, lambdas/method references, fields, and class initialization.
 
-- mod name and version
-- Minecraft version
-- loader
-- classes, methods, and fields
-- declared dependencies
-- optional mod dependencies
-- referenced Minecraft APIs
-- mixin configuration/classes
-- entrypoints
+**This is not yet a general-purpose Forge mod converter.** Successful export means the represented bytecode was emitted; it does not prove semantic equivalence or that the translated mod runs in Minecraft. The target runtime still needs concrete implementations for Minecraft/Forge APIs, events, registries, rendering, resources, networking, configuration, logging, and other services.
 
-The project also has experimental method-to-Java and optional TeaVM
-translation paths. They do not load mod-loader lifecycle hooks or provide the
-Minecraft/loader APIs a translated mod expects.
+The latest previously recorded JEI 1.12.2 benchmark reported 371 classes, 2,195 methods, zero methods marked incomplete in the represented IR, and **348 adapter-required declarations**. These are different measures: zero incomplete methods does not mean zero adapters or complete game compatibility. The adapter work is intended to reduce the latter count by implementing reusable runtime mappings, not by relabeling unresolved APIs as supported.
+
+**Build/CI status:** the latest checked `main` commit (`5e7ef56`) has failing CI. The Maven compiler reports `constant string too long` in `JavaScriptModTranslationExporter.java`; consequently, the current JEI benchmark result has not been revalidated against that commit. Do not treat the older benchmark numbers as verification of the latest source until the build issue is fixed and CI reruns successfully.
 
 ## Usage
 
@@ -78,7 +70,7 @@ Experimental method translation / explicit TeaVM entrypoint
 Java source / JavaScript output (not a runnable mod by itself)
 ```
 
-The analyzer is intentionally deterministic. AI-assisted translation will be added later for cases that cannot be handled by explicit mappings and transformations.
+The translator prioritizes deterministic bytecode transformations and explicit compatibility mappings. Any future AI-assisted path must preserve diagnostics and must not count guessed or unsupported behavior as complete.
 
 
 ## Experimental Eaglercraft JavaScript entrypoint
