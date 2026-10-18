@@ -877,6 +877,64 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void recordObjectMethodsHelpersReproduceJavaRecordSemantics() throws Exception {
+    Path output = tempDir.resolve("record-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("record-runtime-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        class Point {
+          constructor(x, label) { this.x = x; this.label = label; }
+          equals(other) { return r.recordEquals(this, other, "x;label", "I", "Ljava/lang/String;"); }
+          hashCode() { return r.recordHashCode(this, "x;label", "I", "Ljava/lang/String;"); }
+          toString() { return r.recordToString(this, "Point", "x;label", "I", "Ljava/lang/String;"); }
+        }
+        class Other {}
+        const a = new Point(3, "hello");
+        const b = new Point(3, "hello");
+        const c = new Point(4, "hello");
+        if (!a.equals(b)) throw new Error("recordEquals must accept equal components");
+        if (a.equals(c)) throw new Error("recordEquals must reject different components");
+        if (a.equals(null)) throw new Error("recordEquals must reject null");
+        if (a.equals(new Other())) throw new Error("recordEquals must reject other classes");
+        if (a.hashCode() !== b.hashCode()) throw new Error("recordHashCode must be component-based");
+        if (a.hashCode() === c.hashCode()) throw new Error("recordHashCode must vary with components");
+        if (a.toString() !== "Point[x=3, label=hello]") throw new Error("recordToString: " + a.toString());
+        if (!r.recordEquals(a, a, "x;label", "I", "Ljava/lang/String;")) throw new Error("record identity equality");
+        if (r.recordEquals({ f: NaN }, { f: NaN }, "f", "F") !== true) {
+          throw new Error("Float.compare(NaN, NaN) must be 0 for float components");
+        }
+        if (r.recordEquals({ f: -0 }, { f: 0 }, "f", "F") !== false) {
+          throw new Error("-0.0f and 0.0f must differ for float components");
+        }
+        if (r.recordEquals({ v: 5n }, { v: 5 }, "v", "J") !== true) {
+          throw new Error("long components must compare across number representations");
+        }
+        if (r.recordComponentHash(1.5, "F") !== 1069547520) throw new Error("float bits: " + r.recordComponentHash(1.5, "F"));
+        if (r.recordComponentHash(1.5, "D") !== 1073217536) throw new Error("double bits: " + r.recordComponentHash(1.5, "D"));
+        if (r.recordHashCode({ v: 4294967296 }, "v", "J") !== 32) {
+          throw new Error("long hash: " + r.recordHashCode({ v: 4294967296 }, "v", "J"));
+        }
+        if (r.recordToString({ c: 65 }, "Point", "c", "C") !== "Point[c=A]") {
+          throw new Error("char rendering: " + r.recordToString({ c: 65 }, "Point", "c", "C"));
+        }
+        console.log(JSON.stringify({ status: "record-methods-ok" }));
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "record runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    var result = com.google.gson.JsonParser.parseString(outputText).getAsJsonObject();
+    assertEquals("record-methods-ok", result.get("status").getAsString());
+  }
+
+  @Test
   void commonJavaCompatibilityAdaptersExecuteAgainstNode() throws Exception {
     Path output = tempDir.resolve("java-compatibility-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);

@@ -1158,6 +1158,55 @@ function goldClientNonNullListElement(value) {
   return value;
 }
 
+// Record support: Java records compile equals/hashCode/toString to a single
+// invokedynamic call on java.lang.runtime.ObjectMethods. The translated call
+// carries the component names and descriptors, and these helpers reproduce the
+// generated record semantics (Float/Double.compare for float components,
+// 31-fold hashing, and the standard [name=value, ...] rendering).
+const __goldRecordBitsBuffer = new ArrayBuffer(8);
+const __goldRecordBitsView = new DataView(__goldRecordBitsBuffer);
+
+function goldClientFloatToIntBits(value) {
+  __goldRecordBitsView.setFloat32(0, Number(value), false);
+  return __goldRecordBitsView.getInt32(0, false);
+}
+
+function goldClientDoubleToLongBitsHash(value) {
+  __goldRecordBitsView.setFloat64(0, Number(value), false);
+  const high = __goldRecordBitsView.getInt32(0, false);
+  const low = __goldRecordBitsView.getInt32(4, false);
+  return (high ^ low) | 0;
+}
+
+function goldClientFloatCompare(a, b) {
+  const x = Math.fround(Number(a));
+  const y = Math.fround(Number(b));
+  if (Number.isNaN(x)) return Number.isNaN(y) ? 0 : 1;
+  if (Number.isNaN(y)) return -1;
+  if (x === y) {
+    if (x === 0 && 1 / x !== 1 / y) return 1 / x < 1 / y ? -1 : 1;
+    return 0;
+  }
+  return x < y ? -1 : 1;
+}
+
+function goldClientDoubleCompare(a, b) {
+  const x = Number(a);
+  const y = Number(b);
+  if (Number.isNaN(x)) return Number.isNaN(y) ? 0 : 1;
+  if (Number.isNaN(y)) return -1;
+  if (x === y) {
+    if (x === 0 && 1 / x !== 1 / y) return 1 / x < 1 / y ? -1 : 1;
+    return 0;
+  }
+  return x < y ? -1 : 1;
+}
+
+function goldClientRecordComponents(names) {
+  const text = String(names ?? "");
+  return text === "" ? [] : text.split(";");
+}
+
 // NonNullList matches the 1.12.2 usage patterns: create()/create(default) start
 // empty and callers add elements, while withSize(size, default) pre-fills every
 // slot. All mutators reject null elements.
@@ -1391,6 +1440,94 @@ export const GoldClientRuntime = Object.freeze({
     if (a === null || a === undefined) return a == b;
     if (typeof a.equals === "function") return Boolean(a.equals(b));
     return a === b;
+  },
+  // Record equals: identity, then a constructor/component comparison matching
+  // the java.lang.runtime.ObjectMethods behavior (Float/Double.compare for
+  // float components, Objects.equals for references).
+  recordEquals(receiver, other, names, ...descriptors) {
+    if (receiver === other) return true;
+    if (other === null || other === undefined || typeof other !== "object") return false;
+    if (receiver === null || receiver === undefined) return false;
+    if (receiver.constructor !== other.constructor) return false;
+    const components = goldClientRecordComponents(names);
+    for (let i = 0; i < components.length; i++) {
+      if (!this.recordComponentEquals(
+          receiver[components[i]], other[components[i]], descriptors[i])) {
+        return false;
+      }
+    }
+    return true;
+  },
+  recordComponentEquals(a, b, descriptor) {
+    const kind = String(descriptor ?? "").charAt(0);
+    if (kind === "F") return goldClientFloatCompare(a, b) === 0;
+    if (kind === "D") return goldClientDoubleCompare(a, b) === 0;
+    if (kind === "J") return this.javaLongEquals(a, b);
+    if (kind === "Z" || kind === "B" || kind === "S" || kind === "C" || kind === "I") {
+      return Number(a) === Number(b);
+    }
+    return this.javaEquals(a, b);
+  },
+  javaLongEquals(a, b) {
+    if (typeof a === "bigint" || typeof b === "bigint") {
+      try {
+        return BigInt(a) === BigInt(b);
+      } catch (error) {
+        return false;
+      }
+    }
+    return Number(a) === Number(b);
+  },
+  // Record hashCode: result = 1; result = 31 * result + componentHash(...).
+  recordHashCode(receiver, names, ...descriptors) {
+    const components = goldClientRecordComponents(names);
+    let result = 1;
+    for (let i = 0; i < components.length; i++) {
+      result = (Math.imul(31, result)
+          + this.recordComponentHash(receiver[components[i]], descriptors[i])) | 0;
+    }
+    return result;
+  },
+  recordComponentHash(value, descriptor) {
+    const kind = String(descriptor ?? "").charAt(0);
+    if (kind === "Z") return value ? 1231 : 1237;
+    if (kind === "B" || kind === "S" || kind === "C" || kind === "I") return Number(value) | 0;
+    if (kind === "J") return this.javaLongHash(value);
+    if (kind === "F") return goldClientFloatToIntBits(value);
+    if (kind === "D") return goldClientDoubleToLongBitsHash(value);
+    if (value === null || value === undefined) return 0;
+    if (typeof value.hashCode === "function") return Number(value.hashCode()) | 0;
+    return this.javaHashCode(value);
+  },
+  javaLongHash(value) {
+    if (typeof value === "bigint") {
+      const bits = BigInt.asUintN(64, value);
+      const high = Number((bits >> 32n) & 0xffffffffn) | 0;
+      const low = Number(bits & 0xffffffffn) | 0;
+      return (high ^ low) | 0;
+    }
+    const number = Number(value);
+    if (!Number.isFinite(number)) return 0;
+    const low = number | 0;
+    const high = Math.floor(number / 4294967296) | 0;
+    return (high ^ low) | 0;
+  },
+  // Record toString: SimpleName[component=value, ...] using String.valueOf.
+  recordToString(receiver, className, names, ...descriptors) {
+    const components = goldClientRecordComponents(names);
+    const parts = [];
+    for (let i = 0; i < components.length; i++) {
+      parts.push(components[i] + "="
+          + this.recordComponentString(receiver[components[i]], descriptors[i]));
+    }
+    return className + "[" + parts.join(", ") + "]";
+  },
+  recordComponentString(value, descriptor) {
+    const kind = String(descriptor ?? "").charAt(0);
+    if (kind === "C" && typeof value === "number") {
+      return String.fromCharCode(value & 0xffff);
+    }
+    return this.javaString(value);
   },
   compareJava(a, b, comparator = null) {
     if (typeof comparator === "function") return Number(comparator(a, b));

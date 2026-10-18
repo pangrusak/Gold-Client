@@ -143,6 +143,81 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void lowersRecordObjectMethodsEqualsIntoRuntimeRecordEquals() {
+    MethodModel method = method("equals", "(Lexample/Point;Ljava/lang/Object;)Z", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(25, "ALOAD", "1"),
+        instruction(186, "INVOKEDYNAMIC", "equals",
+            "(Lexample/Point;Ljava/lang/Object;)Z",
+            "Handle(6,java/lang/runtime/ObjectMethods,bootstrap,"
+                + "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+                + "Ljava/lang/invoke/TypeDescriptor;Ljava/lang/Class;Ljava/lang/String;"
+                + "[Ljava/lang/invoke/MethodHandle;)Ljava/lang/Object;,false)",
+            "Type(Lexample/Point;)",
+            "x;label",
+            "Handle(1,example/Point,x,I,false)",
+            "Handle(1,example/Point,label,Ljava/lang/String;,false)"),
+        instruction(172, "IRETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().get(0).contains(
+                "GoldClientRuntime.recordEquals(local0, local1, \"x;label\", \"I\", "
+                    + "\"Ljava/lang/String;\")")),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
+  }
+
+  @Test
+  void lowersRecordObjectMethodsHashCodeAndToStringWithSimpleName() {
+    MethodModel hashCode = method("hashCode", "(Lexample/outer/Point;)I", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(186, "INVOKEDYNAMIC", "hashCode", "(Lexample/outer/Point;)I",
+            "Handle(6,java/lang/runtime/ObjectMethods,bootstrap,"
+                + "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+                + "Ljava/lang/invoke/TypeDescriptor;Ljava/lang/Class;Ljava/lang/String;"
+                + "[Ljava/lang/invoke/MethodHandle;)Ljava/lang/Object;,false)",
+            "Type(Lexample/outer/Point;)",
+            "x",
+            "Handle(1,example/outer/Point,x,D,false)"),
+        instruction(172, "IRETURN")));
+    MethodModel toString = method("toString", "(Lexample/outer/Point;)Ljava/lang/String;",
+        List.of(
+            instruction(25, "ALOAD", "0"),
+            instruction(186, "INVOKEDYNAMIC", "toString",
+                "(Lexample/outer/Point;)Ljava/lang/String;",
+                "Handle(6,java/lang/runtime/ObjectMethods,bootstrap,"
+                    + "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+                    + "Ljava/lang/invoke/TypeDescriptor;Ljava/lang/Class;Ljava/lang/String;"
+                    + "[Ljava/lang/invoke/MethodHandle;)Ljava/lang/Object;,false)",
+                "Type(Lexample/outer/Point;)",
+                "x",
+                "Handle(1,example/outer/Point,x,D,false)"),
+            instruction(176, "ARETURN")));
+
+    IrMethodModel hashIr = new IntermediateRepresentationAnalyzer().analyze(hashCode);
+    IrMethodModel toStringIr = new IntermediateRepresentationAnalyzer().analyze(toString);
+
+    assertTrue(hashIr.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().get(0).contains(
+                "GoldClientRuntime.recordHashCode(local0, \"x\", \"D\")")),
+        hashIr.operations().toString());
+    assertTrue(toStringIr.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().get(0).contains(
+                "GoldClientRuntime.recordToString(local0, \"Point\", \"x\", \"D\")")),
+        toStringIr.operations().toString());
+    assertFalse(hashIr.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_DYNAMIC".equals(operation.kind())), hashIr.operations().toString());
+    assertFalse(toStringIr.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_DYNAMIC".equals(operation.kind())), toStringIr.operations().toString());
+  }
+
+  @Test
   void lowersPrimitiveNarrowingAndReferenceChecksToRuntimeCalls() {
     MethodModel method = method("casts", "(Ljava/lang/Object;I)V", List.of(
         instruction(25, "ALOAD", "0"),

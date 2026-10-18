@@ -531,6 +531,20 @@ public final class IntermediateRepresentationAnalyzer {
       return;
     }
 
+    if (bootstrap.contains("java/lang/runtime/ObjectMethods")) {
+      // Java records compile equals/hashCode/toString to a single invokedynamic
+      // call against java.lang.runtime.ObjectMethods. The bootstrap arguments
+      // carry the record class, its component names and one getter per
+      // component, so the call can be lowered to a deterministic runtime call
+      // without any knowledge of the individual record type.
+      String recordCall = translateRecordObjectMethods(name, operands, captured);
+      if (recordCall != null) {
+        stack.push(recordCall);
+        operations.add(op("CALL_VALUE", List.of(recordCall), sourceInstruction));
+        return;
+      }
+    }
+
     boolean lambdaMetafactory = bootstrap.contains("java/lang/invoke/LambdaMetafactory")
         && (bootstrap.contains(",metafactory,") || bootstrap.contains(",altMetafactory,"));
     java.util.regex.Matcher handle = java.util.regex.Pattern
@@ -644,6 +658,62 @@ public final class IntermediateRepresentationAnalyzer {
     }
     stack.push(lambda);
     operations.add(op("CALL_VALUE", List.of(lambda), sourceInstruction));
+  }
+
+  private static final java.util.regex.Pattern HANDLE_TEXT = java.util.regex.Pattern
+      .compile("^Handle\\((\\d+),([^,]+),([^,]+),(.+),(true|false)\\)$");
+  private static final java.util.regex.Pattern CLASS_TEXT = java.util.regex.Pattern
+      .compile("^Type\\((L[^;]+;)\\)$");
+
+  /**
+   * Lowers a {@code java.lang.runtime.ObjectMethods} bootstrap, which is the
+   * single invokedynamic javac emits for record equals/hashCode/toString. The
+   * bootstrap arguments carry the record class, its component names, and one
+   * getter per component, so the lowering needs no knowledge of the specific
+   * record type. Returns null when the call site does not match the supported
+   * shape so callers report it as unsupported instead of guessing.
+   */
+  private static String translateRecordObjectMethods(
+      String name, List<String> operands, List<String> captured) {
+    if (operands.size() < 5) return null;
+    java.util.regex.Matcher recordClass = CLASS_TEXT.matcher(operands.get(3));
+    if (!recordClass.matches()) return null;
+    List<String> componentDescriptors = new ArrayList<>();
+    for (int i = 5; i < operands.size(); i++) {
+      java.util.regex.Matcher getter = HANDLE_TEXT.matcher(operands.get(i));
+      if (!getter.matches()) return null;
+      // Field handles (REF_getField) carry the component type as their
+      // descriptor, e.g. "I" or "Ljava/lang/String;".
+      String componentType = getter.group(4);
+      if (componentType.isEmpty()) return null;
+      componentDescriptors.add(componentType);
+    }
+
+    List<String> components = new ArrayList<>();
+    components.add(quoteJs(operands.get(4)));
+    for (String descriptor : componentDescriptors) components.add(quoteJs(descriptor));
+    String componentArguments = String.join(", ", components);
+
+    if ("equals".equals(name)) {
+      if (captured.size() != 2) return null;
+      return "GoldClientRuntime.recordEquals(" + captured.get(0) + ", " + captured.get(1)
+          + ", " + componentArguments + ")";
+    }
+    if ("hashCode".equals(name)) {
+      if (captured.size() != 1) return null;
+      return "GoldClientRuntime.recordHashCode(" + captured.get(0) + ", "
+          + componentArguments + ")";
+    }
+    if ("toString".equals(name)) {
+      if (captured.size() != 1) return null;
+      String recordName = recordClass.group(1);
+      recordName = recordName.substring(1, recordName.length() - 1).replace('/', '.');
+      recordName = recordName.substring(
+          Math.max(recordName.lastIndexOf('.'), recordName.lastIndexOf('$')) + 1);
+      return "GoldClientRuntime.recordToString(" + captured.get(0) + ", "
+          + quoteJs(recordName) + ", " + componentArguments + ")";
+    }
+    return null;
   }
 
   private static String translateStringConcat(
