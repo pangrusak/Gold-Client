@@ -561,11 +561,11 @@ public final class JavaTranslator {
     }
 
     Integer defaultIndex = labels.get(labelKey(defaultLabel));
-    if (defaultIndex == null || defaultIndex <= switchIndex || defaultIndex >= end) return null;
+    if (defaultIndex == null || defaultIndex <= switchIndex || defaultIndex > end) return null;
     Map<String, Integer> targetIndices = new HashMap<>();
     for (SwitchArm arm : arms) {
       Integer target = labels.get(labelKey(arm.label()));
-      if (target == null || target <= switchIndex || target >= end) return null;
+      if (target == null || target <= switchIndex || target > end) return null;
       targetIndices.put(arm.label(), target);
     }
 
@@ -573,10 +573,16 @@ public final class JavaTranslator {
         .mapToInt(Integer::intValue).max().orElse(switchIndex);
     int lastTarget = Math.max(defaultIndex, lastExplicitTarget);
 
+    // Targets equal to the render range's exclusive end are range exits: the
+    // enclosing renderer owns the code after this range (a shared return block,
+    // for example). The switch may only rely on falling out of its statement to
+    // reach them, which is sound because an exit join consumes the range tail.
     int joinIndex = end;
     String joinLabel = null;
     boolean defaultIsJoin = false;
-    if (defaultIndex > lastExplicitTarget) {
+    if (defaultIndex == end) {
+      defaultIsJoin = true;
+    } else if (defaultIndex > lastExplicitTarget) {
       for (int index = switchIndex + 1; index < defaultIndex; index++) {
         IrOperationModel candidate = operations.get(index);
         if ("JUMP".equals(candidate.kind()) && !candidate.operands().isEmpty()
@@ -601,13 +607,22 @@ public final class JavaTranslator {
       }
     }
 
+    // An arm that jumps to the range exit can only be represented by falling
+    // out of the switch statement, so it requires the exit to be the join.
+    for (SwitchArm arm : arms) {
+      if (targetIndices.get(arm.label()) == end && joinIndex != end) return null;
+    }
+
     Map<Integer, List<String>> labelsAtTarget = new java.util.TreeMap<>();
     for (SwitchArm arm : arms) {
       int target = targetIndices.get(arm.label());
+      // Labels for the join are unnecessary: unmatched and exiting cases fall
+      // out of the switch statement and continue at the join naturally.
+      if (target == joinIndex) continue;
       labelsAtTarget.computeIfAbsent(target, ignored -> new java.util.ArrayList<>())
           .add("case " + arm.key() + ":");
     }
-    if (!defaultIsJoin) {
+    if (!defaultIsJoin && defaultIndex < end) {
       labelsAtTarget.computeIfAbsent(defaultIndex, ignored -> new java.util.ArrayList<>())
           .add("default:");
     }
@@ -690,6 +705,29 @@ public final class JavaTranslator {
       if (referencesAnyLabel(operations.get(i), skippedLabels)) return false;
     }
     return true;
+  }
+
+  private static List<String> referencedLabels(IrOperationModel operation) {
+    List<String> operands = operation.operands();
+    String kind = operation.kind();
+    if ("JUMP".equals(kind)) {
+      return operands.isEmpty() ? List.of() : List.of(operands.get(0));
+    }
+    if ("CONDITIONAL_BRANCH".equals(kind)) {
+      return operands.size() < 2 ? List.of() : List.of(operands.get(1));
+    }
+    if ("TABLE_SWITCH".equals(kind)) {
+      List<String> result = new java.util.ArrayList<>();
+      for (int i = 3; i < operands.size(); i++) result.add(operands.get(i));
+      return result;
+    }
+    if ("LOOKUP_SWITCH".equals(kind)) {
+      List<String> result = new java.util.ArrayList<>();
+      if (operands.size() > 1) result.add(operands.get(1));
+      for (int i = 3; i < operands.size(); i += 2) result.add(operands.get(i));
+      return result;
+    }
+    return List.of();
   }
 
   private static boolean referencesAnyLabel(
@@ -1084,16 +1122,23 @@ public final class JavaTranslator {
     IrOperationModel branch = operations.get(branchIndex);
     if (branch.operands().size() < 2) return null;
     Integer targetIndex = labels.get(labelKey(branch.operands().get(1)));
-    if (targetIndex == null || targetIndex <= branchIndex || targetIndex >= end) return null;
+    if (targetIndex == null || targetIndex <= branchIndex) return null;
+    // A terminal block can live at or beyond the end of the current render
+    // range, for example another case body of an enclosing switch. Its return
+    // is still a faithful rendering of the taken edge, so inline it and keep
+    // the fall-through path owned by this range.
+    boolean targetBeyondRange = targetIndex >= end;
     // A try-region start is not an ordinary early-return destination: keep its
     // markers available so renderTryCatch can preserve the protected extent.
     if (findTryBeginBeforeTarget(
-        operations, branchIndex + 1, targetIndex, branch.operands().get(1), labels) >= 0) {
+        operations, branchIndex + 1, Math.min(targetIndex, end), branch.operands().get(1),
+        labels) >= 0) {
       return null;
     }
 
     int returnIndex = -1;
-    for (int i = targetIndex + 1; i < end; i++) {
+    int returnScanEnd = targetBeyondRange ? operations.size() : end;
+    for (int i = targetIndex + 1; i < returnScanEnd; i++) {
       IrOperationModel operation = operations.get(i);
       if (isBranchValueMetadata(operation)) continue;
       if ("RETURN".equals(operation.kind())) {
@@ -1111,7 +1156,7 @@ public final class JavaTranslator {
     if (returnOperation.operands().stream().anyMatch(value ->
         value.contains("<unknown>") || value.contains("<exception>"))) return null;
 
-    int fallthroughEnd = targetIndex;
+    int fallthroughEnd = Math.min(targetIndex, end);
     int skipReturnJump = findForwardJoinJump(
         operations, branchIndex + 1, targetIndex, end, labels);
     if (skipReturnJump >= 0 && onlyMetadataBetween(
@@ -1129,6 +1174,18 @@ public final class JavaTranslator {
     String returnStatement = returnOperation.operands().isEmpty()
         ? "return;\n"
         : "return " + normalizeExpression(returnOperation.operands().get(0)) + ";\n";
+
+    if (targetBeyondRange) {
+      RenderResult fallthrough = renderRange(
+          operations, branchIndex + 1, fallthroughEnd, indent, context, labels);
+      StringBuilder source = new StringBuilder();
+      source.append(indent(indent)).append("if (")
+          .append(normalizeCondition(branch.operands().get(0))).append(") {\n");
+      source.append(indent(indent + 1)).append(returnStatement);
+      source.append(indent(indent)).append("}\n").append(fallthrough.source());
+      return new ConditionalRender(
+          source.toString(), fallthrough.complete(), fallthroughEnd - 1);
+    }
 
     // The shared return block can also be reached through the fall-through
     // path. When the fall-through range ends in a branch whose taken edge
@@ -1156,6 +1213,24 @@ public final class JavaTranslator {
             && !"JUMP".equals(tail.kind())) {
           completesIntoTarget = true;
         }
+      }
+      if (skipReturnJump < 0 && trailingBranchIndex < 0 && !completesIntoTarget) {
+        // Nested structures can leave the fall-through range through an exit
+        // edge instead of reaching its end (their renderers draw the guarded
+        // path only). When every out-of-range control transfer in the range
+        // points at the shared return block, control that leaves the range
+        // executes it, so append the shared return.
+        boolean exitsIntoTarget = false;
+        boolean exitsElsewhere = false;
+        for (int i = branchIndex + 1; i < fallthroughEnd; i++) {
+          for (String referenced : referencedLabels(operations.get(i))) {
+            Integer referencedIndex = labels.get(labelKey(referenced));
+            if (referencedIndex == null || referencedIndex < fallthroughEnd) continue;
+            if (referencedIndex.equals(targetIndex)) exitsIntoTarget = true;
+            else exitsElsewhere = true;
+          }
+        }
+        if (exitsIntoTarget && !exitsElsewhere) completesIntoTarget = true;
       }
     }
 

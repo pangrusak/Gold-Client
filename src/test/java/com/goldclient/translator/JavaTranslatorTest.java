@@ -205,9 +205,34 @@ class JavaTranslatorTest {
     TranslationResult result = new JavaTranslator().translate(method);
 
     assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if (inner == 0) {"), result.source());
+    assertTrue(result.source().contains("nested();"), result.source());
+    assertTrue(result.source().contains("return;"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"CONDITIONAL_BRANCH\""), result.source());
+  }
+
+  @Test
+  void structuresNestedBranchThatExitsToNonTerminalJoin() {
+    IrMethodModel method = new IrMethodModel(
+        "nestedExitToJoin",
+        "()V",
+        List.of(
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("outer == 0", "Louter"), 0),
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("inner == 0", "Lafter"), 1),
+            new IrOperationModel("METHOD_CALL", List.of("nested()"), 2),
+            new IrOperationModel("JUMP", List.of("Louter"), 3),
+            new IrOperationModel("LABEL", List.of("Louter"), 4),
+            new IrOperationModel("LABEL", List.of("Lafter"), 5),
+            new IrOperationModel("METHOD_CALL", List.of("joined()"), 6),
+            new IrOperationModel("RETURN", List.of(), 7)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
     assertTrue(result.source().contains("if (inner != 0) {"), result.source());
     assertTrue(result.source().contains("nested();"), result.source());
-    assertTrue(!result.source().contains("unsupported(\"CONDITIONAL_BRANCH\""), result.source());
+    assertTrue(result.source().contains("joined();"), result.source());
+    assertTrue(!result.source().contains("unsupported("), result.source());
   }
 
   @Test
@@ -1082,6 +1107,33 @@ class JavaTranslatorTest {
     assertTrue(result.source().contains("singletonMap();"), result.source());
     assertTrue(result.source().contains("copyMap();"), result.source());
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void structuresSwitchThatExitsNestedRangeIntoSharedReturn() {
+    IrMethodModel method = new IrMethodModel("classify", "(I)I", List.of(
+        new IrOperationModel("LOCAL_READ", List.of("ready"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("ready == 0", "Lret"), 0),
+        new IrOperationModel("LOCAL_READ", List.of("type"), 1),
+        new IrOperationModel("TABLE_SWITCH",
+            List.of("type", "1", "2", "Lret", "Ltrue", "Ltrue"), 1),
+        new IrOperationModel("LABEL", List.of("Ltrue"), 2),
+        new IrOperationModel("CONSTANT", List.of("1"), 3),
+        new IrOperationModel("RETURN", List.of("1"), 4),
+        new IrOperationModel("LABEL", List.of("Lret"), 5),
+        new IrOperationModel("CONSTANT", List.of("0"), 6),
+        new IrOperationModel("RETURN", List.of("0"), 7)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("switch (type)"), result.source());
+    assertTrue(result.source().contains("case 1:"), result.source());
+    assertTrue(result.source().contains("case 2:"), result.source());
+    assertTrue(result.source().contains("return 1;"), result.source());
+    assertTrue(result.source().contains("return 0;"), result.source());
+    assertTrue(!result.source().contains("default:"), result.source());
+    assertTrue(!result.source().contains("unsupported("), result.source());
   }
 
   @Test
