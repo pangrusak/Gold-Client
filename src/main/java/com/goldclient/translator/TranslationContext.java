@@ -36,6 +36,11 @@ public final class TranslationContext {
 
   public boolean isActiveLoop(String label) { return loopLabels.contains(label); }
 
+  /** True when the label is the innermost loop being rendered. */
+  public boolean isInnermostLoop(String label) {
+    return !loopLabels.isEmpty() && loopLabels.peek().equals(label);
+  }
+
   public void enterLoopExit(String label) {
     loopExitLabels.push(label);
     breakScopes.push(new BreakScope(label, BreakKind.LOOP_EXIT));
