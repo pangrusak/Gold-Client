@@ -2130,6 +2130,13 @@ export const GoldClientRuntime = Object.freeze({
     if (adapter?.staticMethods && typeof adapter.staticMethods[method] === "function") {
       return adapter.staticMethods[method](args);
     }
+    // The loader knows exactly which mods it started, so Forge's dependency
+    // query can be answered without host bindings. This is only active when a
+    // generated loader installed its mod set.
+    if (owner === "net.minecraftforge.fml.common.Loader" && method === "isModLoaded") {
+      const loaded = globalThis.goldClientForgeModIds;
+      if (loaded instanceof Set) return loaded.has(String(args[0])) ? 1 : 0;
+    }
     const service = this.platformService(owner);
     if (!service) return this.unsupported("unknown-platform-class", owner + "." + method);
     const bindings = globalThis.window?.goldClientForgeBindings ?? globalThis.goldClientForgeBindings;

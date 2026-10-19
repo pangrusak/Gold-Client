@@ -617,6 +617,13 @@ public final class ForgeLifecycleExporter {
         export const forgeLifecyclePhases = Object.freeze(%s);
         export const forgeServerLifecyclePhases = Object.freeze(%s);
 
+        // Forge and Minecraft are always present in a Forge host, and the loader
+        // owns the bundle's mod IDs. Loader.isModLoaded uses this set instead of
+        // a host binding so mods can query their optional dependencies.
+        globalThis.goldClientForgeModIds = new Set([
+          ...forgeMods.map(mod => mod.modId), "forge", "minecraft"
+        ]);
+
         let goldClientForgeStarted = false;
         let goldClientForgeServerStarted = false;
         let goldClientForgeInstances = new Map();

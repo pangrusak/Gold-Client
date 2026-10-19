@@ -67,6 +67,13 @@ declared event subscribers from original annotations.
   `this(...)`) is routed through the runtime instead of emitting an invalid
   JavaScript `this(...)` call. Translated classes extending a JDK throwable
   initialize message, cause, suppression, and stack-trace state.
+- [x] `Loader.isModLoaded(id)` is answered from the started bundle's mod set
+  (plus `forge` and `minecraft`) while a generated loader is present, so
+  optional-dependency checks do not need a host binding. The set is installed
+  after `mod-index.js` is imported, so a query made from a class static field
+  initializer still falls through to host bindings; lifecycle handlers see it.
+  This runtime query is not part of `forge-compatibility-plan.json`, which stays
+  conservative about `Loader` as a whole.
 
 ### Not demonstrated / unsupported
 

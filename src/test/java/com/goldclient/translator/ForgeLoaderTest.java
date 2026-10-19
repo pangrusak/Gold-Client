@@ -294,6 +294,7 @@ class ForgeLoaderTest {
         import { startForgeMods, stopForgeMods, forgeLoaderStatus } from "./forge-lifecycle.js";
         import { createForgeHost } from "./forge-host-runtime.js";
         import { ChildEvent } from "./mod-index.js";
+        import { GoldClientRuntime as runtime } from "./gold-client-runtime.js";
         const seen = globalThis.__forgeLoaderEvents;
         const bindings = {
           events: { createLifecycleEvent: async (mod, phase) => {
@@ -321,6 +322,16 @@ class ForgeLoaderTest {
         ];
         if (seen.join(",") !== expectedPrefix.join(",")) {
           throw new Error("phase-major order mismatch: " + seen.join(","));
+        }
+        const loader = "net.minecraftforge.fml.common.Loader";
+        if (runtime.invokePlatformStatic(loader, "isModLoaded", "a") !== 1) {
+          throw new Error("Loader.isModLoaded did not see a started mod");
+        }
+        if (runtime.invokePlatformStatic(loader, "isModLoaded", "missing") !== 0) {
+          throw new Error("Loader.isModLoaded accepted an unknown mod");
+        }
+        if (runtime.invokePlatformStatic(loader, "isModLoaded", "forge") !== 1) {
+          throw new Error("Loader.isModLoaded did not report Forge");
         }
         const status = forgeLoaderStatus();
         if (!status.started || status.modCount !== 2 || status.staticSubscriberCount !== 0
