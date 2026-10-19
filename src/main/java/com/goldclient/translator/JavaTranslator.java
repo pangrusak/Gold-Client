@@ -1007,7 +1007,10 @@ public final class JavaTranslator {
       if (!"JUMP".equals(candidate.kind()) || candidate.operands().isEmpty()) continue;
       String targetLabel = candidate.operands().get(0);
       Integer targetIndex = labels.get(labelKey(targetLabel));
-      if (targetIndex != null && targetIndex > lastTarget && targetIndex < joinIndex) {
+      // Only a forward jump can leave the switch: a jump back to a label inside
+      // the switch is a loop edge that the segment renderer handles.
+      if (targetIndex != null && targetIndex > index
+          && targetIndex > lastTarget && targetIndex < joinIndex) {
         joinIndex = targetIndex;
         joinLabel = targetLabel;
       }
@@ -1017,6 +1020,15 @@ public final class JavaTranslator {
     // out of the switch statement, so it requires the exit to be the join.
     for (SwitchArm arm : arms) {
       if (targetIndices.get(arm.label()) == end && joinIndex != end) return null;
+    }
+
+    if (joinLabel == null && joinIndex < operations.size()
+        && "LABEL".equals(operations.get(joinIndex).kind())
+        && !operations.get(joinIndex).operands().isEmpty()) {
+      // The join is the render range's exit. Cases that jump straight there
+      // still have to leave the switch, so scope that label as a switch break
+      // even though the code after it belongs to the enclosing renderer.
+      joinLabel = operations.get(joinIndex).operands().get(0);
     }
 
     Map<Integer, List<String>> labelsAtTarget = new java.util.TreeMap<>();
@@ -1458,43 +1470,59 @@ public final class JavaTranslator {
     }
     if (elseIndex < 0 || thenIndex > elseIndex) return null;
 
+    // The then block is the region between the then target and the else target.
+    // It has to leave that region through a jump past the else block, or by
+    // ending the method. Its interior is structured normally, so nested
+    // branches inside the then block are not part of the condition chain.
+    int thenTailIndex = -1;
+    for (int i = thenIndex + 1; i < elseIndex; i++) {
+      if (!isBranchValueMetadata(operations.get(i))) thenTailIndex = i;
+    }
+    if (thenTailIndex < 0) return null;
+    IrOperationModel thenTail = operations.get(thenTailIndex);
     int thenJumpIndex = -1;
+    int terminalThenIndex = -1;
     Integer joinIndex = null;
     boolean joinBeyondRange = false;
-    for (int i = thenIndex + 1; i < end; i++) {
-      IrOperationModel operation = operations.get(i);
-      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
-        String jumpTarget = operation.operands().get(0);
-        Integer target = labels.get(labelKey(jumpTarget));
-        if (target == null || target <= elseIndex) return null;
-        // A join at or beyond the range end is the enclosing switch's join:
-        // both arms leave the switch statement and its trailing break handles
-        // the jump.
-        if (target >= end) {
-          if (!context.isInnermostSwitchJoin(labelKey(jumpTarget))) return null;
-          joinBeyondRange = true;
-        }
-        thenJumpIndex = i;
-        joinIndex = target;
-        break;
+    if ("JUMP".equals(thenTail.kind()) && !thenTail.operands().isEmpty()) {
+      String jumpTarget = thenTail.operands().get(0);
+      Integer target = labels.get(labelKey(jumpTarget));
+      if (target == null || target <= elseIndex) return null;
+      // A join at or beyond the range end is the enclosing switch's join:
+      // both arms leave the switch statement and its trailing break handles
+      // the jump.
+      if (target >= end) {
+        if (!context.isInnermostSwitchJoin(labelKey(jumpTarget))) return null;
+        joinBeyondRange = true;
       }
-      if ("CONDITIONAL_BRANCH".equals(operation.kind()) || "LABEL".equals(operation.kind())
-          || "RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())
-          || "TRY_BEGIN".equals(operation.kind()) || "TRY_END".equals(operation.kind())
-          || "CATCH_BEGIN".equals(operation.kind())) {
-        return null;
-      }
+      thenJumpIndex = thenTailIndex;
+      joinIndex = target;
+    } else if ("RETURN".equals(thenTail.kind()) || "THROW".equals(thenTail.kind())) {
+      // The then block leaves the method, so the else path is the code that
+      // follows the branch; no join instruction exists in that case.
+      terminalThenIndex = thenTailIndex;
+    } else {
+      return null;
     }
-    if (thenJumpIndex < 0 || joinIndex == null) return null;
+    if (thenJumpIndex < 0 && terminalThenIndex < 0) return null;
+    if (thenJumpIndex >= 0 && joinIndex == null) return null;
 
-    int elseEnd = joinBeyondRange ? end : joinIndex;
+    int elseEnd = joinBeyondRange || terminalThenIndex >= 0 ? end : joinIndex;
     int lastExecutable = -1;
     for (int i = elseIndex + 1; i < elseEnd; i++) {
       if (!isBranchValueMetadata(operations.get(i))) lastExecutable = i;
     }
     if (lastExecutable < 0) return null;
     IrOperationModel elseTail = operations.get(lastExecutable);
-    if (!joinBeyondRange && "JUMP".equals(elseTail.kind()) && !elseTail.operands().isEmpty()
+    if (terminalThenIndex >= 0) {
+      // Without a join instruction the else path simply continues; a forward
+      // jump in its tail would mean the range continues past the branch.
+      if ("JUMP".equals(elseTail.kind()) && !elseTail.operands().isEmpty()) {
+        Integer target = labels.get(labelKey(elseTail.operands().get(0)));
+        if (target == null || target > elseIndex) return null;
+      }
+    } else if (!joinBeyondRange && "JUMP".equals(elseTail.kind())
+        && !elseTail.operands().isEmpty()
         && labelKey(elseTail.operands().get(0))
             .equals(labelKey(operations.get(joinIndex).operands().get(0)))) {
       elseEnd = lastExecutable;
@@ -1517,10 +1545,18 @@ public final class JavaTranslator {
     }
     if ("true".equals(guard)) return null;
 
+    // A TRY_BEGIN marker is emitted before the label whose block it protects.
+    // Both arms have to start at the marker, otherwise the try/catch inside the
+    // arm is rendered as plain code and its handler becomes unreachable.
+    int thenStart = inlinedBlockStart(operations, thenIndex, labels);
+    if (thenStart == thenIndex) thenStart++;
+    int elseStart = inlinedBlockStart(operations, elseIndex, labels);
+    if (elseStart == elseIndex) elseStart++;
+    int thenEnd = terminalThenIndex >= 0 ? terminalThenIndex + 1 : thenJumpIndex;
     RenderResult thenBody = renderRange(
-        operations, thenIndex + 1, thenJumpIndex, indent + 1, context, labels);
+        operations, thenStart, thenEnd, indent + 1, context, labels);
     RenderResult elseBody = renderRange(
-        operations, elseIndex + 1, elseEnd, indent + 1, context, labels);
+        operations, elseStart, elseEnd, indent + 1, context, labels);
 
     StringBuilder source = new StringBuilder();
     source.append(indent(indent)).append("if (").append(guard).append(") {\n");
@@ -1530,7 +1566,7 @@ public final class JavaTranslator {
     source.append(indent(indent)).append("}\n");
     return new ConditionalRender(source.toString(),
         thenBody.complete() && elseBody.complete(),
-        joinBeyondRange ? end - 1 : joinIndex - 1);
+        terminalThenIndex >= 0 || joinBeyondRange ? end - 1 : joinIndex - 1);
   }
 
   /**
@@ -2822,7 +2858,9 @@ public final class JavaTranslator {
         .append(normalizeCondition(condition)).append(") break;\n")
         .append(body.source())
         .append(indent(indent)).append("}\n");
-    int lastIndex = loop.exitIndex() < end ? loop.exitIndex() : end - 1;
+    // Resume at the exit label instead of skipping it: the label can be the
+    // header of a following loop, and its block still needs to be structured.
+    int lastIndex = loop.exitIndex() < end ? loop.exitIndex() - 1 : end - 1;
     return new ConditionalRender(
         source.toString(),
         conditionPrelude.complete() && body.complete(),
