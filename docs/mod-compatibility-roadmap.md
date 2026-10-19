@@ -57,6 +57,15 @@ The profile injector prefers this file when present and emits a classic
   break when the normal-path join sits past catch-only code; they remain
   incomplete because the merged multi-catch cannot prove finally behavior when
   a typed handler itself throws.
+- [x] General mod smoke survey with `loader --single-file --compact` on the
+  tracked inputs: AppleSkin (22 classes, 0 incomplete, ready), Waystones
+  (85 classes, 0 incomplete, ready), JEI (371 classes, 4 incomplete), Xaero's
+  Minimap (1280 classes, 13 incomplete; coremod and missing `xaerolib`
+  blockers), Universal Tweaks (1191 classes, 3 incomplete; Mixin/coremod and
+  missing dependency blockers), ConfigAnytime (3 classes, 0 incomplete;
+  coremod blocker), and MixinBooter (1305 classes, 67 incomplete; no `@Mod`
+  entry plus Mixin/coremod blockers). These are structural translation
+  results, not proof that the mods run without real Minecraft/Forge bindings.
 - [x] Generated AppleSkin and AppleSkin+JEI modules pass `node --check` and
   import through `forge-lifecycle.js` without executing game APIs.
 - [x] `--single-file --compact` packs the AppleSkin+JEI build (398 modules) into
