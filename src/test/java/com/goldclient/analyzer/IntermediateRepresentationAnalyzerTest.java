@@ -510,6 +510,44 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void preservesCatchAllDistinctionForFinallyHandlers() {
+    List<InstructionModel> instructions = List.of(
+        instruction(-1, "LABEL", "Ltry"),
+        instruction(184, "INVOKESTATIC", "example/Calls", "mightFail", "()V", "false"),
+        instruction(-1, "LABEL", "Lend"),
+        instruction(167, "GOTO", "Ljoin"),
+        instruction(-1, "LABEL", "Ltyped"),
+        instruction(58, "ASTORE", "0"),
+        instruction(191, "ATHROW"),
+        instruction(-1, "LABEL", "Lfinally"),
+        instruction(58, "ASTORE", "1"),
+        instruction(177, "RETURN"),
+        instruction(-1, "LABEL", "Ljoin"),
+        instruction(177, "RETURN"));
+    MethodModel raw = new MethodModel(
+        "guarded", "()V", null, 0, List.of(), List.of(), List.of(),
+        instructions, List.of(
+            new com.goldclient.model.TryCatchModel(
+                "Ltry", "Lend", "Ltyped", "java/lang/Throwable"),
+            new com.goldclient.model.TryCatchModel(
+                "Ltry", "Lend", "Lfinally", null)), 2, 1);
+    MethodModel analyzed = new MethodModel(
+        raw.name(), raw.descriptor(), raw.signature(), raw.access(), raw.exceptions(),
+        raw.annotations(), raw.referencedClasses(), raw.instructions(), raw.tryCatchBlocks(),
+        raw.maxStack(), raw.maxLocals(), new ControlFlowAnalyzer().analyze(raw));
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(analyzed);
+
+    List<com.goldclient.model.IrOperationModel> begins = ir.operations().stream()
+        .filter(operation -> "TRY_BEGIN".equals(operation.kind())).toList();
+    assertTrue(begins.stream().anyMatch(operation ->
+        "Ltyped".equals(operation.operands().get(2))
+            && "false".equals(operation.operands().get(4))), begins.toString());
+    assertTrue(begins.stream().anyMatch(operation ->
+        "Lfinally".equals(operation.operands().get(2))
+            && "true".equals(operation.operands().get(4))), begins.toString());
+  }
+
+  @Test
   void floatArithmeticRoundsAtEachJvmOperation() {
     MethodModel method = method("floatMath", "()V", List.of(
         instruction(11, "FCONST_0"),

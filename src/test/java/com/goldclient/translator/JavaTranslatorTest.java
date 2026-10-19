@@ -6,6 +6,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JavaTranslatorTest {
@@ -525,6 +526,56 @@ class JavaTranslatorTest {
     assertTrue(result.source().contains("mightFail();"), result.source());
     assertTrue(result.source().contains("recover(local0);"), result.source());
     assertTrue(!result.source().contains("TODO"), result.source());
+  }
+
+  @Test
+  void rendersCatchAllFinallyForTryWithResourcesWithoutUnreachableCatch() {
+    List<String> typed = List.of(
+        "Ltry", "Lend", "Ltyped", "java.lang.Throwable", "false");
+    List<String> catchAll = List.of(
+        "Ltry", "Lend", "Lfinally", "java.lang.Throwable", "true");
+    List<String> protectedHandler = List.of(
+        "Ltyped", "LcleanupEnd", "Lfinally", "java.lang.Throwable", "true");
+    IrMethodModel method = new IrMethodModel("guardedResource", "()V", List.of(
+        new IrOperationModel("TRY_BEGIN", typed, 0),
+        new IrOperationModel("TRY_BEGIN", catchAll, 0),
+        new IrOperationModel("LABEL", List.of("Ltry"), 0),
+        new IrOperationModel("METHOD_CALL", List.of("writeResource()"), 1),
+        new IrOperationModel("TRY_END", typed, 2),
+        new IrOperationModel("TRY_END", catchAll, 2),
+        new IrOperationModel("LABEL", List.of("Lend"), 2),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 3),
+        new IrOperationModel("CATCH_BEGIN", typed, 4),
+        new IrOperationModel("TRY_BEGIN", protectedHandler, 4),
+        new IrOperationModel("LABEL", List.of("Ltyped"), 4),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 5),
+        new IrOperationModel("LOCAL_READ", List.of("local1"), 5),
+        new IrOperationModel("LOCAL_WRITE", List.of("local2", "local1"), 6),
+        new IrOperationModel("LOCAL_READ", List.of("local1"), 6),
+        new IrOperationModel("THROW", List.of("local1"), 7),
+        new IrOperationModel("CATCH_BEGIN", catchAll, 8),
+        new IrOperationModel("CATCH_BEGIN", protectedHandler, 8),
+        new IrOperationModel("LABEL", List.of("Lfinally"), 8),
+        new IrOperationModel("LOCAL_WRITE", List.of("local3", "<exception>"), 9),
+        new IrOperationModel("TRY_END", protectedHandler, 9),
+        new IrOperationModel("LABEL", List.of("LcleanupEnd"), 9),
+        new IrOperationModel("METHOD_CALL", List.of("closeResource()"), 10),
+        new IrOperationModel("LOCAL_READ", List.of("local3"), 10),
+        new IrOperationModel("THROW", List.of("local3"), 11),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 12),
+        new IrOperationModel("RETURN", List.of(), 13)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains(
+        "catch (java.lang.Throwable local1)"), result.source());
+    assertTrue(result.source().contains("} finally {"), result.source());
+    assertFalse(result.source().contains(
+        "catch (java.lang.Throwable local3)"), result.source());
+    assertEquals(1, occurrences(result.source(), "catch ("), result.source());
+    assertTrue(result.source().contains("closeResource();"), result.source());
   }
 
   @Test

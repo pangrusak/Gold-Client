@@ -442,6 +442,9 @@ public final class JavaTranslator {
   private static ConditionalRender renderGroupedTryCatch(
       List<IrOperationModel> operations, int begin, int end, int indent,
       TranslationContext context, Map<String, Integer> labels) {
+    ConditionalRender declaredFinally = renderDeclaredFinally(
+        operations, begin, end, indent, context, labels);
+    if (declaredFinally != null) return declaredFinally;
     List<String> metadata = operations.get(begin).operands();
     if (metadata.size() < 4) return null;
     String startLabel = metadata.get(0);
@@ -851,6 +854,212 @@ public final class JavaTranslator {
         ? normalBlockStart - 1
         : (joinLabel == null ? lastHandlerEnd - 1 : lastHandlerEnd);
     return new ConditionalRender(source.toString(), complete, last);
+  }
+
+  /**
+   * Renders the JVM's catch-all/finally shape produced by try-with-resources
+   * and try/finally. In that shape a protected range has one ordinary handler
+   * that stores and rethrows the primary exception, plus a null-type handler
+   * that performs cleanup and rethrows. The null-type entry may also protect
+   * the ordinary handler's code.
+   *
+   * <p>Rendering the cleanup as a sibling catch clause is wrong: the ordinary
+   * handler already catches the same Throwable, so the cleanup clause is
+   * unreachable and the normal path loses its close/cleanup. This method only
+   * accepts the simple, unambiguous shape; anything else falls back to the
+   * general renderer and is reported as incomplete rather than guessed.</p>
+   */
+  private static ConditionalRender renderDeclaredFinally(
+      List<IrOperationModel> operations, int begin, int end, int indent,
+      TranslationContext context, Map<String, Integer> labels) {
+    List<String> metadata = operations.get(begin).operands();
+    if (metadata.size() < 5) return null;
+    String startLabel = metadata.get(0);
+    String endLabel = metadata.get(1);
+    String finallyLabel = labelKey(metadata.get(2));
+
+    List<String> typedHandlers = new java.util.ArrayList<>();
+    Set<String> typedTypes = new java.util.LinkedHashSet<>();
+    boolean seenFinally = false;
+    for (IrOperationModel candidate : operations) {
+      if (!"TRY_BEGIN".equals(candidate.kind()) || candidate.operands().size() < 5) continue;
+      List<String> candidateMetadata = candidate.operands();
+      if (!labelKey(startLabel).equals(labelKey(candidateMetadata.get(0)))
+          || !labelKey(endLabel).equals(labelKey(candidateMetadata.get(1)))) continue;
+      String handler = labelKey(candidateMetadata.get(2));
+      if ("true".equals(candidateMetadata.get(4))) {
+        if (seenFinally && !finallyLabel.equals(handler)) return null;
+        finallyLabel = handler;
+        seenFinally = true;
+      } else if (!typedHandlers.contains(handler)) {
+        typedHandlers.add(handler);
+        typedTypes.add(candidateMetadata.get(3));
+      } else {
+        // Multi-catch shares one handler. Leave it to the general renderer.
+        return null;
+      }
+    }
+    if (!seenFinally || typedHandlers.size() != 1 || typedTypes.size() != 1) return null;
+
+    int tryEnd = -1;
+    int typedBegin = -1;
+    int finallyBegin = -1;
+    for (int i = begin + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (operation.operands().size() < 4) continue;
+      if (!labelKey(startLabel).equals(labelKey(operation.operands().get(0)))
+          || !labelKey(endLabel).equals(labelKey(operation.operands().get(1)))) continue;
+      if ("TRY_END".equals(operation.kind()) && tryEnd < 0) tryEnd = i;
+      if (!"CATCH_BEGIN".equals(operation.kind())) continue;
+      String handler = labelKey(operation.operands().get(2));
+      if (handler.equals(finallyLabel)) {
+        if (finallyBegin < 0) finallyBegin = i;
+      } else if (handler.equals(typedHandlers.get(0)) && typedBegin < 0) {
+        typedBegin = i;
+      }
+    }
+    if (tryEnd < 0 || typedBegin < 0 || finallyBegin < 0 || typedBegin > finallyBegin) {
+      return null;
+    }
+
+    // The ordinary handler must be exactly a store-and-rethrow path. A handler
+    // that also inlines cleanup would be cleaned twice by the finally.
+    int typedStart = typedBegin + 1;
+    while (typedStart < finallyBegin && isExceptionBoundary(operations.get(typedStart))) {
+      typedStart++;
+    }
+    if (typedStart >= finallyBegin) return null;
+    IrOperationModel typedStore = operations.get(typedStart);
+    if (!"LOCAL_WRITE".equals(typedStore.kind()) || typedStore.operands().size() < 2
+        || !"<exception>".equals(typedStore.operands().get(1))) return null;
+    String typedVariable = typedStore.operands().get(0);
+    int typedThrow = -1;
+    for (int i = typedStart + 1; i < finallyBegin; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("THROW".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(typedVariable).equals(labelKey(operation.operands().get(0)))) {
+        typedThrow = i;
+        break;
+      }
+      if (!isSimpleRethrowOperation(operation)) return null;
+    }
+    if (typedThrow < 0) return null;
+    // The synthetic try-with-resources handler captures the primary exception
+    // in another local before rethrowing; the cleanup reads that local later.
+    // Requiring the capture avoids treating a user-written catch-and-rethrow
+    // (whose inlined cleanup could already be in the body) as this shape.
+    boolean capturesPrimary = false;
+    for (int i = typedStart + 1; i < typedThrow; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("LOCAL_WRITE".equals(operation.kind()) && operation.operands().size() >= 2
+          && labelKey(typedVariable).equals(labelKey(operation.operands().get(1)))) {
+        capturesPrimary = true;
+      }
+    }
+    if (!capturesPrimary) return null;
+
+    // The catch-all handler must store its exception, run cleanup, and rethrow
+    // that same value. The rethrow is the handler's exit, not user code.
+    int finallyStart = finallyBegin + 1;
+    while (finallyStart < end && isExceptionBoundary(operations.get(finallyStart))) {
+      finallyStart++;
+    }
+    if (finallyStart >= end) return null;
+    IrOperationModel finallyStore = operations.get(finallyStart);
+    if (!"LOCAL_WRITE".equals(finallyStore.kind()) || finallyStore.operands().size() < 2
+        || !"<exception>".equals(finallyStore.operands().get(1))) return null;
+    String finallyVariable = finallyStore.operands().get(0);
+    Integer thisStart = labels.get(labelKey(startLabel));
+    if (thisStart == null) return null;
+    int finallyThrow = -1;
+    for (int i = finallyStart + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("CATCH_BEGIN".equals(operation.kind()) && operation.operands().size() >= 3) {
+        Integer nestedStart = labels.get(labelKey(operation.operands().get(0)));
+        if (nestedStart == null || nestedStart < thisStart) break;
+      }
+      if ("THROW".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(finallyVariable).equals(labelKey(operation.operands().get(0)))) {
+        finallyThrow = i;
+      }
+    }
+    if (finallyThrow < 0) return null;
+
+    // The catch-all must also protect the ordinary handler's body; that is
+    // what makes it a finally rather than an unrelated sibling catch.
+    boolean protectsTypedHandler = false;
+    for (IrOperationModel candidate : operations) {
+      if (!"TRY_BEGIN".equals(candidate.kind()) || candidate.operands().size() < 5) continue;
+      List<String> candidateMetadata = candidate.operands();
+      if (labelKey(typedHandlers.get(0)).equals(labelKey(candidateMetadata.get(0)))
+          && finallyLabel.equals(labelKey(candidateMetadata.get(2)))
+          && "true".equals(candidateMetadata.get(4))) {
+        protectsTypedHandler = true;
+        break;
+      }
+    }
+    if (!protectsTypedHandler) return null;
+
+    // A normal-path jump into a loop header (or back inside the region) cannot
+    // be represented by falling out of a finally. Leave that shape incomplete.
+    for (int i = tryEnd + 1; i < typedBegin; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (!"JUMP".equals(operation.kind()) || operation.operands().isEmpty()) continue;
+      Integer target = labels.get(labelKey(operation.operands().get(0)));
+      if (target == null || target < finallyThrow) return null;
+    }
+
+    int bodyStart = thisStart + 1;
+    while (bodyStart < tryEnd && isExceptionBoundary(operations.get(bodyStart))) bodyStart++;
+    if (bodyStart >= tryEnd) return null;
+
+    int finallyBodyEnd = finallyThrow;
+    if (finallyBodyEnd - 1 >= finallyStart + 1) {
+      IrOperationModel beforeThrow = operations.get(finallyBodyEnd - 1);
+      if ("LOCAL_READ".equals(beforeThrow.kind()) && !beforeThrow.operands().isEmpty()
+          && labelKey(finallyVariable).equals(labelKey(beforeThrow.operands().get(0)))) {
+        finallyBodyEnd--;
+      }
+    }
+
+    context.enterSuppressedTryHandlers(Set.of(finallyLabel));
+    RenderResult tryBody;
+    RenderResult catchBody;
+    RenderResult finallyBody;
+    try {
+      tryBody = renderRange(operations, bodyStart, tryEnd, indent + 1, context, labels);
+      catchBody = renderRange(
+          operations, typedStart + 1, typedThrow + 1, indent + 1, context, labels);
+      finallyBody = renderRange(
+          operations, finallyStart + 1, finallyBodyEnd, indent + 1, context, labels);
+    } finally {
+      context.exitSuppressedTryHandlers();
+    }
+
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("try {\n").append(tryBody.source());
+    source.append(indent(indent)).append("} catch (")
+        .append(typedTypes.iterator().next()).append(" ").append(typedVariable)
+        .append(") {\n").append(catchBody.source());
+    source.append(indent(indent)).append("} finally {\n").append(finallyBody.source());
+    source.append(indent(indent)).append("}\n");
+    boolean complete = tryBody.complete() && catchBody.complete() && finallyBody.complete();
+    return new ConditionalRender(source.toString(), complete, finallyThrow);
+  }
+
+  private static boolean isExceptionBoundary(IrOperationModel operation) {
+    return "LABEL".equals(operation.kind())
+        || "TRY_BEGIN".equals(operation.kind())
+        || "TRY_END".equals(operation.kind())
+        || "CATCH_BEGIN".equals(operation.kind());
+  }
+
+  private static boolean isSimpleRethrowOperation(IrOperationModel operation) {
+    return switch (operation.kind()) {
+      case "LOCAL_READ", "LOCAL_WRITE", "CONSTANT", "LABEL", "TRY_END", "CATCH_BEGIN",
+          "TRY_BEGIN", "DUP", "DROP" -> true;
+      default -> false;
+    };
   }
 
   /**

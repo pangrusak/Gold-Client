@@ -103,14 +103,19 @@ public final class IntermediateRepresentationAnalyzer {
       if (start < 0 || end < 0 || catchIndex < 0 || start >= end || catchIndex <= start)
         continue;
       int source = result.get(start).sourceInstruction();
+      // A null exception type is the JVM's catch-all/finally entry. Keep that
+      // distinction: rendering it as an ordinary Throwable catch makes later
+      // clauses unreachable and drops finally cleanup on normal paths.
+      String catchAll = Boolean.toString(
+          handler.exceptionType() == null || handler.exceptionType().isBlank());
       result.add(start, new IrOperationModel("TRY_BEGIN", List.of(
           handler.startLabel(), handler.endLabel(), handler.handlerLabel(),
-          normalizeExceptionType(handler.exceptionType())), source));
+          normalizeExceptionType(handler.exceptionType()), catchAll), source));
       end++;
       catchIndex++;
       result.add(end, new IrOperationModel("TRY_END", List.of(
           handler.startLabel(), handler.endLabel(), handler.handlerLabel(),
-          normalizeExceptionType(handler.exceptionType())),
+          normalizeExceptionType(handler.exceptionType()), catchAll),
           result.get(Math.min(end, result.size() - 1)).sourceInstruction()));
       // Inserting TRY_END shifts the handler marker when the handler follows
       // the protected range. Keep CATCH_BEGIN aligned with the handler label;
@@ -118,7 +123,7 @@ public final class IntermediateRepresentationAnalyzer {
       if (end <= catchIndex) catchIndex++;
       result.add(catchIndex, new IrOperationModel("CATCH_BEGIN", List.of(
           handler.startLabel(), handler.endLabel(), handler.handlerLabel(),
-          normalizeExceptionType(handler.exceptionType())),
+          normalizeExceptionType(handler.exceptionType()), catchAll),
           result.get(Math.min(catchIndex, result.size() - 1)).sourceInstruction()));
     }
     return List.copyOf(result);

@@ -10,7 +10,7 @@ Gold Client is an experimental Java-bytecode-to-JavaScript translation pipeline 
 
 The latest previously recorded JEI 1.12.2 benchmark reported 371 classes, 2,195 methods, zero methods marked incomplete in the represented IR, and **348 adapter-required declarations**. These are different measures: zero incomplete methods does not mean zero adapters or complete game compatibility. The adapter work is intended to reduce the latter count by implementing reusable runtime mappings, not by relabeling unresolved APIs as supported.
 
-**Build/CI status:** the loader work in this worktree has been verified with `mvn package`, `mvn --batch-mode verify` (254 tests, 0 failures, 0 errors, 3 optional skips), and both standalone Node test files. The older `5e7ef56` failure note is historical; re-run the build before repeating it.
+**Build/CI status:** the loader work in this worktree has been verified with `mvn package`, `mvn --batch-mode verify` (256 tests, 0 failures, 0 errors, 3 optional skips), and both standalone Node test files. The older `5e7ef56` failure note is historical; re-run the build before repeating it.
 
 ## Usage
 

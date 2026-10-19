@@ -45,10 +45,14 @@ The profile injector prefers this file when present and emits a classic
   ready lifecycle plan.
 - [x] AppleSkin plus JEI translates to 393 classes and two mod entries
   (`jei`, `appleskin`) with dependency ordering and a ready lifecycle plan.
-  Six JEI methods are marked incomplete because their JVM catch-clause shapes
-  were merged as an explicit approximation; the command reports them, lists
-  them in `loader-plan.json` (`incompleteMethods`), and exits with status `2`
-  rather than claiming a complete translation.
+  Four JEI methods remain incomplete: two `JeiTextureMap` methods combine
+  several typed handlers with catch-all/finally cleanup, and two methods
+  (`RecipeRegistry#addRecipe`, `JeiStarter#registerCategories`) merge
+  multi-catch bodies with non-trivial control flow. The command reports them,
+  lists them in `loader-plan.json` (`incompleteMethods`), and exits with status
+  `2` rather than claiming a complete translation. Two `BookmarkList`
+  try-with-resources methods were corrected by rendering the JVM catch-all
+  handler as `finally` instead of an unreachable sibling `catch (Throwable)`.
 - [x] Generated AppleSkin and AppleSkin+JEI modules pass `node --check` and
   import through `forge-lifecycle.js` without executing game APIs.
 - [x] `--single-file --compact` packs the AppleSkin+JEI build (398 modules) into
