@@ -202,6 +202,9 @@ public final class ForgeCompatibilityPlanner {
     }
     out.append("\nNext actions\n");
     for (String action : plan.nextActions()) out.append("- ").append(action).append('\n');
+    out.append("\nNote: the complete/incomplete counts above describe method-body recovery.\n")
+        .append("JavaScript-lowering completeness (for example, merged catch clauses) is\n")
+        .append("reported separately in loader-plan.json and incomplete-diagnostics.txt.\n");
     out.append("\nThis is a reference inventory, not proof that the mod runs in Eaglercraft.\n");
     return out.toString();
   }
