@@ -92,6 +92,39 @@ class ForgeLoaderTest {
   }
 
   @Test
+  void resolvesModIdFromMetadataOnlyForUseMetadataEntries() throws Exception {
+    ClassModel mod = new ClassModel("sample/MetaMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(constructor()),
+        List.of(), List.of(new AnnotationData(MOD, true, Map.of(
+            "modid", "", "useMetadata", true, "version", ""))));
+
+    Path output = tempDir.resolve("metadata-plan");
+    ForgeLifecycleExporter.LifecycleReport report = new ForgeLifecycleExporter()
+        .export(List.of(mod), Map.of("sample/MetaMod", "metaid"), output);
+
+    assertEquals("READY_FOR_REAL_FORGE_HOST", report.status(), report.blockers().toString());
+    assertEquals(List.of("metaid"), report.mods().stream()
+        .map(ForgeLifecycleExporter.ModEntry::modId).toList());
+  }
+
+  @Test
+  void reportsMissingModIdWhenMetadataIdCannotBeUsed() throws Exception {
+    ClassModel mod = new ClassModel("sample/MetaMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(constructor()),
+        List.of(), List.of(new AnnotationData(MOD, true, Map.of(
+            "modid", "", "useMetadata", false, "version", ""))));
+
+    Path output = tempDir.resolve("metadata-blocked-plan");
+    ForgeLifecycleExporter.LifecycleReport report = new ForgeLifecycleExporter()
+        .export(List.of(mod), Map.of("sample/MetaMod", "metaid"), output);
+
+    assertEquals("PARTIAL_WITH_BLOCKERS", report.status());
+    assertTrue(report.blockers().stream().anyMatch(blocker ->
+        blocker.contains("Missing literal @Mod(modid=...)")
+            && blocker.contains("mcmod.info declares metaid")), report.blockers().toString());
+  }
+
+  @Test
   void generatedAppleSkinBundleIsSyntacticallyLoadableByNode() throws Exception {
     Path jar = Path.of("test-mods/appleskin1.12.2.jar");
     org.junit.jupiter.api.Assumptions.assumeTrue(Files.isRegularFile(jar),

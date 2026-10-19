@@ -74,11 +74,13 @@ public final class LoaderCommand {
 
       List<ClassModel> classes = new ArrayList<>();
       Map<String, Path> classOwners = new LinkedHashMap<>();
+      Map<String, String> metadataModIds = new LinkedHashMap<>();
       List<InputRecord> records = new ArrayList<>();
       for (Path input : inputs) {
         ModAnalysis analysis = new ModAnalyzer().analyze(input);
         int methods = analysis.totalMethods();
         int fields = analysis.totalFields();
+        String metadataModId = analysis.metadata().getModId();
         for (ClassModel clazz : analysis.classes()) {
           Path previous = classOwners.putIfAbsent(clazz.name(), input);
           if (previous != null) {
@@ -86,6 +88,10 @@ public final class LoaderCommand {
                 + clazz.name().replace('/', '.') + " in " + previous + " and " + input);
           }
           classes.add(clazz);
+          if (metadataModId != null && !metadataModId.isBlank()
+              && !"Unknown".equals(metadataModId)) {
+            metadataModIds.putIfAbsent(clazz.name(), metadataModId);
+          }
         }
         records.add(new InputRecord(input.toString(), TranslationPipeline.sha256(input),
             analysis.totalClasses(), methods, fields));
@@ -93,7 +99,7 @@ public final class LoaderCommand {
 
       Path destination = output;
       JavaScriptModTranslationExporter.ExportReport export =
-          new JavaScriptModTranslationExporter().export(inputs, classes, destination);
+          new JavaScriptModTranslationExporter().export(inputs, classes, metadataModIds, destination);
       JsonObject lifecycle = JsonParser.parseString(Files.readString(
           destination.resolve("forge-lifecycle-plan.json"), StandardCharsets.UTF_8))
           .getAsJsonObject();

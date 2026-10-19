@@ -18,6 +18,7 @@ import java.util.zip.ZipFile;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import org.objectweb.asm.Opcodes;
 
 /** Writes per-class JavaScript modules and a separate honest JS completeness report. */
@@ -48,6 +49,15 @@ public final class JavaScriptModTranslationExporter {
    */
   public ExportReport export(List<Path> inputJars, List<ClassModel> classes,
       Path outputDirectory) throws IOException {
+    return export(inputJars, classes, Map.of(), outputDirectory);
+  }
+
+  /**
+   * Exports one bundle and carries per-class metadata mod IDs (from {@code mcmod.info})
+   * so a {@code @Mod(useMetadata = true)} entry can resolve its ID from the JAR metadata.
+   */
+  public ExportReport export(List<Path> inputJars, List<ClassModel> classes,
+      Map<String, String> metadataModIds, Path outputDirectory) throws IOException {
     if (classes == null) throw new IllegalArgumentException("Classes must not be null.");
     if (outputDirectory == null) throw new IllegalArgumentException("Output directory must not be null.");
     List<Path> jars = inputJars == null ? List.of() : inputJars.stream()
@@ -110,7 +120,7 @@ public final class JavaScriptModTranslationExporter {
     Files.writeString(root.resolve("gold-client-runtime.js"), runtimeSource(), StandardCharsets.UTF_8);
     writeModuleIndex(classes, root);
     writeClassManifest(classes, root);
-    new ForgeLifecycleExporter().export(classes, root);
+    new ForgeLifecycleExporter().export(classes, metadataModIds, root);
     new ForgeHostRuntimeExporter().export(root);
     new ForgeCompatibilityPlanner().export(classes, root);
     Files.writeString(root.resolve("package.json"),

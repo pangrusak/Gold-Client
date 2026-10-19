@@ -117,6 +117,7 @@ public final class ModAnalyzer {
 
   private void readFabric(JsonObject r, ModMetadata m) {
     m.setName(text(r, "name"));
+    m.setModId(text(r, "id"));
     m.setVersion(text(r, "version"));
     m.setLoader("Fabric");
 
@@ -169,11 +170,13 @@ public final class ModAnalyzer {
   private void readMcModInfo(String json, ModMetadata m) {
     JsonElement root = JsonParser.parseString(json);
     if (root.isJsonArray()) {
-      for (JsonElement e : root.getAsJsonArray())
-        if (e.isJsonObject()) {
-          readMcModEntry(e.getAsJsonObject(), m);
-          break;
-        }
+      JsonArray entries = root.getAsJsonArray();
+      if (entries.size() > 0 && entries.get(0).isJsonObject()) {
+        readMcModEntry(entries.get(0).getAsJsonObject(), m);
+      }
+      // A JAR with several mcmod.info entries declares several mod IDs. Without
+      // matching each @Mod class to its entry, do not claim a single metadata ID.
+      if (entries.size() != 1) m.setModId(null);
     } else if (root.isJsonObject()) {
       readMcModEntry(root.getAsJsonObject(), m);
     }
@@ -181,6 +184,7 @@ public final class ModAnalyzer {
 
   private void readMcModEntry(JsonObject o, ModMetadata m) {
     m.setName(text(o, "name"));
+    m.setModId(text(o, "modid"));
     m.setVersion(text(o, "version"));
     m.setMinecraftVersion(text(o, "mcversion"));
 
@@ -219,6 +223,7 @@ public final class ModAnalyzer {
 
       if ("mods".equals(section)) {
         if ("displayName".equals(key)) m.setName(parsedValue);
+        else if ("modId".equals(key)) m.setModId(parsedValue);
         else if ("version".equals(key)) m.setVersion(parsedValue);
       } else if (dependencySectionId != null) {
         if ("modId".equals(key)) {

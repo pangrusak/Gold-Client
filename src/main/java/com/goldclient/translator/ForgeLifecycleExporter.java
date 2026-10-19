@@ -96,9 +96,21 @@ public final class ForgeLifecycleExporter {
   }
 
   public LifecycleReport export(List<ClassModel> classes, Path outputDirectory) throws IOException {
+    return export(classes, Map.of(), outputDirectory);
+  }
+
+  /**
+   * Exports the lifecycle plan. {@code metadataModIds} maps an internal class name to
+   * the mod ID declared by that class's JAR metadata ({@code mcmod.info}); it is used
+   * only for {@code @Mod(useMetadata = true)} entries whose annotation has no literal
+   * {@code modid}.
+   */
+  public LifecycleReport export(List<ClassModel> classes, Map<String, String> metadataModIds,
+      Path outputDirectory) throws IOException {
     if (classes == null || outputDirectory == null) {
       throw new IllegalArgumentException("Classes and output directory must not be null.");
     }
+    Map<String, String> metadataIds = metadataModIds == null ? Map.of() : metadataModIds;
     List<String> blockers = new ArrayList<>();
     Map<String, ClassModel> classesByName = indexClasses(classes, blockers);
     List<ModEntry> entries = new ArrayList<>();
@@ -109,9 +121,21 @@ public final class ForgeLifecycleExporter {
       if (!clazz.annotations().contains(MOD)) continue;
       AnnotationData modAnnotation = annotation(clazz.annotationData(), MOD);
       String id = stringValue(modAnnotation, "modid");
+      boolean useMetadata = booleanValue(modAnnotation, "useMetadata");
+      String metadataId = metadataIds.get(clazz.name());
       if (id == null || id.isBlank()) {
-        blockers.add("Missing literal @Mod(modid=...) on " + dotted(clazz.name()));
-        id = dotted(clazz.name());
+        if (useMetadata && metadataId != null && !metadataId.isBlank()) {
+          id = metadataId;
+        } else {
+          String detail = metadataId == null || metadataId.isBlank()
+              ? "" : " (mcmod.info declares " + metadataId + " but useMetadata is not true)";
+          blockers.add("Missing literal @Mod(modid=...) on " + dotted(clazz.name()) + detail);
+          id = dotted(clazz.name());
+        }
+      } else if (useMetadata && metadataId != null && !metadataId.isBlank()
+          && !metadataId.equals(id)) {
+        blockers.add("mcmod.info mod ID " + metadataId + " does not match @Mod(modid=" + id
+            + ") on " + dotted(clazz.name()));
       }
       if (!id.matches("[a-z][a-z0-9_]{0,63}")) {
         blockers.add("Invalid Forge mod ID on " + dotted(clazz.name()) + ": " + id);
@@ -423,11 +447,11 @@ public final class ForgeLifecycleExporter {
   }
 
   private static List<ModEntry> orderMods(List<ModEntry> entries, List<String> blockers) {
-    List<ForgeDependencyGraph.Mod> mods = entries.stream()
-        .map(mod -> new ForgeDependencyGraph.Mod(mod.modId(), mod.version(), mod.dependencies()))
-        .toList();
     ForgeDependencyGraph.Plan plan;
     try {
+      List<ForgeDependencyGraph.Mod> mods = entries.stream()
+          .map(mod -> new ForgeDependencyGraph.Mod(mod.modId(), mod.version(), mod.dependencies()))
+          .toList();
       plan = ForgeDependencyGraph.plan(mods);
     } catch (IllegalArgumentException error) {
       blockers.add("Forge dependency metadata is invalid: " + error.getMessage());

@@ -5,6 +5,7 @@ import java.util.List;
 
 public final class ModMetadata {
   private String name = "Unknown";
+  private String modId = "Unknown";
   private String version = "Unknown";
   private String minecraftVersion = "Unknown";
   private String loader = "Unknown";
@@ -14,6 +15,7 @@ public final class ModMetadata {
   private final List<String> mixins = new ArrayList<>();
 
   public String getName() { return name; }
+  public String getModId() { return modId; }
   public String getVersion() { return version; }
   public String getMinecraftVersion() { return minecraftVersion; }
   public String getLoader() { return loader; }
@@ -24,6 +26,10 @@ public final class ModMetadata {
 
   void setName(String value) {
     if (value != null && !value.isBlank()) name = value;
+  }
+
+  void setModId(String value) {
+    modId = value == null || value.isBlank() ? "Unknown" : value;
   }
 
   void setVersion(String value) {

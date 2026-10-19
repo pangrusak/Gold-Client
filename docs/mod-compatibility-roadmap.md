@@ -45,6 +45,10 @@ declared event subscribers from original annotations.
   preInit, and every preInit handler runs before any init handler.
 - [x] `@SidedProxy` client implementations, `@Mod.Instance`,
   `@Mod.Metadata`, and `@Mod.InstanceFactory` are discovered and validated.
+- [x] A `@Mod(useMetadata = true)` entry with no literal `modid` resolves its
+  mod ID from a single-entry `mcmod.info`, and a metadata ID that disagrees
+  with a literal `@Mod(modid=...)` becomes an explicit blocker. A JAR with
+  several `mcmod.info` entries does not claim a single metadata ID.
 - [x] Missing required mod dependencies, duplicate IDs, missing proxies,
   unsupported handler signatures, server-only entries, and absent superclasses
   become explicit blockers rather than guessed behavior.
