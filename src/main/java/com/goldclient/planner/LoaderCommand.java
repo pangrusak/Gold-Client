@@ -4,6 +4,7 @@ import com.goldclient.analyzer.ModAnalysis;
 import com.goldclient.analyzer.ModAnalyzer;
 import com.goldclient.model.ClassModel;
 import com.goldclient.translator.ForgeLifecycleExporter;
+import com.goldclient.translator.JavaScriptBundleExporter;
 import com.goldclient.translator.JavaScriptModTranslationExporter;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -37,12 +38,22 @@ public final class LoaderCommand {
     List<Path> inputs = new ArrayList<>();
     Path output = null;
     Path reportFile = null;
+    boolean singleFile = false;
+    boolean compact = false;
     try {
       for (int i = 0; i < args.length; i++) {
         String flag = args[i];
         if (flag.equals("--help")) {
           usage(out);
           return 0;
+        }
+        if (flag.equals("--single-file")) {
+          singleFile = true;
+          continue;
+        }
+        if (flag.equals("--compact")) {
+          compact = true;
+          continue;
         }
         if (++i >= args.length) throw new IllegalArgumentException("Missing value for " + flag);
         String value = args[i];
@@ -100,6 +111,12 @@ public final class LoaderCommand {
       Path destination = output;
       JavaScriptModTranslationExporter.ExportReport export =
           new JavaScriptModTranslationExporter().export(inputs, classes, metadataModIds, destination);
+      Path singleFileOutput = null;
+      JavaScriptBundleExporter.BundleSummary singleFileSummary = null;
+      if (singleFile) {
+        singleFileOutput = destination.resolve(JavaScriptBundleExporter.DEFAULT_FILE_NAME);
+        singleFileSummary = JavaScriptBundleExporter.write(destination, singleFileOutput, compact);
+      }
       JsonObject lifecycle = JsonParser.parseString(Files.readString(
           destination.resolve("forge-lifecycle-plan.json"), StandardCharsets.UTF_8))
           .getAsJsonObject();
@@ -142,6 +159,11 @@ public final class LoaderCommand {
       report.put("blockers", blockerList);
       report.put("translationComplete", export.incompleteCount() == 0);
       report.put("ready", blockerList.isEmpty() && export.incompleteCount() == 0);
+      if (singleFileSummary != null) {
+        report.put("singleFile", singleFileOutput.toString());
+        report.put("singleFileModuleCount", singleFileSummary.moduleCount());
+        report.put("singleFileBytes", singleFileSummary.bytes());
+      }
       Files.createDirectories(reportFile.getParent());
       Files.writeString(reportFile,
           new GsonBuilder().setPrettyPrinting().create().toJson(report) + System.lineSeparator(),
@@ -167,6 +189,10 @@ public final class LoaderCommand {
       }
       out.println("Bundle: " + destination);
       out.println("Entrypoint: " + destination.resolve("eaglercraft-forge-entry.js"));
+      if (singleFileSummary != null) {
+        out.println("Single-file bundle: " + singleFileOutput);
+        out.println("Single-file modules: " + singleFileSummary.moduleCount());
+      }
       out.println("Report: " + reportFile);
       out.println("Note: a loader bundle is not proof that every Forge/Minecraft API is bound.");
       return blockerList.isEmpty() && export.incompleteCount() == 0 ? 0 : 2;
@@ -179,9 +205,11 @@ public final class LoaderCommand {
   private static void usage(PrintStream out) {
     out.println("""
         Usage: gold-client loader --input <mod.jar> [--input <dependency-mod.jar> ...] \
-        --output <directory> [--report <file>]
+        --output <directory> [--report <file>] [--single-file [--compact]]
           Builds one shared JavaScript Forge loader bundle from several mod JARs.
           --input may be repeated. Duplicate class definitions are rejected.
+          --single-file writes gold-client-forge.js as one classic-script file.
+          --compact strips full-line comments and blank lines from that file.
           Exits 2 when lifecycle blockers or incomplete methods remain.
         """);
   }

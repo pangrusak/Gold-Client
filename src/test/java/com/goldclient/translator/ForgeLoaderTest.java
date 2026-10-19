@@ -161,7 +161,8 @@ class ForgeLoaderTest {
     try (PrintStream out = new PrintStream(stdout, true, StandardCharsets.UTF_8);
          PrintStream err = new PrintStream(stderr, true, StandardCharsets.UTF_8)) {
       code = LoaderCommand.run(new String[] {
-          "--input", jar.toString(), "--output", output.toString()
+          "--input", jar.toString(), "--output", output.toString(),
+          "--single-file", "--compact"
       }, out, err);
     }
     String log = stdout.toString(StandardCharsets.UTF_8)
@@ -169,10 +170,18 @@ class ForgeLoaderTest {
     assertEquals(0, code, log);
     assertTrue(log.contains("Translation complete: yes"), log);
     assertTrue(log.contains("Lifecycle status: READY_FOR_REAL_FORGE_HOST"), log);
+    assertTrue(log.contains("Single-file bundle:"), log);
     assertTrue(Files.isRegularFile(output.resolve("loader-plan.json")));
     assertTrue(Files.isRegularFile(output.resolve("forge-lifecycle.js")));
-    assertTrue(Files.readString(output.resolve("loader-plan.json"))
-        .contains("\"translationComplete\": true"));
+    Path singleFile = output.resolve(JavaScriptBundleExporter.DEFAULT_FILE_NAME);
+    assertTrue(Files.isRegularFile(singleFile));
+    String singleSource = Files.readString(singleFile);
+    assertFalse(singleSource.contains("import "), "single file must not use ESM imports");
+    assertTrue(singleSource.contains("global.GoldClientForge"), singleSource);
+    String plan = Files.readString(output.resolve("loader-plan.json"));
+    assertTrue(plan.contains("\"translationComplete\": true"));
+    assertTrue(plan.contains("\"singleFile\""));
+    assertTrue(plan.contains("\"singleFileModuleCount\""));
   }
 
   @Test
@@ -373,6 +382,95 @@ class ForgeLoaderTest {
     String nodeOutput = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
     assertEquals(0, node.exitValue(), nodeOutput);
     assertEquals("forge-loader-ok", nodeOutput);
+
+    Path singleFile = output.resolve(JavaScriptBundleExporter.DEFAULT_FILE_NAME);
+    JavaScriptBundleExporter.BundleSummary summary =
+        JavaScriptBundleExporter.write(output, singleFile, true);
+    assertTrue(summary.moduleCount() >= 5, "single-file bundle should include every module");
+    assertTrue(Files.size(singleFile) > 0, "single-file bundle should not be empty");
+    assertFalse(Files.readString(singleFile).contains("import "), "single file must not use ESM imports");
+
+    Path singleRunner = output.resolve("loader-single-file-test.cjs");
+    Files.writeString(singleRunner, """
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const vm = require("node:vm");
+        const source = fs.readFileSync(path.join(__dirname, "gold-client-forge.js"), "utf8");
+        const window = {};
+        const sandbox = {
+          window, console, Date, Math, Map, Set, Promise, Object, Array, String, Number,
+          Error, TypeError, RangeError, RegExp, JSON, setTimeout, clearTimeout, queueMicrotask
+        };
+        sandbox.globalThis = sandbox;
+        vm.createContext(sandbox);
+        vm.runInContext(source, sandbox, { filename: "gold-client-forge.js" });
+        const bundle = sandbox.GoldClientForge;
+        if (!bundle) throw new Error("GoldClientForge missing");
+        if (!window.goldClientForgeEntrypoint) throw new Error("entrypoint was not installed");
+        if (!Array.isArray(bundle.mods) || bundle.mods.length !== 2) {
+          throw new Error("mod metadata missing from the single-file bundle");
+        }
+        if (typeof bundle.runtime.resolveClass !== "function") {
+          throw new Error("runtime class registry is not exposed");
+        }
+        const seen = sandbox.__forgeLoaderEvents;
+        const bindings = {
+          events: { createLifecycleEvent: async (mod, phase) => {
+            seen.push("event:" + phase.name + ":" + mod.modId);
+            return { phase: phase.name, modId: mod.modId };
+          } },
+          minecraft: {}, forge: { stopMod: async () => {} }, render: {}, input: {},
+          resources: {}, network: {}, config: {},
+          registries: { register: (_kind, _id, value) => value, lookup: () => null },
+          logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+          side: { current: () => "CLIENT" }
+        };
+        (async () => {
+          const started = await bundle.start(bindings);
+          if (started.modCount !== 2) throw new Error("single-file start did not run two mods");
+          const host = window.goldClientForgeHost;
+          host.postEvent("net.minecraftforge.event.TickEvent$ClientTickEvent", { id: 7 });
+          const ChildEvent = bundle.runtime.resolveClass("sample.ChildEvent");
+          host.postEvent("sample.ChildEvent", new ChildEvent(9));
+          const expectedPrefix = [
+            "construct:a", "construct:b",
+            "event:preInit:a", "preInit:a", "event:preInit:b",
+            "event:init:a", "event:init:b", "init:b",
+            "event:postInit:a", "event:postInit:b",
+            "event:loadComplete:a", "event:loadComplete:b",
+            "tick:a:7", "base:a:9", "static:9"
+          ];
+          if (seen.join(",") !== expectedPrefix.join(",")) {
+            throw new Error("single-file phase-major order mismatch: " + seen.join(","));
+          }
+          const status = bundle.status();
+          if (!status.started || status.modCount !== 2) {
+            throw new Error("single-file loader status mismatch: " + JSON.stringify(status));
+          }
+          const stopped = await bundle.stop("single-file test");
+          if (stopped.join(",") !== "b,a") {
+            throw new Error("single-file stop order mismatch: " + stopped.join(","));
+          }
+          console.log("single-file-ok");
+        })().catch(error => {
+          console.error(error && error.stack ? error.stack : error);
+          process.exit(1);
+        });
+        """, StandardCharsets.UTF_8);
+
+    Process singleNode;
+    try {
+      singleNode = new ProcessBuilder("node", singleRunner.toString())
+          .redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(singleNode.waitFor(20, TimeUnit.SECONDS), "single-file loader timed out");
+    String singleOutput = new String(singleNode.getInputStream().readAllBytes(),
+        StandardCharsets.UTF_8).trim();
+    assertEquals(0, singleNode.exitValue(), singleOutput);
+    assertEquals("single-file-ok", singleOutput);
   }
 
   @Test

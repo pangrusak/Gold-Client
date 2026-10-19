@@ -77,6 +77,26 @@ test('injects a module entrypoint without rewriting the original client', () => 
     assert.equal(seen[0].capabilities.blockSampling, false);
 });
 
+test('prefers the single-file classic-script bundle when present', () => {
+    const f = fixture();
+    fs.writeFileSync(path.join(f.bundle, 'gold-client-forge.js'),
+        'window.goldClientSingleFileLoaded = true;\n');
+    for (const name of [
+        'eaglercraft-forge-entry.js', 'forge-lifecycle.js', 'forge-host-runtime.js',
+        'gold-client-runtime.js', 'mod-index.js'
+    ]) fs.unlinkSync(path.join(f.bundle, name));
+    const result = spawnSync(process.execPath, [script, f.client, f.bundle, f.output], {
+        encoding: 'utf8'
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const injected = fs.readFileSync(f.output, 'utf8');
+    assert.match(injected,
+        /<script src="\.\.\/translated-js\/gold-client-forge\.js"><\/script>/);
+    assert.doesNotMatch(injected, /type="module"/);
+    assert.match(result.stdout, /single-file bundle/);
+    assert.match(result.stdout, /goldClientForgeBindings/);
+});
+
 test('rejects a partial translated bundle rather than emitting a broken page', () => {
     const f = fixture();
     fs.unlinkSync(path.join(f.bundle, 'forge-host-runtime.js'));

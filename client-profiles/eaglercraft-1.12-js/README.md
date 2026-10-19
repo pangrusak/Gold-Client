@@ -37,6 +37,21 @@ The build requires PowerShell, Node.js, Maven, and network access for the
 checksum-pinned official runtime bootstrap. It uses Temurin JDK 8 for the
 legacy ForgeGradle setup and Temurin JDK 17 for TeaVM/tests.
 
+## Single-file injection
+
+`gold-client loader ... --single-file --compact` writes
+`gold-client-forge.js` next to the module bundle. The file inlines the runtime,
+translated classes, lifecycle, host runtime, and browser entrypoint, and
+installs `window.goldClientForgeEntrypoint`. When that file is present,
+`inject-gold-client.cjs` injects a classic `<script src="...">`; otherwise it
+keeps requiring the five ES modules and emits a `type="module"` tag.
+
+The single file is self-contained JavaScript, not a self-contained Forge
+runtime. `window.GoldClientForge.start()` still needs
+`window.goldClientForgeBindings` from a real Eaglercraft/Forge adapter, and a
+successful injection does not prove that a translated mod's game APIs are
+bound.
+
 To rebuild and compare against the exported browser corpus:
 
 ```powershell

@@ -14,6 +14,8 @@ const clientPath = path.resolve(clientPathArg);
 const translatedDir = path.resolve(translatedDirArg);
 const outputPath = path.resolve(outputPathArg);
 const entrypointPath = path.join(translatedDir, 'eaglercraft-forge-entry.js');
+const singleFilePath = path.join(translatedDir, 'gold-client-forge.js');
+const useSingleFile = fs.existsSync(singleFilePath);
 const requiredFiles = [
     'eaglercraft-forge-entry.js',
     'forge-lifecycle.js',
@@ -28,9 +30,11 @@ if (!fs.existsSync(clientPath) || !fs.statSync(clientPath).isFile()) {
 if (!fs.existsSync(translatedDir) || !fs.statSync(translatedDir).isDirectory()) {
     throw new Error('Translated JS directory does not exist: ' + translatedDir);
 }
-for (const name of requiredFiles) {
-    if (!fs.existsSync(path.join(translatedDir, name))) {
-        throw new Error('Translated bundle is incomplete; missing ' + name);
+if (!useSingleFile) {
+    for (const name of requiredFiles) {
+        if (!fs.existsSync(path.join(translatedDir, name))) {
+            throw new Error('Translated bundle is incomplete; missing ' + name);
+        }
     }
 }
 
@@ -135,16 +139,21 @@ if (firstBody < 0 || instrumentedSource.indexOf(closeBody, firstBody + closeBody
     throw new Error('Expected exactly one </body> insertion point in client HTML');
 }
 
-let relativeEntry = path.relative(path.dirname(outputPath), entrypointPath)
+let relativeEntry = path.relative(path.dirname(outputPath),
+    useSingleFile ? singleFilePath : entrypointPath)
     .split(path.sep).join('/');
 relativeEntry = relativeEntry.split('/').map(part => part === '..' || part === '.'
     ? part : encodeURIComponent(part)).join('/');
 if (!relativeEntry.startsWith('.') && !relativeEntry.startsWith('/')) {
     relativeEntry = './' + relativeEntry;
 }
-const tag = '    <script type="module" src="' + relativeEntry + '"></script>\n';
+const tag = useSingleFile
+    ? '    <script src="' + relativeEntry + '"></script>\n'
+    : '    <script type="module" src="' + relativeEntry + '"></script>\n';
 const output = instrumentedSource.slice(0, firstBody) + tag + instrumentedSource.slice(firstBody);
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 fs.writeFileSync(outputPath, output, 'utf8');
-process.stdout.write('Injected Gold Client entrypoint: ' + relativeEntry + '\n');
+process.stdout.write((useSingleFile
+    ? 'Injected Gold Client single-file bundle: '
+    : 'Injected Gold Client module entrypoint: ') + relativeEntry + '\n');
 process.stdout.write('Note: translated classes only start after window.goldClientForgeBindings is installed.\n');

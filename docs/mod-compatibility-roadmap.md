@@ -13,6 +13,7 @@ Inputs and generated outputs remain outside tracked repository contents.
 | Minified JavaScript clients | No matching build profile or runtime verification. | Unsupported; retained as a product requirement. |
 | Eaglercraft 26.2 WebAssembly | Existing assessment found WASM exports without Minecraft-facing methods. | Unsupported; retained as a product requirement. |
 | Forge 1.12.2 client | No Forge runtime/loader is present in the supplied Eaglercraft client. | Unsupported. |
+| Eaglercraft 1.12.2 with EaglerForge injected | The loader can emit one classic-script bundle for injection, but this repository contains no verified EaglerForge binding adapter. | Host adapter required; translation or injection alone is not proof that a mod runs. |
 | Fabric Minecraft 1.16.2-1.16.5 client | No exact client build or Fabric loader supplied. | Unsupported. |
 
 ## Multi-mod Forge loader bundle
@@ -22,6 +23,18 @@ JavaScript class registry and emits `forge-lifecycle.js`,
 `eaglercraft-forge-entry.js`, `loader-plan.json`, and the existing translated
 class/resource modules. It discovers `@Mod` entry classes and statically
 declared event subscribers from original annotations.
+
+### Single-file injection output
+
+`loader --single-file [--compact]` additionally writes
+`gold-client-forge.js`, a classic-script bundle that inlines the runtime, every
+translated class module, the lifecycle, the host runtime, and the browser
+entrypoint. It exposes `globalThis.GoldClientForge` with `start(bindings)`,
+`stop(reason)`, `status()`, `mods`, `blockers`, `runtime`, `classes`, and
+`getClass(name)`. The file is self-contained JavaScript, but it still requires
+a real host binding object (`window.goldClientForgeBindings`) before `start()`.
+The profile injector prefers this file when present and emits a classic
+`<script src="...">`; otherwise it keeps using the ES-module entrypoint.
 
 ### Demonstrated
 
@@ -37,6 +50,11 @@ declared event subscribers from original annotations.
   rather than claiming a complete translation.
 - [x] Generated AppleSkin and AppleSkin+JEI modules pass `node --check` and
   import through `forge-lifecycle.js` without executing game APIs.
+- [x] `--single-file --compact` packs the AppleSkin+JEI build (398 modules) into
+  one classic script. It loads without ESM imports, installs the browser
+  entrypoint, and runs the same phase-major synthetic lifecycle, event
+  hierarchy, subscriber, status, and stop assertions as the module bundle. This
+  is a packaging result, not proof that a Forge host can execute either mod.
 - [x] Static `@Mod.EventBusSubscriber` methods are discovered with owner,
   priority, and `receiveCanceled` metadata and registered before preInit.
 - [x] Translated `MinecraftForge.EVENT_BUS.register(...)` calls are intercepted

@@ -10,7 +10,7 @@ Gold Client is an experimental Java-bytecode-to-JavaScript translation pipeline 
 
 The latest previously recorded JEI 1.12.2 benchmark reported 371 classes, 2,195 methods, zero methods marked incomplete in the represented IR, and **348 adapter-required declarations**. These are different measures: zero incomplete methods does not mean zero adapters or complete game compatibility. The adapter work is intended to reduce the latter count by implementing reusable runtime mappings, not by relabeling unresolved APIs as supported.
 
-**Build/CI status:** the loader work in this worktree has been verified with `mvn package`, `mvn --batch-mode test` (246 tests, 0 failures, 0 errors, 3 optional skips), and both standalone Node test files. The older `5e7ef56` failure note is historical; re-run the build before repeating it.
+**Build/CI status:** the loader work in this worktree has been verified with `mvn package`, `mvn --batch-mode verify` (252 tests, 0 failures, 0 errors, 3 optional skips), and both standalone Node test files. The older `5e7ef56` failure note is historical; re-run the build before repeating it.
 
 ## Usage
 
@@ -54,7 +54,8 @@ java -jar target/gold-client-0.1.0-SNAPSHOT.jar loader \
   --input test-mods/appleskin1.12.2.jar \
   --input test-mods/jei1.12.2.jar \
   --output output/forge-loader \
-  --report output/forge-loader/loader-plan.json
+  --report output/forge-loader/loader-plan.json \
+  --single-file --compact
 ```
 
 `--input` may be repeated. Duplicate class definitions across inputs are
@@ -64,6 +65,15 @@ static `@Mod.EventBusSubscriber` registration, and runtime interception for
 `MinecraftForge.EVENT_BUS.register(...)` calls made by translated code. The
 generated `loader-plan.json` records inputs, hashes, counts, load order,
 blockers, and whether the lifecycle plan is ready for a real host.
+
+`--single-file` additionally writes `gold-client-forge.js`, a classic-script
+bundle that inlines every generated module and exposes
+`globalThis.GoldClientForge` (`start`, `stop`, `status`, `mods`, `blockers`,
+`runtime`, `classes`, `getClass`). `--compact` strips full-line comments and
+blank lines from that file. The Eaglercraft profile injector prefers this file
+when present and emits a classic `<script src="...">` instead of the ES-module
+entrypoint. The bundle is self-contained JavaScript, but it still needs
+`window.goldClientForgeBindings` from a real host before `start()`.
 
 A successful loader build is still only a translated bundle. It is not proof
 that the mods run. The command exits with status `2` when lifecycle blockers
