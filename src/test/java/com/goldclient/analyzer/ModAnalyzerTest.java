@@ -42,6 +42,7 @@ class ModAnalyzerTest {
     ModAnalysis analysis = new ModAnalyzer().analyze(jar);
 
     assertEquals("Example Mod", analysis.metadata().getName());
+    assertEquals("example", analysis.metadata().getModId());
     assertEquals("1.2.3", analysis.metadata().getVersion());
     assertEquals(">=1.20", analysis.metadata().getMinecraftVersion());
     assertEquals("Fabric", analysis.metadata().getLoader());
@@ -103,6 +104,7 @@ class ModAnalyzerTest {
     ModAnalysis analysis = new ModAnalyzer().analyze(jar);
 
     assertEquals("Example Forge", analysis.metadata().getName());
+    assertEquals("example", analysis.metadata().getModId());
     assertEquals("1.0.0", analysis.metadata().getVersion());
     assertEquals("[1.20.1,1.21)", analysis.metadata().getMinecraftVersion());
     assertEquals("Forge", analysis.metadata().getLoader());
@@ -114,6 +116,22 @@ class ModAnalyzerTest {
     assertTrue(analysis.platformRequirements().contains(PlatformRequirement.FORGE_MOD_METADATA));
     assertTrue(analysis.platformRequirements().contains(PlatformRequirement.FORGE_EVENT_BUS));
     assertTrue(analysis.platformRequirements().contains(PlatformRequirement.FORGE_PLATFORM_CONTEXT));
+  }
+
+  @Test
+  void readsSingleMcmodInfoModIdButNotMultiEntryMetadata(@TempDir Path temp) throws Exception {
+    Path single = temp.resolve("single.jar");
+    writeJar(single, "mcmod.info",
+        "[{\"modid\":\"example_mod\",\"name\":\"Example\",\"version\":\"1.0\"}]");
+    ModAnalysis singleAnalysis = new ModAnalyzer().analyze(single);
+    assertEquals("example_mod", singleAnalysis.metadata().getModId());
+    assertEquals("Example", singleAnalysis.metadata().getName());
+
+    Path multiple = temp.resolve("multiple.jar");
+    writeJar(multiple, "mcmod.info",
+        "[{\"modid\":\"first\",\"name\":\"First\"},{\"modid\":\"second\",\"name\":\"Second\"}]");
+    ModAnalysis multipleAnalysis = new ModAnalyzer().analyze(multiple);
+    assertEquals("Unknown", multipleAnalysis.metadata().getModId());
   }
 
   private static void writeJar(Path path, String... entries) throws Exception {
