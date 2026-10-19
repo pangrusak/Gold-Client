@@ -198,6 +198,40 @@ class ForgeLoaderTest {
   }
 
   @Test
+  void reportsMixinClassesAsUnappliedTransformations() throws Exception {
+    ClassModel mod = new ClassModel("sample/MixinMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(constructor()),
+        List.of(), List.of(mod("mixinmod", "")));
+    ClassModel mixin = new ClassModel("sample/MixinThing", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of("org.spongepowered.asm.mixin.Mixin"),
+        List.of(), List.of(constructor()), List.of(), List.of());
+    Path output = tempDir.resolve("mixin-plan");
+    ForgeLifecycleExporter.LifecycleReport report = new ForgeLifecycleExporter()
+        .export(List.of(mod, mixin), output);
+    assertEquals("PARTIAL_WITH_BLOCKERS", report.status());
+    assertTrue(report.blockers().stream().anyMatch(blocker ->
+        blocker.contains("Mixin transformation is not implemented")
+            && blocker.contains("sample.MixinThing")), report.blockers().toString());
+  }
+
+  @Test
+  void reportsCoremodTransformersAsUnappliedTransformations() throws Exception {
+    ClassModel mod = new ClassModel("sample/CoreMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(constructor()),
+        List.of(), List.of(mod("coremod", "")));
+    ClassModel transformer = new ClassModel("sample/CoreTransformer", "java/lang/Object",
+        List.of("net/minecraft/launchwrapper/IClassTransformer"), Opcodes.ACC_PUBLIC, null,
+        List.of(), List.of(), List.of(constructor()), List.of(), List.of());
+    Path output = tempDir.resolve("coremod-plan");
+    ForgeLifecycleExporter.LifecycleReport report = new ForgeLifecycleExporter()
+        .export(List.of(mod, transformer), output);
+    assertEquals("PARTIAL_WITH_BLOCKERS", report.status());
+    assertTrue(report.blockers().stream().anyMatch(blocker ->
+        blocker.contains("Coremod/ASM transformation is not implemented")
+            && blocker.contains("sample.CoreTransformer")), report.blockers().toString());
+  }
+
+  @Test
   void generatedLoaderConstructsAllModsThenRunsPhaseMajorLifecycleAndSubscribers()
       throws Exception {
     ClassModel modA = new ClassModel("sample/AMod", "java/lang/Object", List.of(),

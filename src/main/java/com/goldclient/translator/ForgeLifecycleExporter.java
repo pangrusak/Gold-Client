@@ -38,6 +38,7 @@ public final class ForgeLifecycleExporter {
   private static final String INSTANCE = "net.minecraftforge.fml.common.Mod$Instance";
   private static final String METADATA = "net.minecraftforge.fml.common.Mod$Metadata";
   private static final String INSTANCE_FACTORY = "net.minecraftforge.fml.common.Mod$InstanceFactory";
+  private static final String MIXIN_PREFIX = "org.spongepowered.asm.mixin.";
   private static final String SIDED_PROXY = "net.minecraftforge.fml.common.SidedProxy";
   private static final String EVENT_BUS_SUBSCRIBER =
       "net.minecraftforge.fml.common.Mod$EventBusSubscriber";
@@ -145,6 +146,33 @@ public final class ForgeLifecycleExporter {
     }
 
     if (entries.isEmpty()) blockers.add("No Forge 1.12.2 @Mod entry class was found.");
+
+    List<String> mixinClasses = new ArrayList<>();
+    for (ClassModel clazz : classes) {
+      if (usesMixinAnnotations(clazz)) mixinClasses.add(dotted(clazz.name()));
+    }
+    if (!mixinClasses.isEmpty()) {
+      mixinClasses.sort(String::compareTo);
+      String listed = String.join(", ",
+          mixinClasses.subList(0, Math.min(5, mixinClasses.size())))
+          + (mixinClasses.size() > 5 ? ", ..." : "");
+      blockers.add("Mixin transformation is not implemented; " + mixinClasses.size()
+          + " class(es) use org.spongepowered.asm.mixin annotations: " + listed);
+    }
+
+    List<String> transformerClasses = new ArrayList<>();
+    for (ClassModel clazz : classes) {
+      if (implementsClassTransformer(clazz)) transformerClasses.add(dotted(clazz.name()));
+    }
+    if (!transformerClasses.isEmpty()) {
+      transformerClasses.sort(String::compareTo);
+      String listed = String.join(", ",
+          transformerClasses.subList(0, Math.min(5, transformerClasses.size())))
+          + (transformerClasses.size() > 5 ? ", ..." : "");
+      blockers.add("Coremod/ASM transformation is not implemented; "
+          + transformerClasses.size()
+          + " class(es) implement IFMLLoadingPlugin or IClassTransformer: " + listed);
+    }
 
     List<ModEntry> ordered = orderMods(entries, blockers);
     Set<String> knownIds = new LinkedHashSet<>();
@@ -491,6 +519,36 @@ public final class ForgeLifecycleExporter {
       }
     }
     return result;
+  }
+
+  private static boolean usesMixinAnnotations(ClassModel clazz) {
+    if (hasMixinAnnotation(clazz.annotations())) return true;
+    for (FieldModel field : clazz.fields()) {
+      if (hasMixinAnnotation(field.annotations())) return true;
+    }
+    for (MethodModel method : clazz.methods()) {
+      if (hasMixinAnnotation(method.annotations())) return true;
+    }
+    return false;
+  }
+
+  private static boolean hasMixinAnnotation(List<String> annotations) {
+    for (String annotation : annotations) {
+      if (annotation.startsWith(MIXIN_PREFIX)) return true;
+    }
+    return false;
+  }
+
+  private static boolean implementsClassTransformer(ClassModel clazz) {
+    for (String implemented : clazz.interfaces()) {
+      String normalized = implemented.replace('.', '/');
+      if (normalized.equals("net/minecraftforge/fml/relauncher/IFMLLoadingPlugin")
+          || normalized.equals("net/minecraftforge/fml/relauncher/IClassTransformer")
+          || normalized.equals("net/minecraft/launchwrapper/IClassTransformer")) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static List<MethodModel> methodsWithInheritance(ClassModel clazz,

@@ -103,7 +103,9 @@ public final class JavaScriptBundleExporter {
     output.append("    entry: __goldEntry,\n");
     output.append("    runtime: __goldRuntime.GoldClientRuntime,\n");
     output.append("    classes: __goldClasses.classes,\n");
-    output.append("    getClass: __goldClasses.getClass,\n");
+    output.append("    getClass: function (name) {\n");
+    output.append("      return __goldRuntime.GoldClientRuntime.resolveClass(name);\n");
+    output.append("    },\n");
     output.append("    start: __goldEntry.startGoldClientForgeMods,\n");
     output.append("    install: __goldEntry.installGoldClientForgeEntrypoint,\n");
     output.append("    status: __goldLifecycle.forgeLoaderStatus,\n");

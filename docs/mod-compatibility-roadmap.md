@@ -30,8 +30,9 @@ declared event subscribers from original annotations.
 `gold-client-forge.js`, a classic-script bundle that inlines the runtime, every
 translated class module, the lifecycle, the host runtime, and the browser
 entrypoint. It exposes `globalThis.GoldClientForge` with `start(bindings)`,
-`stop(reason)`, `status()`, `mods`, `blockers`, `runtime`, `classes`, and
-`getClass(name)`. The file is self-contained JavaScript, but it still requires
+`stop(reason)`, `status()`, `mods`, `blockers`, `runtime`, `classes` (module
+namespaces), and `getClass(name)` (the translated constructor). The file is
+self-contained JavaScript, but it still requires
 a real host binding object (`window.goldClientForgeBindings`) before `start()`.
 The profile injector prefers this file when present and emits a classic
 `<script src="...">`; otherwise it keeps using the ES-module entrypoint.
@@ -104,6 +105,10 @@ The profile injector prefers this file when present and emits a classic
   Minecraft/Forge services; the loader bundle by itself does not implement
   them.
 - [ ] Mixins, coremods, access transformers, and Forge class transformation.
+  Classes carrying `org.spongepowered.asm.mixin` annotations, or implementing
+  `IFMLLoadingPlugin`/`IClassTransformer`, are detected and make the lifecycle
+  plan `PARTIAL_WITH_BLOCKERS`; the loader never silently translates them as
+  ordinary classes and claims the bundle is ready.
 - [ ] Rendering, input, recipe registration/lookup, networking, resources,
   capabilities, and most Minecraft/Forge API calls.
 - [ ] Precise classification of platform exceptions thrown by host bindings.
