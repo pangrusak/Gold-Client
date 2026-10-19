@@ -86,7 +86,7 @@ public final class ForgeHostRuntimeExporter {
     return """
         // Browser entrypoint for a translated Forge mod bundle.
         // The Eaglercraft-specific binding object must be installed by the real client adapter.
-        import { startForgeModsWithBindings, stopForgeMods, forgeLoaderStatus,
+        import { startForgeMods, stopForgeMods, forgeLoaderStatus,
                  forgeMods, forgeLifecycleBlockers } from "./forge-lifecycle.js";
         import { assertForgeHostBindings, createForgeHost, describeForgeHost }
           from "./forge-host-runtime.js";
@@ -99,12 +99,14 @@ public final class ForgeHostRuntimeExporter {
             throw new Error("Gold Client lifecycle blockers: " + forgeLifecycleBlockers.join("; "));
           }
           const validation = assertForgeHostBindings(bindings);
-          const host = createForgeHost(bindings);
-          const started = await startForgeModsWithBindings(bindings);
-          const previous = globalThis.window?.goldClientForgeHost;
-          if (previous && previous !== host) {
+          const previous = globalThis.window?.goldClientForgeHost ?? globalThis.goldClientForgeHost;
+          if (previous) {
             throw new Error("Gold Client Forge host was already installed");
           }
+          // Use the same host instance for lifecycle dispatch and later stop/status
+          // calls. Creating one host just to install it would disconnect stopMod.
+          const host = createForgeHost(bindings);
+          const started = await startForgeMods(host);
           if (globalThis.window) {
             Object.defineProperty(globalThis.window, "goldClientForgeHost", {
               value: host, configurable: true, writable: false

@@ -8,6 +8,9 @@ import com.goldclient.model.FieldModel;
 import com.goldclient.model.IrMethodModel;
 import com.goldclient.model.IrOperationModel;
 import com.goldclient.model.MethodModel;
+import com.goldclient.planner.LoaderCommand;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -73,7 +76,7 @@ class ForgeLoaderTest {
         .map(ForgeLifecycleExporter.ModEntry::modId).toList());
     assertEquals("a,b", report.loadOrder());
     assertEquals(1, report.injectedFields());
-    assertEquals(2, report.eventSubscribers());
+    assertEquals(2, report.discoveredEventSubscribers());
     assertEquals(1, report.staticSubscribers().size());
     assertEquals(0, report.mods().get(1).instanceSubscribers().size());
     assertEquals(1, report.mods().get(0).instanceSubscribers().size());
@@ -111,6 +114,32 @@ class ForgeLoaderTest {
     String nodeOutput = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
     assertEquals(0, node.exitValue(), nodeOutput);
     assertEquals("appleskin", nodeOutput);
+  }
+
+  @Test
+  void loaderCommandWritesBundleAndHonestPlanForAppleSkin() throws Exception {
+    Path jar = Path.of("test-mods/appleskin1.12.2.jar");
+    org.junit.jupiter.api.Assumptions.assumeTrue(Files.isRegularFile(jar),
+        "AppleSkin fixture is missing");
+    Path output = tempDir.resolve("cli-loader");
+    ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+    ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+    int code;
+    try (PrintStream out = new PrintStream(stdout, true, StandardCharsets.UTF_8);
+         PrintStream err = new PrintStream(stderr, true, StandardCharsets.UTF_8)) {
+      code = LoaderCommand.run(new String[] {
+          "--input", jar.toString(), "--output", output.toString()
+      }, out, err);
+    }
+    String log = stdout.toString(StandardCharsets.UTF_8)
+        + stderr.toString(StandardCharsets.UTF_8);
+    assertEquals(0, code, log);
+    assertTrue(log.contains("Translation complete: yes"), log);
+    assertTrue(log.contains("Lifecycle status: READY_FOR_REAL_FORGE_HOST"), log);
+    assertTrue(Files.isRegularFile(output.resolve("loader-plan.json")));
+    assertTrue(Files.isRegularFile(output.resolve("forge-lifecycle.js")));
+    assertTrue(Files.readString(output.resolve("loader-plan.json"))
+        .contains("\"translationComplete\": true"));
   }
 
   @Test
@@ -224,6 +253,24 @@ class ForgeLoaderTest {
         }
         const stopped = await stopForgeMods(host);
         if (stopped.join(",") !== "b,a") throw new Error("stop order mismatch: " + stopped);
+        const entrypointModule = await import("./eaglercraft-forge-entry.js");
+        const target = {};
+        entrypointModule.installGoldClientForgeEntrypoint(target);
+        target.goldClientForgeBindings = bindings;
+        const entryStarted = await target.goldClientStartForgeMods();
+        if (entryStarted.started.length !== 2) {
+          throw new Error("entrypoint did not start both mods");
+        }
+        if (target.goldClientForgeEntrypoint.getStatus().started !== true) {
+          throw new Error("entrypoint status was not started");
+        }
+        const entryStopped = await target.goldClientForgeEntrypoint.stop();
+        if (entryStopped.join(",") !== "b,a") {
+          throw new Error("entrypoint stop did not target the started host: " + entryStopped);
+        }
+        if (target.goldClientForgeEntrypoint.getStatus().started) {
+          throw new Error("entrypoint status remained started after stop");
+        }
         console.log("forge-loader-ok");
         """, StandardCharsets.UTF_8);
 
@@ -256,6 +303,25 @@ class ForgeLoaderTest {
     assertTrue(report.mods().get(0).handlers().get("serverStarting").size() == 1);
     assertTrue(javascript.contains("forgeServerLifecyclePhases"));
     assertFalse(javascript.contains("serverStarting,\\n") && javascript.contains("forgeLifecyclePhases = Object.freeze([{\"name\":\"serverStarting\""));
+  }
+
+  @Test
+  void acceptsSidedProxyImplementationsThatImplementTheFieldInterface() throws Exception {
+    ClassModel proxyInterface = new ClassModel("sample/IClientProxy", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, null, List.of(),
+        List.of(), List.of(), List.of(), List.of());
+    ClassModel proxy = new ClassModel("sample/ClientProxy", "java/lang/Object",
+        List.of("sample/IClientProxy"), Opcodes.ACC_PUBLIC, null, List.of(),
+        List.of(), List.of(constructor()), List.of(), List.of());
+    ClassModel mod = new ClassModel("sample/ProxyMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD),
+        List.of(sidedProxy("proxy", "Lsample/IClientProxy;", "sample.ClientProxy")),
+        List.of(constructor()), List.of(), List.of(mod("proxymod", "")));
+    Path output = tempDir.resolve("interface-proxy");
+    ForgeLifecycleExporter.LifecycleReport report = new ForgeLifecycleExporter()
+        .export(List.of(proxyInterface, proxy, mod), output);
+    assertEquals("READY_FOR_REAL_FORGE_HOST", report.status(), report.blockers().toString());
+    assertEquals(1, report.injectedFields());
   }
 
   private static MethodModel constructor() {

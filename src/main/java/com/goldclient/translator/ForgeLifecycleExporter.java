@@ -28,7 +28,9 @@ import org.objectweb.asm.Opcodes;
  * <p>The emitted dispatcher is phase-major, like FML: every discovered mod is
  * constructed before preInit, every preInit handler runs before any init handler,
  * etc. Static event-bus subscribers are registered before the first lifecycle
- * handler, and instance subscribers are registered after construction.</p>
+ * handler. Instance subscribers are not registered automatically; translated
+ * mods become live when their code calls {@code MinecraftForge.EVENT_BUS.register}
+ * and the runtime routes that call to the host bus.</p>
  */
 public final class ForgeLifecycleExporter {
   private static final String MOD = "net.minecraftforge.fml.common.Mod";
@@ -82,7 +84,7 @@ public final class ForgeLifecycleExporter {
     }
   }
   public record LifecycleReport(String formatVersion, String status, int discoveredModClasses,
-      int lifecycleHandlers, int injectedFields, int eventSubscribers, String loadOrder,
+      int lifecycleHandlers, int injectedFields, int discoveredEventSubscribers, String loadOrder,
       List<String> blockers, List<ModEntry> mods, List<Subscriber> staticSubscribers,
       List<String> hostRequirements) {
     public LifecycleReport {
@@ -482,13 +484,18 @@ public final class ForgeLifecycleExporter {
   }
 
   private static boolean isAssignable(String from, String to, Map<String, ClassModel> classes) {
-    String cursor = internalName(from);
     String target = internalName(to);
+    List<String> pending = new ArrayList<>();
+    pending.add(internalName(from));
     Set<String> visited = new HashSet<>();
-    while (cursor != null && visited.add(cursor)) {
+    while (!pending.isEmpty()) {
+      String cursor = pending.remove(pending.size() - 1);
+      if (cursor == null || !visited.add(cursor)) continue;
       if (cursor.equals(target)) return true;
       ClassModel model = classes.get(cursor);
-      cursor = model == null ? null : internalName(model.superName());
+      if (model == null) continue;
+      if (model.superName() != null) pending.add(internalName(model.superName()));
+      for (String implemented : model.interfaces()) pending.add(internalName(implemented));
     }
     return false;
   }

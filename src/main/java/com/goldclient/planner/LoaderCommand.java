@@ -122,7 +122,8 @@ public final class LoaderCommand {
       report.put("loadOrder", lifecycle.get("loadOrder").getAsString());
       report.put("lifecycleStatus", lifecycle.get("status").getAsString());
       report.put("blockers", blockerList);
-      report.put("ready", blockerList.isEmpty());
+      report.put("translationComplete", export.incompleteCount() == 0);
+      report.put("ready", blockerList.isEmpty() && export.incompleteCount() == 0);
       Files.createDirectories(reportFile.getParent());
       Files.writeString(reportFile,
           new GsonBuilder().setPrettyPrinting().create().toJson(report) + System.lineSeparator(),
@@ -134,6 +135,7 @@ public final class LoaderCommand {
       out.println("Methods inspected: " + export.methodCount());
       out.println("Adapter-required declarations: " + export.adapterRequiredCount());
       out.println("Incomplete methods: " + export.incompleteCount());
+      out.println("Translation complete: " + (export.incompleteCount() == 0 ? "yes" : "no"));
       out.println("Mods: " + (modIds.isEmpty() ? "(none)" : String.join(", ", modIds)));
       out.println("Load order: " + lifecycle.get("loadOrder").getAsString());
       out.println("Lifecycle status: " + lifecycle.get("status").getAsString());
@@ -145,7 +147,7 @@ public final class LoaderCommand {
       out.println("Entrypoint: " + destination.resolve("eaglercraft-forge-entry.js"));
       out.println("Report: " + reportFile);
       out.println("Note: a loader bundle is not proof that every Forge/Minecraft API is bound.");
-      return blockerList.isEmpty() ? 0 : 2;
+      return blockerList.isEmpty() && export.incompleteCount() == 0 ? 0 : 2;
     } catch (Exception exception) {
       err.println("Loader build failed: " + exception.getMessage());
       return 2;
@@ -158,6 +160,7 @@ public final class LoaderCommand {
         --output <directory> [--report <file>]
           Builds one shared JavaScript Forge loader bundle from several mod JARs.
           --input may be repeated. Duplicate class definitions are rejected.
+          Exits 2 when lifecycle blockers or incomplete methods remain.
         """);
   }
 

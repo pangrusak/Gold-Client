@@ -15,6 +15,56 @@ Inputs and generated outputs remain outside tracked repository contents.
 | Forge 1.12.2 client | No Forge runtime/loader is present in the supplied Eaglercraft client. | Unsupported. |
 | Fabric Minecraft 1.16.2-1.16.5 client | No exact client build or Fabric loader supplied. | Unsupported. |
 
+## Multi-mod Forge loader bundle
+
+The `loader` subcommand translates several Forge 1.12.2 JARs into one shared
+JavaScript class registry and emits `forge-lifecycle.js`,
+`eaglercraft-forge-entry.js`, `loader-plan.json`, and the existing translated
+class/resource modules. It discovers `@Mod` entry classes and statically
+declared event subscribers from original annotations.
+
+### Demonstrated
+
+- [x] `loader` accepts repeated `--input` arguments, rejects duplicate class
+  definitions across inputs, and writes one merged bundle plus a report.
+- [x] AppleSkin translates to 22 classes and one `appleskin` mod entry with a
+  ready lifecycle plan.
+- [x] AppleSkin plus JEI translates to 393 classes and two mod entries
+  (`jei`, `appleskin`) with dependency ordering and a ready lifecycle plan.
+  Six JEI methods are marked incomplete because their JVM catch-clause shapes
+  were merged as an explicit approximation; the command reports them and exits
+  with status `2` rather than claiming a complete translation.
+- [x] Generated AppleSkin and AppleSkin+JEI modules pass `node --check` and
+  import through `forge-lifecycle.js` without executing game APIs.
+- [x] Static `@Mod.EventBusSubscriber` methods are discovered with owner,
+  priority, and `receiveCanceled` metadata and registered before preInit.
+- [x] Translated `MinecraftForge.EVENT_BUS.register(...)` calls are intercepted
+  by the runtime and routed to the host event bus. Instance `@SubscribeEvent`
+  methods are not registered automatically by the loader.
+- [x] The lifecycle dispatcher is phase-major: all mods are constructed before
+  preInit, and every preInit handler runs before any init handler.
+- [x] `@SidedProxy` client implementations, `@Mod.Instance`,
+  `@Mod.Metadata`, and `@Mod.InstanceFactory` are discovered and validated.
+- [x] Missing required mod dependencies, duplicate IDs, missing proxies,
+  unsupported handler signatures, server-only entries, and absent superclasses
+  become explicit blockers rather than guessed behavior.
+
+### Not demonstrated / unsupported
+
+- [ ] A real client host. `window.goldClientForgeBindings` must provide
+  Minecraft/Forge services; the loader bundle by itself does not implement
+  them.
+- [ ] Mixins, coremods, access transformers, and Forge class transformation.
+- [ ] Rendering, input, recipe registration/lookup, networking, resources,
+  capabilities, and most Minecraft/Forge API calls.
+- [ ] Server-only mods in this client-side host. They are blocked explicitly.
+- [ ] Runtime event-bus registrations made outside the loader's per-mod
+  context (for example from an untracked asynchronous callback) are assigned a
+  manual owner and are not guaranteed to be removed by `stopForgeMods`.
+- [ ] Any claim that `READY_FOR_REAL_FORGE_HOST` means the mods run. It means
+  the discovered lifecycle plan has no structural blockers and is ready to be
+  exercised against a real host.
+
 ## JEI 1.12.2 coverage checklist
 
 Exact input: `test-mods/jei1.12.2.jar`, JEI 4.16.1.301,
@@ -85,6 +135,9 @@ init, and load-complete lifecycle calls to JEI startup proxies.
 - [ ] JEI lifecycle, Forge event bus, full registries/mod discovery,
   capabilities, access-transformer application, original UI, rendering,
   input, bookmark/config persistence, resources, and remaining JEI classes.
+  The multi-mod loader now discovers JEI lifecycle methods, its client proxy,
+  and a static event subscriber, but no real host bindings have been exercised
+  for them; this checklist item remains unchecked.
 - [ ] Compatibility with arbitrary Forge mods or any client backend other than
   the exact readable Eaglercraft 1.12.2 JS profile.
 

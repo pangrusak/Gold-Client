@@ -10,7 +10,7 @@ Gold Client is an experimental Java-bytecode-to-JavaScript translation pipeline 
 
 The latest previously recorded JEI 1.12.2 benchmark reported 371 classes, 2,195 methods, zero methods marked incomplete in the represented IR, and **348 adapter-required declarations**. These are different measures: zero incomplete methods does not mean zero adapters or complete game compatibility. The adapter work is intended to reduce the latter count by implementing reusable runtime mappings, not by relabeling unresolved APIs as supported.
 
-**Build/CI status:** the latest checked `main` commit (`5e7ef56`) has failing CI. The Maven compiler reports `constant string too long` in `JavaScriptModTranslationExporter.java`; consequently, the current JEI benchmark result has not been revalidated against that commit. Do not treat the older benchmark numbers as verification of the latest source until the build issue is fixed and CI reruns successfully.
+**Build/CI status:** the loader work in this worktree has been verified with `mvn package`, `mvn --batch-mode test` (246 tests, 0 failures, 0 errors, 3 optional skips), and both standalone Node test files. The older `5e7ef56` failure note is historical; re-run the build before repeating it.
 
 ## Usage
 
@@ -46,6 +46,31 @@ does not mean that an arbitrary Minecraft mod runs in Eaglercraft: Minecraft,
 Forge/Fabric, rendering, event-bus, and other platform APIs still need real
 runtime implementations or adapters. Gold Client does not provide no-op
 loader or graphics stubs.
+
+Build one shared JavaScript loader bundle from several Forge 1.12.2 mod JARs:
+
+```bash
+java -jar target/gold-client-0.1.0-SNAPSHOT.jar loader \
+  --input test-mods/appleskin1.12.2.jar \
+  --input test-mods/jei1.12.2.jar \
+  --output output/forge-loader \
+  --report output/forge-loader/loader-plan.json
+```
+
+`--input` may be repeated. Duplicate class definitions across inputs are
+rejected. The bundle contains one class registry, merged resources, a
+phase-major FML lifecycle dispatcher, dependency-ordered mod construction,
+static `@Mod.EventBusSubscriber` registration, and runtime interception for
+`MinecraftForge.EVENT_BUS.register(...)` calls made by translated code. The
+generated `loader-plan.json` records inputs, hashes, counts, load order,
+blockers, and whether the lifecycle plan is ready for a real host.
+
+A successful loader build is still only a translated bundle. It is not proof
+that the mods run. The command exits with status `2` when lifecycle blockers
+or incomplete methods remain, but still writes the bundle and plan for
+diagnostics. A real host must supply `window.goldClientForgeBindings`;
+Mixin/coremods, access transformers, and most Minecraft/Forge APIs remain
+unsupported or unbound.
 
 `test-mods/xaeros.jar` is a legacy Xaero's Minimap 26.6.0 Forge mod targeting
 Minecraft 1.12.2. Its metadata declares no additional mod dependencies; the

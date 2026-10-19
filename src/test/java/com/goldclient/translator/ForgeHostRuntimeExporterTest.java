@@ -20,7 +20,8 @@ class ForgeHostRuntimeExporterTest {
     String entrypoint = Files.readString(entrypointPath);
     assertTrue(entrypoint.contains("window.goldClientForgeBindings"));
     assertTrue(entrypoint.contains("goldClientStartForgeMods"));
-    assertTrue(entrypoint.contains("startForgeModsWithBindings"));
+    assertTrue(entrypoint.contains("startForgeMods(host)"),
+        "browser entrypoint must start the host instance it installs");
     assertTrue(entrypoint.contains("assertForgeHostBindings"));
     assertTrue(entrypoint.contains("Install a real Eaglercraft/Forge adapter first"));
     assertTrue(entrypoint.contains("forgeLifecycleBlockers"));
