@@ -777,6 +777,10 @@ public final class ForgeLifecycleExporter {
             const mod = forgeMods[i];
             if (await host.stopMod(mod.modId, reason)) stopped.push(mod.modId);
           }
+          // Manual MinecraftForge.EVENT_BUS.register(...) calls made outside a
+          // per-mod context are owner-less; drop them so a full stop leaves no
+          // live bus listeners behind.
+          GoldClientRuntime.clearForgeEventBusRegistrations();
           goldClientForgeStarted = false;
           goldClientForgeServerStarted = false;
           goldClientForgeInstances = new Map();

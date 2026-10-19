@@ -44,6 +44,9 @@ declared event subscribers from original annotations.
   `register(SomeClass.class)` call registers that class's static
   `@SubscribeEvent` methods, and translated class literals are cached so
   `unregister`/identity checks use one object per class.
+- [x] `stopForgeMods` drops every runtime-mirrored event-bus registration,
+  including `manual:<class>` owners created outside a per-mod context, so a
+  full stop does not leave those listeners behind.
 - [x] The lifecycle dispatcher is phase-major: all mods are constructed before
   preInit, and every preInit handler runs before any init handler.
 - [x] `@SidedProxy` client implementations, `@Mod.Instance`,
@@ -65,9 +68,6 @@ declared event subscribers from original annotations.
 - [ ] Rendering, input, recipe registration/lookup, networking, resources,
   capabilities, and most Minecraft/Forge API calls.
 - [ ] Server-only mods in this client-side host. They are blocked explicitly.
-- [ ] Runtime event-bus registrations made outside the loader's per-mod
-  context (for example from an untracked asynchronous callback) are assigned a
-  manual owner and are not guaranteed to be removed by `stopForgeMods`.
 - [ ] Any claim that `READY_FOR_REAL_FORGE_HOST` means the mods run. It means
   the discovered lifecycle plan has no structural blockers and is ready to be
   exercised against a real host.

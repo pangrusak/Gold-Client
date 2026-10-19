@@ -1446,6 +1446,7 @@ function goldForgeEventTypes(eventType) {
 
 class GoldClientForgeEventBus {
   #registrations = new WeakMap();
+  #subscriptions = new Set();
 
   register(target) {
     if (target === null || target === undefined) {
@@ -1493,18 +1494,35 @@ class GoldClientForgeEventBus {
         ? GoldClientRuntime.resolveClass(constructor.__goldSuperName) : null;
     }
     this.#registrations.set(target, Object.freeze(registrations));
+    for (const registration of registrations) this.#subscriptions.add(registration);
   }
 
   unregister(target) {
     const registrations = this.#registrations.get(target);
     if (!registrations) return false;
-    for (const registration of registrations) registration.unsubscribe?.();
+    for (const registration of registrations) {
+      registration.unsubscribe?.();
+      this.#subscriptions.delete(registration);
+    }
     this.#registrations.delete(target);
     return true;
   }
 
   isRegistered(target) {
     return this.#registrations.has(target);
+  }
+
+  // Drops every registration, including manual:<class> owners created outside a
+  // per-mod context, so a full loader stop does not leave live bus listeners.
+  clear() {
+    let cleared = 0;
+    for (const registration of this.#subscriptions) {
+      registration.unsubscribe?.();
+      cleared++;
+    }
+    this.#subscriptions.clear();
+    this.#registrations = new WeakMap();
+    return cleared;
   }
 
   post(event) {
@@ -1931,6 +1949,9 @@ export const GoldClientRuntime = Object.freeze({
   },
   forgeEventTypes(eventType) {
     return Object.freeze(goldForgeEventTypes(eventType));
+  },
+  clearForgeEventBusRegistrations() {
+    return GoldClientForgeEventBusInstance.clear();
   },
   invokePlatformStatic(owner, method, ...args) {
     const adapter = GoldClientMinecraftAdapters.get(owner);
