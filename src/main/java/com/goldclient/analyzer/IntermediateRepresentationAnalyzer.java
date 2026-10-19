@@ -878,6 +878,15 @@ public final class IntermediateRepresentationAnalyzer {
       }
       case "DUP" -> {
         String value = pop(stack);
+        // An array literal is filled through DUP: every ARRAY_WRITE would
+        // otherwise allocate a fresh array because the expression text is
+        // repeated. Bind it to a local once so all writes and the final
+        // consumer share one instance.
+        if (isArrayAllocation(value)) {
+          String temp = "__goldArray" + sourceInstruction;
+          operations.add(op("LOCAL_WRITE", List.of(temp, value), sourceInstruction));
+          value = temp;
+        }
         pushInOrder(stack, value, value);
         operations.add(op("DUP", List.of(value), sourceInstruction));
       }
@@ -957,6 +966,13 @@ public final class IntermediateRepresentationAnalyzer {
   // intended top value at the head of the symbolic operand stack.
   private static void pushInOrder(Deque<String> stack, String... bottomToTop) {
     for (String value : bottomToTop) stack.push(value);
+  }
+
+  private static boolean isArrayAllocation(String value) {
+    if (value == null) return false;
+    String trimmed = value.trim();
+    return (trimmed.startsWith("new ") && trimmed.endsWith("]"))
+        || trimmed.startsWith("GoldClientRuntime.newMultiArray(");
   }
 
   private static boolean isCategory2(String value) {

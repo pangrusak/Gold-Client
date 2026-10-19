@@ -172,6 +172,13 @@ public final class JavaTranslator {
 
       if ("CONDITIONAL_BRANCH".equals(operation.kind())
           && operation.operands().size() >= 2) {
+        String forwardSkip = context.skipExitLabel(labelKey(operation.operands().get(1)));
+        if (forwardSkip != null) {
+          source.append(indent(indent)).append("if (")
+              .append(normalizeCondition(operation.operands().get(0)))
+              .append(") break ").append(jsLabel(forwardSkip)).append(";\n");
+          continue;
+        }
         if (context.isBreakTarget(labelKey(operation.operands().get(1)))) {
           // An early exit of an enclosing break-loop or switch. The taken edge
           // leaves that scope, so the branch becomes a break guard.
@@ -308,6 +315,13 @@ public final class JavaTranslator {
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
         String target = operation.operands().get(0);
         Integer targetIndex = labels.get(labelKey(target));
+
+        String forwardSkip = context.skipExitLabel(labelKey(target));
+        if (forwardSkip != null) {
+          source.append(indent(indent)).append("break ")
+              .append(jsLabel(forwardSkip)).append(";\n");
+          continue;
+        }
 
         if (context.isActiveLoop(labelKey(target))) {
           source.append(indent(indent)).append("continue");
@@ -2862,8 +2876,9 @@ public final class JavaTranslator {
       if (backEdgeIndex <= branchIndex) continue;
 
       IrOperationModel backEdge = operations.get(backEdgeIndex);
-      if ("JUMP".equals(backEdge.kind()) && !backEdge.operands().isEmpty()
-          && labelKey(loopLabel).equals(labelKey(backEdge.operands().get(0)))) {
+      boolean backEdgeMatches = "JUMP".equals(backEdge.kind()) && !backEdge.operands().isEmpty()
+          && labelKey(loopLabel).equals(labelKey(backEdge.operands().get(0)));
+      if (backEdgeMatches) {
         // The exit block must be the loop's continuation, not another nested
         // region that happens to flow back to the header.
         boolean reentersLoop = false;
@@ -2882,6 +2897,19 @@ public final class JavaTranslator {
           }
         }
         if (reentersLoop) continue;
+        // A conditional before the accepted exit test can be the real loop
+        // condition: its target then lies past the whole continuation block,
+        // which the accepted test only breaks out of. Prefer that condition so
+        // the loop leaves through a labeled block instead of falling into the
+        // continuation.
+        for (int i = loopHeaderIndex + 1; i < branchIndex; i++) {
+          IrOperationModel earlier = operations.get(i);
+          if (!"CONDITIONAL_BRANCH".equals(earlier.kind()) || earlier.operands().size() < 2) continue;
+          Integer earlierTarget = labels.get(labelKey(earlier.operands().get(1)));
+          if (earlierTarget != null && earlierTarget > exitIndex) {
+            return new LoopShape(i, backEdgeIndex, earlierTarget);
+          }
+        }
         return new LoopShape(branchIndex, backEdgeIndex, exitIndex);
       }
     }
@@ -3281,12 +3309,37 @@ public final class JavaTranslator {
           .append(indent(indent)).append("}\n");
       return new ConditionalRender(source.toString(), body.complete(), extendedBodyEnd);
     }
+    // The header exit leaves past the loop's continuation block, which only a
+    // labeled block can express. That block is only this renderer's business
+    // when the exit still lies inside the range it was asked to render: at the
+    // range end the caller emits the continuation itself.
+    boolean farExit = loop.exitIndex() > loop.backEdgeIndex() + 1 && loop.exitIndex() < end;
+    String skipLabel = farExit ? "_loopExit" + loopHeaderIndex : null;
+    String continuationLabel = null;
+    if (farExit) {
+      int continuationStart = loop.backEdgeIndex() + 1;
+      while (continuationStart < loop.exitIndex()) {
+        IrOperationModel candidate = operations.get(continuationStart);
+        if ("LABEL".equals(candidate.kind())) break;
+        if (!isLoopExitMetadata(candidate)) break;
+        continuationStart++;
+      }
+      if (continuationStart < loop.exitIndex()
+          && "LABEL".equals(operations.get(continuationStart).kind())
+          && !operations.get(continuationStart).operands().isEmpty()) {
+        continuationLabel = labelKey(operations.get(continuationStart).operands().get(0));
+      }
+    }
     boolean labeled = needsLoopLabel(
         operations, loopHeaderIndex + 1, loop.backEdgeIndex(), loopLabel)
         || needsExitBreakLabel(
             operations, loopHeaderIndex + 1, loop.backEdgeIndex(), exitLabel);
     context.enterLoop(loopLabel, labeled);
-    if (exitLabel != null) context.enterLoopExit(exitLabel);
+    if (exitLabel != null) {
+      if (farExit) context.enterSkipExit(exitLabel, skipLabel);
+      else context.enterLoopExit(exitLabel);
+    }
+    if (continuationLabel != null) context.enterLoopExit(continuationLabel);
     RenderResult conditionPrelude;
     RenderResult body;
     try {
@@ -3298,26 +3351,41 @@ public final class JavaTranslator {
       body = renderRange(
           operations, loop.branchIndex() + 1, loop.backEdgeIndex(), indent + 1, context, labels);
     } finally {
-      if (exitLabel != null) context.exitLoopExit();
+      if (continuationLabel != null) context.exitLoopExit();
+      if (exitLabel != null) {
+        if (farExit) context.exitSkipExit();
+        else context.exitLoopExit();
+      }
       context.exitLoop();
     }
 
     StringBuilder source = new StringBuilder();
+    if (farExit) source.append(indent(indent)).append(jsLabel(skipLabel)).append(": {\n");
     source.append(indent(indent));
     if (labeled) source.append(jsLabel(loopLabel)).append(": ");
     source.append("while (true) {\n")
         .append(conditionPrelude.source())
         .append(indent(indent + 1)).append("if (")
-        .append(normalizeCondition(condition)).append(") break;\n")
+        .append(normalizeCondition(condition)).append(") ")
+        .append(farExit ? "break " + jsLabel(skipLabel) + ";" : "break;").append("\n")
         .append(body.source())
         .append(indent(indent)).append("}\n");
+    boolean complete = conditionPrelude.complete() && body.complete();
+    if (farExit) {
+      // The header exit leaves past the loop's continuation block, which only
+      // a labeled block can express. Render that block inside the label so a
+      // plain break still lands on the loop's normal continuation.
+      RenderResult continuation = renderRange(
+          operations, loop.backEdgeIndex() + 1, loop.exitIndex(), indent + 1, context, labels);
+      source.append(continuation.source());
+      complete &= continuation.complete();
+      source.append(indent(indent)).append("}\n");
+    }
     // Resume at the exit label instead of skipping it: the label can be the
     // header of a following loop, and its block still needs to be structured.
     int lastIndex = loop.exitIndex() < end ? loop.exitIndex() - 1 : end - 1;
     return new ConditionalRender(
-        source.toString(),
-        conditionPrelude.complete() && body.complete(),
-        lastIndex);
+        source.toString(), complete, lastIndex);
   }
 
   private static int findBackwardConditional(
@@ -3711,7 +3779,7 @@ public final class JavaTranslator {
     if (isQuoted(trimmed) || isJavaLiteral(trimmed))
       return trimmed;
 
-    if (trimmed.startsWith("new ") && !trimmed.endsWith(")"))
+    if (trimmed.startsWith("new ") && !trimmed.endsWith(")") && !trimmed.endsWith("]"))
       return trimmed + "()";
 
     if (trimmed.startsWith("new ") && trimmed.endsWith(")")) {

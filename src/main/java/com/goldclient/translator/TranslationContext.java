@@ -13,6 +13,7 @@ public final class TranslationContext {
   private final java.util.Map<String, String> loopExitOwners = new java.util.HashMap<>();
   private final Deque<BreakScope> breakScopes = new ArrayDeque<>();
   private final Deque<Set<String>> suppressedTryHandlers = new ArrayDeque<>();
+  private final Deque<java.util.Map<String, String>> skipExitLabels = new ArrayDeque<>();
 
   private enum BreakKind { LOOP, LOOP_EXIT, SWITCH_JOIN }
 
@@ -80,6 +81,26 @@ public final class TranslationContext {
   }
 
   public void exitSwitchJoin() { breakScopes.pop(); }
+
+  /**
+   * Registers a forward label that is outside the loop's own continuation and
+   * therefore needs an explicit block label: a {@code break} to it must skip
+   * the statement itself and everything rendered between the loop and the
+   * target, which only a labeled block can express.
+   */
+  public void enterSkipExit(String label, String jsLabel) {
+    skipExitLabels.push(java.util.Map.of(label, jsLabel));
+  }
+
+  public void exitSkipExit() { skipExitLabels.pop(); }
+
+  public String skipExitLabel(String label) {
+    for (java.util.Map<String, String> scope : skipExitLabels) {
+      String value = scope.get(label);
+      if (value != null) return value;
+    }
+    return null;
+  }
 
   /**
    * True when the label is the exit of a breakable scope (a loop rendered with
