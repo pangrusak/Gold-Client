@@ -6,5 +6,4 @@ target/
 output/*
 !output/.gitkeep
 .gold-client-jre
-unminified-clients/
 translated-js/
