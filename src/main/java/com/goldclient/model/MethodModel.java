@@ -15,7 +15,8 @@ public record MethodModel(
     int maxStack,
     int maxLocals,
     ControlFlowModel controlFlow,
-    IrMethodModel intermediateRepresentation
+    IrMethodModel intermediateRepresentation,
+    List<AnnotationData> annotationData
 ) {
   public MethodModel {
     exceptions = List.copyOf(exceptions);
@@ -23,9 +24,30 @@ public record MethodModel(
     referencedClasses = List.copyOf(referencedClasses);
     instructions = List.copyOf(instructions);
     tryCatchBlocks = List.copyOf(tryCatchBlocks);
+    annotationData = List.copyOf(annotationData);
     intermediateRepresentation = intermediateRepresentation == null
         ? new IrMethodModel(name, descriptor, List.of())
         : intermediateRepresentation;
+  }
+
+  public MethodModel(
+      String name,
+      String descriptor,
+      String signature,
+      int access,
+      List<String> exceptions,
+      List<String> annotations,
+      List<String> referencedClasses,
+      List<InstructionModel> instructions,
+      List<TryCatchModel> tryCatchBlocks,
+      int maxStack,
+      int maxLocals,
+      ControlFlowModel controlFlow,
+      IrMethodModel intermediateRepresentation
+  ) {
+    this(name, descriptor, signature, access, exceptions, annotations, referencedClasses,
+        instructions, tryCatchBlocks, maxStack, maxLocals, controlFlow, intermediateRepresentation,
+        List.of());
   }
 
   public MethodModel(
@@ -47,7 +69,8 @@ public record MethodModel(
         exceptions, annotations, referencedClasses,
         instructions, tryCatchBlocks, maxStack, maxLocals,
         controlFlow,
-        new IrMethodModel(name, descriptor, List.of())
+        new IrMethodModel(name, descriptor, List.of()),
+        List.of()
     );
   }
 
@@ -69,7 +92,8 @@ public record MethodModel(
         exceptions, annotations, referencedClasses,
         instructions, tryCatchBlocks, maxStack, maxLocals,
         new ControlFlowModel(0, List.of()),
-        new IrMethodModel(name, descriptor, List.of())
+        new IrMethodModel(name, descriptor, List.of()),
+        List.of()
     );
   }
 }

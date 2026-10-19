@@ -20,6 +20,7 @@ public final class JavaScriptTranslator {
       "(?m)^\\s*[\\w.$<>\\[\\]]+\\s+([\\w$<>]+)\\(([^)]*)\\) \\{");
   private static final Pattern CATCH = Pattern.compile(
       "catch\\s*\\(\\s*([\\w.$]+)\\s+([\\w$]+)\\s*\\)\\s*\\{");
+  private static final Pattern CATCH_START = Pattern.compile("\\bcatch\\s*\\(");
   private static final Pattern LOCAL_TYPE = Pattern.compile(
       "\\b(?:Object|String|Boolean|Byte|Character|Short|Integer|Long|Float|Double|"
           + "boolean|byte|char|short|int|long|float|double)\\s+(local\\d+)\\s*=");
@@ -74,7 +75,10 @@ public final class JavaScriptTranslator {
         || body.contains("Unsupported JVM IR");
     body = lowerJavaSyntax(body);
     body = makeUnsupportedOperationsExplicit(body);
-    hasUnsupportedMarkers |= body.contains("GoldClientRuntime.unsupported(\"invalid-call-receiver\"");
+    boolean approximatedCatch = body.contains(
+        "Gold Client approximation: merged multiple catch clauses");
+    hasUnsupportedMarkers |= body.contains("GoldClientRuntime.unsupported(\"invalid-call-receiver\"")
+        || approximatedCatch;
     boolean complete = structured.complete() && !hasUnsupportedMarkers;
 
     StringBuilder output = new StringBuilder();
@@ -84,6 +88,9 @@ public final class JavaScriptTranslator {
         .append("// Host APIs such as Minecraft/Forge must be supplied by an adapter.\n");
     if (approximatedUnknownValue) {
       output.append("// Approximation: unresolved JVM stack/exception values were emitted as undefined.\n");
+    }
+    if (approximatedCatch) {
+      output.append("// Approximation: multiple JVM catch clauses were merged; first matching type wins.\n");
     }
     output.append("export function ").append(exportName).append("(")
         .append(parameters).append(") {\n")
@@ -165,10 +172,147 @@ public final class JavaScriptTranslator {
     return audited.toString();
   }
 
+
+  private static final class CatchClause {
+    final String type;
+    final String variable;
+    final String body;
+    final int bodyEnd;
+    CatchClause(String type, String variable, String body, int bodyEnd) {
+      this.type = type;
+      this.variable = variable;
+      this.body = body;
+      this.bodyEnd = bodyEnd;
+    }
+  }
+
+  /**
+   * JavaScript has one catch clause per try. The JVM exception table can expose
+   * several adjacent handlers, including synthetic try-with-resources plumbing.
+   * Merge them into one catch with runtime type dispatch so the module stays
+   * parseable; callers must treat the method as approximate when this happens.
+   */
+  private static String mergeAdjacentCatchClauses(String source) {
+    StringBuilder out = new StringBuilder(source.length());
+    int copied = 0;
+    int search = 0;
+    while (true) {
+      Matcher matcher = CATCH_START.matcher(source);
+      if (!matcher.find(search)) {
+        out.append(source, copied, source.length());
+        return out.toString();
+      }
+      int catchStart = matcher.start();
+      CatchClause first = parseCatchClause(source, catchStart);
+      if (first == null) {
+        search = matcher.end();
+        continue;
+      }
+      java.util.List<CatchClause> clauses = new ArrayList<>();
+      clauses.add(first);
+      int end = first.bodyEnd;
+      search = end;
+      while (true) {
+        int next = end;
+        while (next < source.length() && Character.isWhitespace(source.charAt(next))) next++;
+        Matcher nextMatcher = CATCH_START.matcher(source);
+        if (next >= source.length() || !nextMatcher.find(next) || nextMatcher.start() != next) break;
+        CatchClause clause = parseCatchClause(source, nextMatcher.start());
+        if (clause == null) break;
+        clauses.add(clause);
+        end = clause.bodyEnd;
+        search = end;
+      }
+      if (clauses.size() < 2) {
+        search = Math.max(search, end);
+        continue;
+      }
+      out.append(source, copied, catchStart);
+      String caught = "__goldCaught" + catchStart;
+      out.append("catch (").append(caught).append(") {\n")
+          .append("  // Gold Client approximation: merged multiple catch clauses; first matching type wins.\n");
+      for (int i = 0; i < clauses.size(); i++) {
+        CatchClause clause = clauses.get(i);
+        out.append("  ").append(i == 0 ? "if" : "else if").append(" (");
+        String[] types = clause.type.split("\\s*\\|\\s*");
+        for (int t = 0; t < types.length; t++) {
+          if (t > 0) out.append(" || ");
+          out.append("GoldClientRuntime.instanceOf(").append(caught).append(", ")
+              .append(quote(types[t])).append(")");
+        }
+        out.append(") {\n")
+            .append("    let ").append(clause.variable).append(" = ").append(caught).append(";\n")
+            .append(clause.body.stripTrailing()).append("\n")
+            .append("  } ");
+      }
+      out.append("else { throw ").append(caught).append("; }\n}\n");
+      copied = end;
+      search = end;
+    }
+  }
+
+  private static CatchClause parseCatchClause(String source, int catchStart) {
+    int openParen = source.indexOf('(', catchStart);
+    if (openParen < 0) return null;
+    int closeParen = matchingParenthesis(source, openParen);
+    if (closeParen < 0) return null;
+    int bodyOpen = source.indexOf('{', closeParen);
+    if (bodyOpen < 0) return null;
+    int bodyClose = matchingBrace(source, bodyOpen);
+    if (bodyClose < 0) return null;
+    String parameter = source.substring(openParen + 1, closeParen).trim();
+    int split = parameter.lastIndexOf(' ');
+    String type;
+    String variable;
+    if (split <= 0) {
+      // Synthetic JVM multi-catch handlers are rendered as an untyped JS catch
+      // variable; the handler body carries its own runtime type guard.
+      type = "java.lang.Throwable";
+      variable = parameter;
+    } else {
+      type = parameter.substring(0, split).trim().replace(" | ", "|");
+      variable = parameter.substring(split + 1).trim();
+    }
+    if (type.isEmpty() || variable.isEmpty()) return null;
+    return new CatchClause(type, variable, source.substring(bodyOpen + 1, bodyClose), bodyClose + 1);
+  }
+
+  private static int matchingBrace(String source, int open) {
+    int depth = 0;
+    char quote = 0;
+    boolean escaped = false;
+    boolean lineComment = false;
+    boolean blockComment = false;
+    for (int i = open; i < source.length(); i++) {
+      char c = source.charAt(i);
+      char next = i + 1 < source.length() ? source.charAt(i + 1) : '\0';
+      if (lineComment) {
+        if (c == '\n') lineComment = false;
+        continue;
+      }
+      if (blockComment) {
+        if (c == '*' && next == '/') { blockComment = false; i++; }
+        continue;
+      }
+      if (quote != 0) {
+        if (escaped) escaped = false;
+        else if (c == '\\') escaped = true;
+        else if (c == quote) quote = 0;
+        continue;
+      }
+      if (c == '/' && next == '/') { lineComment = true; i++; continue; }
+      if (c == '/' && next == '*') { blockComment = true; i++; continue; }
+      if (c == '"' || c == '\'') { quote = c; continue; }
+      if (c == '{') depth++;
+      else if (c == '}' && --depth == 0) return i;
+    }
+    return -1;
+  }
+
   /** Repairs reconstructed static-field writes before lexical rewriting splits quoted arguments. */
   private static String rewriteStaticGetterAssignments(String source) {
     Pattern assignment = Pattern.compile(
-        "(?s)\\bnew\\s+GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*=\\s*(.*?);");
+        "(?s)\\b(?:new\\s+)?GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*(?<![=!<>+\\-*/%&|^])=(?!=)\\s*(.*?);");
     Matcher matcher = assignment.matcher(source);
     StringBuffer rewritten = new StringBuffer();
     while (matcher.find()) {
@@ -231,7 +375,7 @@ public final class JavaScriptTranslator {
       }
     }
 
-    String result = tokens.toString();
+    String result = mergeAdjacentCatchClauses(tokens.toString());
     Matcher catchMatcher = CATCH.matcher(result);
     StringBuffer catchBuffer = new StringBuffer();
     while (catchMatcher.find()) {
@@ -285,7 +429,7 @@ public final class JavaScriptTranslator {
    */
   private static String lowerMalformedJvmExpressions(String source) {
     java.util.regex.Matcher array = java.util.regex.Pattern.compile(
-        "\\bnew\\s+\\[([ZBCSIJFD]|L[^;\\s]+;)\\[([^\\[\\]]+)\\]\\(\\)")
+        "\\bnew\\s+\\[([ZBCSIJFD]|L[^;\\s]+;)\\[([^\\[\\]]+)\\](?:\\(\\))?")
         .matcher(source);
     StringBuffer arrays = new StringBuffer();
     while (array.find()) {
@@ -499,6 +643,15 @@ public final class JavaScriptTranslator {
     return -1;
   }
 
+  private static boolean looksLikeConstantFieldOwner(String owner, String source, int start) {
+    int dot = owner.lastIndexOf('.');
+    String last = owner.substring(dot + 1);
+    if (last.indexOf('_') < 0 || !last.matches("[A-Z][A-Z0-9_]*")) return false;
+    // The regex can start at the constant segment itself (EVENT_BUS.register),
+    // leaving the owning class as a prefix. Both forms are static-field reads.
+    return dot >= 0 || (start > 0 && source.charAt(start - 1) == '.');
+  }
+
   private static String rewriteCode(StringBuilder input) {
     String result = input.toString()
         // Analyzer lattice markers are not JavaScript expressions. Keep the
@@ -542,7 +695,13 @@ public final class JavaScriptTranslator {
     StringBuffer staticCalls = new StringBuffer();
     while (staticCall.find()) {
       String owner = staticCall.group(1);
-      if (owner.startsWith("java.") || owner.startsWith("javax.")) {
+      // A dotted owner ending in an all-caps constant segment is a static field
+      // receiver (for example MinecraftForge.EVENT_BUS.register), not a class.
+      // Leaving it for the field pass produces getStaticField(...).register(...).
+      if (looksLikeConstantFieldOwner(owner, result, staticCall.start())) {
+        staticCall.appendReplacement(staticCalls,
+            java.util.regex.Matcher.quoteReplacement(staticCall.group()));
+      } else if (owner.startsWith("java.") || owner.startsWith("javax.")) {
         String replacement = "GoldClientRuntime.invokeJavaStatic(" + quote(owner.replace('/', '.'))
             + ", " + quote(staticCall.group(2)) + ", ";
         staticCall.appendReplacement(staticCalls, java.util.regex.Matcher.quoteReplacement(replacement));
@@ -581,7 +740,7 @@ public final class JavaScriptTranslator {
     // getter call. A getter call is never an assignment target, so recover the owner
     // and field arguments and lower it to the runtime setter before generic rewriting.
     java.util.regex.Matcher getterWrite = java.util.regex.Pattern.compile(
-        "(?s)\\bnew\\s+GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*=\\s*(.*?);")
+        "(?s)\\b(?:new\\s+)?GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*(?<![=!<>+\\-*/%&|^])=(?!=)\\s*(.*?);")
         .matcher(result);
     StringBuffer getterWrites = new StringBuffer();
     while (getterWrite.find()) {
@@ -595,7 +754,7 @@ public final class JavaScriptTranslator {
     // Static field writes must target the generated class constructor rather than
     // an unresolved Java package global. Rewrite writes before reads.
     java.util.regex.Matcher staticWrite = java.util.regex.Pattern.compile(
-        "(?<![A-Za-z0-9_$])(?:new\\s+)?((?:[a-z_$][\\w$]*\\.)*[A-Z][A-Za-z0-9_$]*)\\.([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*([^;\\n]+);")
+        "(?<![A-Za-z0-9_$])(?:new\\s+)?((?:[a-z_$][\\w$]*\\.)*[A-Z][A-Za-z0-9_$]*)\\.([A-Za-z_$][A-Za-z0-9_$]*)\\s*(?<![=!<>+\\-*/%&|^])=(?!=)\\s*([^;\\n]+);")
         .matcher(result);
     StringBuffer staticWrites = new StringBuffer();
     while (staticWrite.find()) {

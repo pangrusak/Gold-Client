@@ -204,6 +204,19 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void treatsUppercaseStaticFieldReceiversAsFieldsNotClasses() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(local0);
+        }
+        """);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.getStaticField(\"net.minecraftforge.common.MinecraftForge\", \"EVENT_BUS\").register(local0)"),
+        lowered);
+    assertFalse(lowered.contains("invokeStaticClass(\"EVENT_BUS\""), lowered);
+  }
+
+  @Test
   void routesTranslatedStaticFieldReadsAndWritesThroughRuntime() {
     String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
         void sample() {
@@ -259,6 +272,47 @@ class JavaScriptTranslatorTest {
         "GoldClientRuntime.setStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\", value);"),
         lowered);
     assertFalse(lowered.contains("getStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\") ="),
+        lowered);
+  }
+
+  @Test
+  void lowersRawJvmArrayAllocationsWithoutConstructorParentheses() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          Object values = new [I[local0];
+        }
+        """);
+    assertTrue(lowered.contains("GoldClientRuntime.newArray(\"int\", local0)"), lowered);
+    assertFalse(lowered.contains("new [I"), lowered);
+  }
+
+  @Test
+  void doesNotTurnStaticFieldComparisonsIntoAssignments() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          if (squeek.appleskin.AppleSkin.hasAppleCore == 0) {
+            return;
+          }
+          if (net.minecraft.client.Minecraft.field_142025_a != 0) {
+            return;
+          }
+        }
+        """);
+    assertFalse(lowered.contains("setStaticField("), lowered);
+    assertTrue(lowered.contains("getStaticField(\"squeek.appleskin.AppleSkin\", \"hasAppleCore\") == 0"),
+        lowered);
+    assertTrue(lowered.contains("getStaticField(\"net.minecraft.client.Minecraft\", \"field_142025_a\") != 0"),
+        lowered);
+  }
+
+  @Test
+  void lowersDirectGetterCallUsedAsStaticFieldAssignmentTarget() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax(
+        "void sample() { squeek.appleskin.ModConfig.config = value; }");
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.setStaticField(\"squeek.appleskin.ModConfig\", \"config\", value);"),
+        lowered);
+    assertFalse(lowered.contains("getStaticField(\"squeek.appleskin.ModConfig\", \"config\") ="),
         lowered);
   }
 

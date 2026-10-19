@@ -10,6 +10,11 @@ import java.util.*;
 public final class ForgeDependencyGraph {
     private static final java.util.regex.Pattern CLAUSE = java.util.regex.Pattern.compile(
             "^(required-after|required-before|after|before):([A-Za-z0-9_.-]+)(?:@(.+))?$");
+    /**
+     * Supplied by the Forge-compatible host, not by a mod JAR in the graph.
+     * Forge 1.12 mods commonly declare these as required dependencies.
+     */
+    private static final Set<String> LOADER_PROVIDED = Set.of("forge", "minecraft", "fml");
 
     private ForgeDependencyGraph() {}
 
@@ -71,8 +76,8 @@ public final class ForgeDependencyGraph {
             }
             for (Dependency dependency : dependencies) {
                 String target = dependency.modId();
-                // Forge itself is supplied by the loader, not by a mod JAR in this graph.
-                if (target.equals("forge")) continue;
+                // Forge, FML, and Minecraft are supplied by the Forge-compatible host.
+                if (LOADER_PROVIDED.contains(target)) continue;
                 boolean present = byId.containsKey(target);
                 if (dependency.required() && !present) {
                     blockers.add("Required dependency missing: " + mod.id() + " -> " + target);

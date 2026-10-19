@@ -39,8 +39,8 @@ public final class ForgeHostRuntimeExporter {
     return new HostContract("gold-forge-host-v1", "forge-host-runtime.js", "forge-lifecycle.js",
         true, List.of(
             new ServiceContract("events", List.of("bindings.events.createLifecycleEvent"),
-                List.of("subscribe", "unsubscribe", "post", "clearOwner"),
-                "Ordered event bus with cancellation and owner-scoped cleanup."),
+                List.of("subscribe", "unsubscribe", "post", "clearOwner", "registerSubscriber"),
+                "Ordered event bus with cancellation, priority, owner-scoped cleanup and lifecycle subscriber registration."),
             new ServiceContract("minecraft", List.of("bindings.minecraft"),
                 List.of("call", "construct", "get", "set"),
                 "Real Minecraft client operations such as world, player, screen and item access."),
@@ -86,9 +86,9 @@ public final class ForgeHostRuntimeExporter {
     return """
         // Browser entrypoint for a translated Forge mod bundle.
         // The Eaglercraft-specific binding object must be installed by the real client adapter.
-        import { startForgeModsWithBindings, forgeMods, forgeLifecycleBlockers }
-          from "./forge-lifecycle.js";
-        import { assertForgeHostBindings, describeForgeHost }
+        import { startForgeModsWithBindings, stopForgeMods, forgeLoaderStatus,
+                 forgeMods, forgeLifecycleBlockers } from "./forge-lifecycle.js";
+        import { assertForgeHostBindings, createForgeHost, describeForgeHost }
           from "./forge-host-runtime.js";
 
         export async function startGoldClientForgeMods(bindings = globalThis.window?.goldClientForgeBindings) {
@@ -99,7 +99,18 @@ public final class ForgeHostRuntimeExporter {
             throw new Error("Gold Client lifecycle blockers: " + forgeLifecycleBlockers.join("; "));
           }
           const validation = assertForgeHostBindings(bindings);
+          const host = createForgeHost(bindings);
           const started = await startForgeModsWithBindings(bindings);
+          const previous = globalThis.window?.goldClientForgeHost;
+          if (previous && previous !== host) {
+            throw new Error("Gold Client Forge host was already installed");
+          }
+          if (globalThis.window) {
+            Object.defineProperty(globalThis.window, "goldClientForgeHost", {
+              value: host, configurable: true, writable: false
+            });
+          }
+          globalThis.goldClientForgeHost = host;
           return Object.freeze({
             started: Object.freeze(started),
             modCount: forgeMods.length,
@@ -115,16 +126,19 @@ public final class ForgeHostRuntimeExporter {
           const start = bindings => startGoldClientForgeMods(
             bindings ?? target.goldClientForgeBindings
           );
+          const stop = (reason = "browser entrypoint stop") => stopForgeMods(
+            target.goldClientForgeHost ?? globalThis.goldClientForgeHost ?? null, reason
+          );
           Object.defineProperty(target, "goldClientStartForgeMods", {
             value: start, configurable: true, writable: false
           });
           Object.defineProperty(target, "goldClientForgeEntrypoint", {
             value: Object.freeze({
-              formatVersion: "gold-eaglercraft-entry-v1",
+              formatVersion: "gold-eaglercraft-entry-v2",
               start,
-              getStatus: () => ({
-                modCount: forgeMods.length,
-                blockers: forgeLifecycleBlockers.slice(),
+              stop,
+              getStatus: () => Object.freeze({
+                ...forgeLoaderStatus(),
                 bindingsInstalled: !!target.goldClientForgeBindings
               })
             }),
@@ -311,7 +325,12 @@ public final class ForgeHostRuntimeExporter {
           init: ["postInit", "failed"],
           postInit: ["loadComplete", "failed"],
           loadComplete: ["started", "failed"],
-          started: ["stopping", "failed"],
+          started: ["serverAboutToStart", "stopping", "failed"],
+          serverAboutToStart: ["serverStarting", "failed"],
+          serverStarting: ["serverStarted", "failed"],
+          serverStarted: ["serverStopping", "stopping", "failed"],
+          serverStopping: ["serverStopped", "failed"],
+          serverStopped: ["stopping", "failed"],
           stopping: ["stopped", "failed"],
           stopped: [],
           failed: ["stopping", "stopped"]
@@ -539,16 +558,26 @@ public final class ForgeHostRuntimeExporter {
               return contextFor(mod);
             },
 
-            injectFields(mod, instance, runtime) {
+            injectFields(mod, instance, runtime, instances = new Map()) {
               const context = contextFor(mod);
               for (const field of mod.injections ?? []) {
                 let value;
                 if (field.kind === "instance") {
-                  const target = runtime.resolveClass(mod.className);
-                  if (!target) throw new Error("Mod class disappeared during @Mod.Instance injection");
-                  value = instance;
+                  const targetId = field.targetModId || mod.modId;
+                  value = instances.get(targetId);
+                  if (value === undefined) {
+                    throw new Error("@Mod.Instance target is not constructed: " + targetId
+                      + " for " + mod.modId + "." + field.name);
+                  }
                 } else if (field.kind === "metadata") {
                   value = context.metadata;
+                } else if (field.kind === "proxy") {
+                  const ProxyClass = runtime.resolveClass(field.implementation);
+                  if (!ProxyClass) {
+                    throw new Error("@SidedProxy implementation is not registered: "
+                      + field.implementation);
+                  }
+                  value = new ProxyClass();
                 } else {
                   throw new Error("Unknown Forge injected field kind: " + field.kind);
                 }
@@ -572,7 +601,9 @@ public final class ForgeHostRuntimeExporter {
               const state = stateFor(mod);
               const expected = {
                 preInit: "constructed", init: "preInit", postInit: "init",
-                loadComplete: "postInit"
+                loadComplete: "postInit", serverAboutToStart: "started",
+                serverStarting: "serverAboutToStart", serverStarted: "serverStarting",
+                serverStopping: "serverStarted", serverStopped: "serverStopping"
               }[phase.name];
               if (state.state !== expected) {
                 throw new ForgeLifecycleStateError(mod.modId, state.state, phase.name);
@@ -594,7 +625,9 @@ public final class ForgeHostRuntimeExporter {
               const state = stateFor(mod);
               const expected = {
                 preInit: "constructed", init: "preInit", postInit: "init",
-                loadComplete: "postInit"
+                loadComplete: "postInit", serverAboutToStart: "started",
+                serverStarting: "serverAboutToStart", serverStarted: "serverStarting",
+                serverStopping: "serverStarted", serverStopped: "serverStopping"
               }[phase.name];
               if (state.state !== expected) {
                 throw new ForgeLifecycleStateError(mod.modId, state.state, phase.name);
@@ -619,6 +652,29 @@ public final class ForgeHostRuntimeExporter {
 
             postEvent(eventType, event, options) {
               return eventBus.post(eventType, event, options);
+            },
+
+            registerSubscriber(mod, subscriber, callback) {
+              if (!subscriber || typeof subscriber.eventType !== "string"
+                  || typeof subscriber.method !== "string") {
+                throw new TypeError("Forge subscriber metadata is incomplete");
+              }
+              if (typeof callback !== "function") {
+                throw new TypeError("Forge subscriber callback must be a function");
+              }
+              const sides = subscriber.sides ?? [];
+              if (sides.length && !sides.includes(bindings.side.current())) {
+                return Object.freeze({ skipped: true, reason: "logical side", eventType: subscriber.eventType });
+              }
+              const owner = subscriber.owner || mod?.modId;
+              if (!validOwner(owner)) {
+                throw new Error("Forge subscriber is missing an owning mod ID");
+              }
+              return eventBus.subscribe(subscriber.eventType, callback, {
+                owner,
+                priority: subscriber.priority ?? "NORMAL",
+                receiveCanceled: subscriber.receiveCanceled === true
+              });
             },
 
             subscribe(eventType, callback, options) {
@@ -658,6 +714,14 @@ public final class ForgeHostRuntimeExporter {
               });
             }
           };
+          // Runtime registration intercepted by GoldClientRuntime (for example
+          // MinecraftForge.EVENT_BUS.register) must target this real host bus.
+          globalThis.goldClientForgeEventBus = eventBus;
+          if (globalThis.window) {
+            Object.defineProperty(globalThis.window, "goldClientForgeEventBus", {
+              value: eventBus, configurable: true, writable: false
+            });
+          }
           return Object.freeze(host);
         }
 
@@ -735,10 +799,21 @@ public final class ForgeHostRuntimeExporter {
 
         export function describeForgeHost() {
           return Object.freeze({
-            formatVersion: "gold-forge-host-v1",
+            formatVersion: "gold-forge-host-v2",
             strict: true,
             services: REQUIRED.slice(),
             lifecyclePhases: ["preInit", "init", "postInit", "loadComplete"],
+            serverLifecyclePhases: ["serverAboutToStart", "serverStarting", "serverStarted",
+              "serverStopping", "serverStopped"],
+            loader: Object.freeze({
+              phaseMajor: true,
+              dependencyOrdered: true,
+              staticSubscribers: true,
+              instanceSubscribers: "runtime-register-intercepted",
+              manualEventBusRegistration: true,
+              sidedProxies: true,
+              crossModInstanceInjection: true
+            }),
             guarantee: "Adapter framework only; game behavior is provided by explicit bindings."
           });
         }

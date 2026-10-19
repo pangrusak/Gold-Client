@@ -341,6 +341,7 @@ public final class ModAnalyzer {
       public FieldVisitor visitField(int fieldAccess, String name, String descriptor,
                                      String fieldSignature, Object value) {
         List<String> fieldAnnotations = new ArrayList<>();
+        List<AnnotationData> fieldAnnotationData = new ArrayList<>();
         addReference(descriptor, referencedClasses);
         addReference(fieldSignature, referencedClasses);
         collect(descriptor, minecraftApis, referencedClasses);
@@ -353,13 +354,14 @@ public final class ModAnalyzer {
             if (annotation != null) fieldAnnotations.add(annotation);
             addReference(descriptor, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
-            return null;
+            return new AnnotationValueReader(descriptor, visible, fieldAnnotationData::add);
           }
 
           @Override
           public void visitEnd() {
             fields.add(new FieldModel(
-                name, descriptor, fieldSignature, fieldAccess, fieldAnnotations, value
+                name, descriptor, fieldSignature, fieldAccess, fieldAnnotations, value,
+                fieldAnnotationData
             ));
           }
         };
@@ -370,6 +372,7 @@ public final class ModAnalyzer {
                                        String methodSignature, String[] exceptions) {
         List<String> methodExceptions = new ArrayList<>();
         List<String> methodAnnotations = new ArrayList<>();
+        List<AnnotationData> methodAnnotationData = new ArrayList<>();
         Set<String> methodReferences = new LinkedHashSet<>();
         List<InstructionModel> instructions = new ArrayList<>();
         List<TryCatchModel> tryCatchBlocks = new ArrayList<>();
@@ -404,7 +407,7 @@ public final class ModAnalyzer {
             addReference(descriptor, referencedClasses);
             collect(descriptor, minecraftApis, referencedClasses);
 
-            return null;
+            return new AnnotationValueReader(descriptor, visible, methodAnnotationData::add);
           }
 
           @Override public void visitInsn(int opcode) {
@@ -538,21 +541,22 @@ public final class ModAnalyzer {
                 name, descriptor, methodSignature, methodAccess,
                 methodExceptions, methodAnnotations, List.copyOf(methodReferences),
                 instructions, tryCatchBlocks, maxStack[0], maxLocals[0],
-                new ControlFlowModel(0, List.of()));
+                new ControlFlowModel(0, List.of()), null, methodAnnotationData);
             ControlFlowModel controlFlow = new ControlFlowAnalyzer().analyze(rawMethod);
             MethodModel analyzedMethod = new MethodModel(
                 rawMethod.name(), rawMethod.descriptor(), rawMethod.signature(),
                 rawMethod.access(), rawMethod.exceptions(), rawMethod.annotations(),
                 rawMethod.referencedClasses(), rawMethod.instructions(),
                 rawMethod.tryCatchBlocks(), rawMethod.maxStack(), rawMethod.maxLocals(),
-                controlFlow);
+                controlFlow, null, methodAnnotationData);
             methods.add(new MethodModel(
                 analyzedMethod.name(), analyzedMethod.descriptor(), analyzedMethod.signature(),
                 analyzedMethod.access(), analyzedMethod.exceptions(), analyzedMethod.annotations(),
                 analyzedMethod.referencedClasses(), analyzedMethod.instructions(),
                 analyzedMethod.tryCatchBlocks(), analyzedMethod.maxStack(), analyzedMethod.maxLocals(),
                 controlFlow,
-                new IntermediateRepresentationAnalyzer().analyze(analyzedMethod)));
+                new IntermediateRepresentationAnalyzer().analyze(analyzedMethod),
+                methodAnnotationData));
           }
         };
       }

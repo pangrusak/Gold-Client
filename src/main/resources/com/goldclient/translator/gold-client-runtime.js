@@ -1413,6 +1413,83 @@ registerMinecraftAdapter("net.minecraft.util.NonNullList", {
   }
 });
 
+// Forge 1.12 mods commonly register event handlers at runtime with
+// MinecraftForge.EVENT_BUS.register(this). The translated class registry keeps
+// @SubscribeEvent metadata, so this adapter can route those calls to the real
+// host event bus instead of returning a silent no-op.
+const GOLD_SUBSCRIBE_EVENT = "net.minecraftforge.fml.common.eventhandler.SubscribeEvent";
+
+function goldForgeEventType(descriptor) {
+  const match = /^\(L([^;]+);\)V$/.exec(descriptor ?? "");
+  return match ? match[1].replace(/\//g, ".") : null;
+}
+
+class GoldClientForgeEventBus {
+  #registrations = new WeakMap();
+
+  register(target) {
+    if (target === null || target === undefined) {
+      throw new TypeError("MinecraftForge.EVENT_BUS.register received null");
+    }
+    if (this.#registrations.has(target)) return;
+    const bus = globalThis.goldClientForgeEventBus;
+    if (!bus || typeof bus.subscribe !== "function") {
+      return GoldClientRuntime.unsupported(
+        "missing-forge-event-bus", "MinecraftForge.EVENT_BUS.register");
+    }
+    const owner = globalThis.goldClientCurrentForgeModId
+      ?? ("manual:" + (target.constructor?.__goldClassName ?? "anonymous"));
+    const registrations = [];
+    const visited = new Set();
+    let constructor = target.constructor;
+    while (constructor && !visited.has(constructor)) {
+      visited.add(constructor);
+      for (const [name, candidates] of constructor.__goldMethods ?? []) {
+        for (const method of candidates) {
+          if (method.isStatic || !(method.annotations ?? []).includes(GOLD_SUBSCRIBE_EVENT)) {
+            continue;
+          }
+          const eventType = goldForgeEventType(method.descriptor);
+          if (!eventType) continue;
+          registrations.push(bus.subscribe(eventType, event => target[name](event), {
+            owner,
+            priority: method.subscribePriority ?? "NORMAL",
+            receiveCanceled: method.receiveCanceled === true
+          }));
+        }
+      }
+      constructor = constructor.__goldSuperName
+        ? GoldClientRuntime.resolveClass(constructor.__goldSuperName) : null;
+    }
+    this.#registrations.set(target, Object.freeze(registrations));
+  }
+
+  unregister(target) {
+    const registrations = this.#registrations.get(target);
+    if (!registrations) return false;
+    for (const registration of registrations) registration.unsubscribe?.();
+    this.#registrations.delete(target);
+    return true;
+  }
+
+  isRegistered(target) {
+    return this.#registrations.has(target);
+  }
+
+  post(event) {
+    const bus = globalThis.goldClientForgeEventBus;
+    const eventType = event?.constructor?.__goldClassName;
+    if (!bus || typeof bus.post !== "function" || !eventType) {
+      return GoldClientRuntime.unsupported(
+        "missing-forge-event-bus", "MinecraftForge.EVENT_BUS.post");
+    }
+    const result = bus.post(eventType, event);
+    return result?.event?.isCanceled?.() === true || result?.event?.isCanceled === true;
+  }
+}
+
+const GoldClientForgeEventBusInstance = new GoldClientForgeEventBus();
+
 export const GoldClientRuntime = Object.freeze({
   intDiv(a, b) {
     if (b === 0) throw new Error("ArithmeticException: / by zero");
@@ -1766,6 +1843,9 @@ export const GoldClientRuntime = Object.freeze({
         FRANCE: new GoldClientJavaLocale("fr", "FR"), GERMANY: new GoldClientJavaLocale("de", "DE"),
         JAPAN: new GoldClientJavaLocale("ja", "JP"), CHINA: new GoldClientJavaLocale("zh", "CN") };
       if (Object.prototype.hasOwnProperty.call(locales, fieldName)) return locales[fieldName];
+    }
+    if (className === "net.minecraftforge.common.MinecraftForge" && fieldName === "EVENT_BUS") {
+      return GoldClientForgeEventBusInstance;
     }
     const constructor = this.classes.get(className);
     if (!constructor) {

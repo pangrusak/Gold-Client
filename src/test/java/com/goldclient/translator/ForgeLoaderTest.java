@@ -1,0 +1,309 @@
+package com.goldclient.translator;
+
+import com.goldclient.analyzer.ModAnalyzer;
+import com.goldclient.model.AnnotationData;
+import com.goldclient.model.ClassModel;
+import com.goldclient.model.ControlFlowModel;
+import com.goldclient.model.FieldModel;
+import com.goldclient.model.IrMethodModel;
+import com.goldclient.model.IrOperationModel;
+import com.goldclient.model.MethodModel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.Opcodes;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class ForgeLoaderTest {
+  @TempDir
+  Path tempDir;
+
+  private static final String MOD = "net.minecraftforge.fml.common.Mod";
+  private static final String EVENT_HANDLER = "net.minecraftforge.fml.common.Mod$EventHandler";
+  private static final String SUBSCRIBE_EVENT =
+      "net.minecraftforge.fml.common.eventhandler.SubscribeEvent";
+  private static final String EVENT_BUS_SUBSCRIBER =
+      "net.minecraftforge.fml.common.Mod$EventBusSubscriber";
+  private static final String SIDED_PROXY = "net.minecraftforge.fml.common.SidedProxy";
+
+  @Test
+  void ordersMultipleModsAndRegistersStaticAndInstanceSubscribers() throws Exception {
+    ClassModel proxy = new ClassModel("sample/ClientProxy", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(), List.of(), List.of(), List.of(), List.of());
+    ClassModel modA = new ClassModel("sample/AMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(
+            constructor(),
+            annotatedMethod("onTick",
+                "(Lnet/minecraftforge/event/TickEvent$ClientTickEvent;)V",
+                SUBSCRIBE_EVENT, Map.of(
+                    "priority", new AnnotationData.EnumValue(
+                        "net.minecraftforge.fml.common.eventhandler.EventPriority", "HIGH"),
+                    "receiveCanceled", true))),
+        List.of(), List.of(mod("a", "")));
+    ClassModel modB = new ClassModel("sample/BMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD),
+        List.of(sidedProxy("proxy", "Lsample/ClientProxy;", "sample.ClientProxy")),
+        List.of(constructor(), handler("init",
+            "(Lnet/minecraftforge/fml/common/event/FMLInitializationEvent;)V")),
+        List.of(), List.of(mod("b", "required-after:a")));
+    ClassModel subscriber = new ClassModel("sample/Subscribers", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(EVENT_BUS_SUBSCRIBER), List.of(), List.of(
+            staticAnnotatedMethod("onTick",
+                "(Lnet/minecraftforge/event/TickEvent$ClientTickEvent;)V", SUBSCRIBE_EVENT,
+                Map.of())),
+        List.of(), List.of(new AnnotationData(EVENT_BUS_SUBSCRIBER, true, Map.of(
+            "modid", "b",
+            "value", List.of(new AnnotationData.EnumValue(
+                "net.minecraftforge.fml.relauncher.Side", "CLIENT"))))));
+
+    Path output = tempDir.resolve("loader-plan");
+    ForgeLifecycleExporter.LifecycleReport report = new ForgeLifecycleExporter()
+        .export(List.of(subscriber, modB, proxy, modA), output);
+
+    assertEquals("READY_FOR_REAL_FORGE_HOST", report.status(), report.blockers().toString());
+    assertEquals(List.of("a", "b"), report.mods().stream()
+        .map(ForgeLifecycleExporter.ModEntry::modId).toList());
+    assertEquals("a,b", report.loadOrder());
+    assertEquals(1, report.injectedFields());
+    assertEquals(2, report.eventSubscribers());
+    assertEquals(1, report.staticSubscribers().size());
+    assertEquals(0, report.mods().get(1).instanceSubscribers().size());
+    assertEquals(1, report.mods().get(0).instanceSubscribers().size());
+
+    String javascript = Files.readString(output.resolve("forge-lifecycle.js"));
+    assertTrue(javascript.contains("startForgeServerLifecycle"));
+    assertTrue(javascript.contains("stopForgeMods"));
+    assertTrue(javascript.contains("host.registerSubscriber"));
+    assertTrue(javascript.contains("MinecraftForge.EVENT_BUS.register"));
+    assertTrue(javascript.contains("forgeServerLifecyclePhases"));
+    assertTrue(javascript.contains("\"priority\":\"HIGH\""), javascript);
+    assertTrue(javascript.contains("\"receiveCanceled\":true"), javascript);
+  }
+
+  @Test
+  void generatedAppleSkinBundleIsSyntacticallyLoadableByNode() throws Exception {
+    Path jar = Path.of("test-mods/appleskin1.12.2.jar");
+    org.junit.jupiter.api.Assumptions.assumeTrue(Files.isRegularFile(jar),
+        "AppleSkin fixture is missing");
+    Path output = tempDir.resolve("appleskin-bundle");
+    var analysis = new ModAnalyzer().analyze(jar);
+    new JavaScriptModTranslationExporter().export(List.of(jar), analysis.classes(), output);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", "--input-type=module", "-e",
+          "const m = await import('./forge-lifecycle.js');"
+              + "if (m.forgeLifecycleBlockers.length) throw new Error(m.forgeLifecycleBlockers);"
+              + "console.log(m.forgeMods.map(mod => mod.modId).join(','));")
+          .directory(output.toFile()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(20, TimeUnit.SECONDS), "AppleSkin bundle import timed out");
+    String nodeOutput = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), nodeOutput);
+    assertEquals("appleskin", nodeOutput);
+  }
+
+  @Test
+  void reportsMissingRequiredDependenciesInsteadOfInventingLoadOrder() throws Exception {
+    ClassModel mod = new ClassModel("sample/Broken", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(constructor()),
+        List.of(), List.of(mod("broken", "required-after:missing")));
+    Path output = tempDir.resolve("blocked-loader");
+    ForgeLifecycleExporter.LifecycleReport report = new ForgeLifecycleExporter()
+        .export(List.of(mod), output);
+    assertEquals("PARTIAL_WITH_BLOCKERS", report.status());
+    assertTrue(report.blockers().stream().anyMatch(blocker ->
+        blocker.contains("Required dependency missing: broken -> missing")), report.blockers().toString());
+  }
+
+  @Test
+  void generatedLoaderConstructsAllModsThenRunsPhaseMajorLifecycleAndSubscribers()
+      throws Exception {
+    ClassModel modA = new ClassModel("sample/AMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(
+            constructor(),
+            handler("preInit",
+                "(Lnet/minecraftforge/fml/common/event/FMLPreInitializationEvent;)V"),
+            annotatedMethod("onTick",
+                "(Lnet/minecraftforge/event/TickEvent$ClientTickEvent;)V", SUBSCRIBE_EVENT,
+                Map.of())),
+        List.of(), List.of(mod("a", "")));
+    ClassModel modB = new ClassModel("sample/BMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(
+            constructor(),
+            handler("init",
+                "(Lnet/minecraftforge/fml/common/event/FMLInitializationEvent;)V")),
+        List.of(), List.of(mod("b", "required-after:a")));
+
+    Path output = tempDir.resolve("loader-runtime");
+    new ForgeLifecycleExporter().export(List.of(modB, modA), output);
+    new ForgeHostRuntimeExporter().export(output);
+    Files.writeString(output.resolve("package.json"), "{\n  \"type\": \"module\"\n}\n");
+    String runtimeSource = new String(getClass().getResourceAsStream(
+        "/com/goldclient/translator/gold-client-runtime.js").readAllBytes(),
+        StandardCharsets.UTF_8);
+    Files.writeString(output.resolve("gold-client-runtime.js"), runtimeSource,
+        StandardCharsets.UTF_8);
+    Files.writeString(output.resolve("mod-index.js"), """
+        import { GoldClientRuntime } from "./gold-client-runtime.js";
+        const seen = globalThis.__forgeLoaderEvents = [];
+        export class AMod {
+          constructor() { seen.push("construct:a"); }
+          preInit() {
+            seen.push("preInit:a");
+            GoldClientRuntime.getStaticField(
+              "net.minecraftforge.common.MinecraftForge", "EVENT_BUS").register(this);
+          }
+          onTick(event) { seen.push("tick:a:" + event.id); }
+        }
+        export class BMod {
+          constructor() { seen.push("construct:b"); }
+          init() { seen.push("init:b"); }
+        }
+        GoldClientRuntime.registerClass("sample.AMod", AMod, null, {
+          methods: new Map([["onTick", [{
+            arity: 1,
+            descriptor: "(Lnet/minecraftforge/event/TickEvent$ClientTickEvent;)V",
+            isStatic: false,
+            annotations: ["net.minecraftforge.fml.common.eventhandler.SubscribeEvent"],
+            subscribePriority: "NORMAL",
+            receiveCanceled: false,
+            fn: AMod.prototype.onTick
+          }]]])
+        });
+        GoldClientRuntime.registerClass("sample.BMod", BMod);
+        export const classes = Object.freeze({ "sample.AMod": {}, "sample.BMod": {} });
+        """, StandardCharsets.UTF_8);
+
+    Path runner = output.resolve("loader-runtime-test.mjs");
+    Files.writeString(runner, """
+        import { startForgeMods, stopForgeMods, forgeLoaderStatus } from "./forge-lifecycle.js";
+        import { createForgeHost } from "./forge-host-runtime.js";
+        const seen = globalThis.__forgeLoaderEvents;
+        const bindings = {
+          events: { createLifecycleEvent: async (mod, phase) => {
+            seen.push("event:" + phase.name + ":" + mod.modId);
+            return { phase: phase.name, modId: mod.modId };
+          } },
+          minecraft: {}, forge: { stopMod: async () => {} }, render: {}, input: {},
+          resources: {}, network: {}, config: {},
+          registries: { register: (_kind, _id, value) => value, lookup: () => null },
+          logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+          side: { current: () => "CLIENT" }
+        };
+        const host = createForgeHost(bindings);
+        const started = await startForgeMods(host);
+        if (started.length !== 2) throw new Error("expected two started mods");
+        host.postEvent("net.minecraftforge.event.TickEvent$ClientTickEvent", { id: 7 });
+        const expectedPrefix = [
+          "construct:a", "construct:b",
+          "event:preInit:a", "preInit:a", "event:preInit:b",
+          "event:init:a", "event:init:b", "init:b",
+          "event:postInit:a", "event:postInit:b",
+          "event:loadComplete:a", "event:loadComplete:b",
+          "tick:a:7"
+        ];
+        if (seen.join(",") !== expectedPrefix.join(",")) {
+          throw new Error("phase-major order mismatch: " + seen.join(","));
+        }
+        const status = forgeLoaderStatus();
+        if (!status.started || status.modCount !== 2 || status.staticSubscriberCount !== 0
+            || status.discoveredInstanceSubscriberCount !== 1
+            || status.manualEventBusRegistration !== true) {
+          throw new Error("loader status mismatch: " + JSON.stringify(status));
+        }
+        const stopped = await stopForgeMods(host);
+        if (stopped.join(",") !== "b,a") throw new Error("stop order mismatch: " + stopped);
+        console.log("forge-loader-ok");
+        """, StandardCharsets.UTF_8);
+
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "generated Forge loader timed out");
+    String nodeOutput = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), nodeOutput);
+    assertEquals("forge-loader-ok", nodeOutput);
+  }
+
+  @Test
+  void keepsServerOnlyHandlersWithoutDispatchingThemOnTheClient() throws Exception {
+    ClassModel mod = new ClassModel("sample/ServerAware", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(
+            constructor(),
+            handler("serverStarting",
+                "(Lnet/minecraftforge/fml/common/event/FMLServerStartingEvent;)V")),
+        List.of(), List.of(mod("serveraware", "")));
+    Path output = tempDir.resolve("server-aware");
+    ForgeLifecycleExporter.LifecycleReport report = new ForgeLifecycleExporter()
+        .export(List.of(mod), output);
+    assertEquals("READY_FOR_REAL_FORGE_HOST", report.status(), report.blockers().toString());
+    String javascript = Files.readString(output.resolve("forge-lifecycle.js"));
+    assertTrue(report.mods().get(0).handlers().get("serverStarting").size() == 1);
+    assertTrue(javascript.contains("forgeServerLifecyclePhases"));
+    assertFalse(javascript.contains("serverStarting,\\n") && javascript.contains("forgeLifecyclePhases = Object.freeze([{\"name\":\"serverStarting\""));
+  }
+
+  private static MethodModel constructor() {
+    return new MethodModel("<init>", "()V", null, Opcodes.ACC_PUBLIC, List.of(), List.of(),
+        List.of(), List.of(), List.of(), 1, 1, new ControlFlowModel(0, List.of()),
+        new IrMethodModel("<init>", "()V", List.of(
+            new IrOperationModel("RETURN", List.of(), 0))), List.of());
+  }
+
+  private static MethodModel handler(String name, String descriptor) {
+    return new MethodModel(name, descriptor, null, Opcodes.ACC_PUBLIC, List.of(),
+        List.of(EVENT_HANDLER), List.of(), List.of(), List.of(), 1, 2,
+        new ControlFlowModel(0, List.of()),
+        new IrMethodModel(name, descriptor, List.of(
+            new IrOperationModel("RETURN", List.of(), 0))),
+        List.of(new AnnotationData(EVENT_HANDLER, true, Map.of())));
+  }
+
+  private static MethodModel annotatedMethod(String name, String descriptor, String annotation,
+      Map<String, Object> values) {
+    return annotatedMethod(name, descriptor, annotation, values, Opcodes.ACC_PUBLIC);
+  }
+
+  private static MethodModel staticAnnotatedMethod(String name, String descriptor,
+      String annotation, Map<String, Object> values) {
+    return annotatedMethod(name, descriptor, annotation, values,
+        Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC);
+  }
+
+  private static MethodModel annotatedMethod(String name, String descriptor, String annotation,
+      Map<String, Object> values, int access) {
+    return new MethodModel(name, descriptor, null, access, List.of(),
+        List.of(annotation), List.of(), List.of(), List.of(), 1, 2,
+        new ControlFlowModel(0, List.of()),
+        new IrMethodModel(name, descriptor, List.of(
+            new IrOperationModel("RETURN", List.of(), 0))),
+        List.of(new AnnotationData(annotation, true, values)));
+  }
+
+  private static FieldModel sidedProxy(String name, String descriptor, String implementation) {
+    return new FieldModel(name, descriptor, null,
+        Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, List.of(SIDED_PROXY), null,
+        List.of(new AnnotationData(SIDED_PROXY, true,
+            Map.of("clientSide", implementation, "serverSide", implementation))));
+  }
+
+  private static AnnotationData mod(String id, String dependencies) {
+    return new AnnotationData(MOD, true, Map.of(
+        "modid", id, "dependencies", dependencies, "version", "1.0"));
+  }
+}

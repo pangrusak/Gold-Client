@@ -24,6 +24,13 @@ public final class Main {
       if (code != 0) System.exit(code);
       return;
     }
+    if (args.length > 0 && args[0].equals("loader")) {
+      int code = com.goldclient.planner.LoaderCommand.run(
+          java.util.Arrays.copyOfRange(args, 1, args.length),
+          System.out, System.err);
+      if (code != 0) System.exit(code);
+      return;
+    }
     if (args.length < 1) {
       printUsage();
       System.exit(2);
@@ -196,6 +203,8 @@ public final class Main {
 
   private static void printUsage() {
     System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate [--class <class> --method <method> | --output-dir <dir>]] [--translate-js <output_dir>] [--to-js <output_dir> --main-class <class>]");
+    System.err.println("       java -jar gold-client.jar loader --input <mod.jar> [--input <dependency.jar> ...] --output <dir>");
+    System.err.println("       java -jar gold-client.jar pipeline --input <jar> --root <class> --report <file>");
   }
 
   private static void printTranslationSummary(ModAnalysis analysis) {

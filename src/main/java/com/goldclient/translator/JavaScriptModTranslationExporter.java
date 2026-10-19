@@ -1,5 +1,6 @@
 package com.goldclient.translator;
 
+import com.goldclient.model.AnnotationData;
 import com.goldclient.model.ClassModel;
 import com.goldclient.model.FieldModel;
 import com.goldclient.model.MethodModel;
@@ -32,12 +33,25 @@ public final class JavaScriptModTranslationExporter {
   }
 
   public ExportReport export(List<ClassModel> classes, Path outputDirectory) throws IOException {
-    return export(null, classes, outputDirectory);
+    return export((List<Path>) null, classes, outputDirectory);
   }
 
   public ExportReport export(Path inputJar, List<ClassModel> classes, Path outputDirectory) throws IOException {
+    return export(inputJar == null ? List.of() : List.of(inputJar), classes, outputDirectory);
+  }
+
+  /**
+   * Exports one JavaScript bundle from several input JARs. All classes share one
+   * runtime and one class registry, which is required for a multi-mod Forge load.
+   * Duplicate class definitions are rejected by the loader command before this
+   * method is called.
+   */
+  public ExportReport export(List<Path> inputJars, List<ClassModel> classes,
+      Path outputDirectory) throws IOException {
     if (classes == null) throw new IllegalArgumentException("Classes must not be null.");
     if (outputDirectory == null) throw new IllegalArgumentException("Output directory must not be null.");
+    List<Path> jars = inputJars == null ? List.of() : inputJars.stream()
+        .map(path -> path.toAbsolutePath().normalize()).toList();
     Path root = outputDirectory.toAbsolutePath().normalize();
     Files.createDirectories(root);
     List<MethodStatus> statuses = new ArrayList<>();
@@ -91,8 +105,8 @@ public final class JavaScriptModTranslationExporter {
       filesWritten++;
     }
 
-    ClassCoverageReport classCoverage = writeClassCoverage(inputJar, classes, root);
-    int resourceCount = copyResources(inputJar, root);
+    ClassCoverageReport classCoverage = writeClassCoverage(jars, classes, root);
+    int resourceCount = copyResources(jars, root);
     Files.writeString(root.resolve("gold-client-runtime.js"), runtimeSource(), StandardCharsets.UTF_8);
     writeModuleIndex(classes, root);
     writeClassManifest(classes, root);
@@ -159,6 +173,29 @@ public final class JavaScriptModTranslationExporter {
       String owner, String methodName, String descriptor, boolean isStatic,
       boolean isAbstract, int arity, String adapterKey, String reason) {}
 
+
+  private static String subscribePriority(MethodModel method) {
+    for (AnnotationData annotation : method.annotationData()) {
+      if (!annotation.name().equals("net.minecraftforge.fml.common.eventhandler.SubscribeEvent")) continue;
+      Object value = annotation.values().get("priority");
+      if (value instanceof AnnotationData.EnumValue enumValue) return enumValue.constant();
+      if (value instanceof List<?> values && !values.isEmpty()
+          && values.get(0) instanceof AnnotationData.EnumValue enumValue) {
+        return enumValue.constant();
+      }
+    }
+    return "NORMAL";
+  }
+
+  private static boolean subscribeReceiveCanceled(MethodModel method) {
+    for (AnnotationData annotation : method.annotationData()) {
+      if (!annotation.name().equals("net.minecraftforge.fml.common.eventhandler.SubscribeEvent")) continue;
+      Object value = annotation.values().get("receiveCanceled");
+      if (value instanceof Boolean bool) return bool;
+    }
+    return false;
+  }
+
   private static void appendExecutableClassWrapper(
       StringBuilder module, ClassModel clazz, List<ClassModel> allClasses) {
     String className = "Translated_" + safeIdentifier(clazz.name().replace('/', '_').replace('.', '_'));
@@ -184,6 +221,11 @@ public final class JavaScriptModTranslationExporter {
             .append(", isAdapterRequired: ")
             .append((method.access() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0
                 || method.intermediateRepresentation().operations().isEmpty())
+            .append(", annotations: [")
+            .append(String.join(", ", method.annotations().stream().map(JavaScriptModTranslationExporter::quote).toList()))
+            .append("]")
+            .append(", subscribePriority: ").append(quote(subscribePriority(method)))
+            .append(", receiveCanceled: ").append(subscribeReceiveCanceled(method))
             .append(", fn: ").append(exportedName(method.name(), method.descriptor())).append(" }");
       }
       module.append("]]");
@@ -344,35 +386,50 @@ public final class JavaScriptModTranslationExporter {
             "protected", "public", "static").contains(value);
   }
 
-  private static int copyResources(Path inputJar, Path root) throws IOException {
-    if (inputJar == null) return 0;
+  private static int copyResources(List<Path> inputJars, Path root) throws IOException {
+    if (inputJars == null || inputJars.isEmpty()) return 0;
     Path resourceRoot = root.resolve("resources").normalize();
     Files.createDirectories(resourceRoot);
-    List<? extends ZipEntry> entries;
-    try (ZipFile zip = new ZipFile(inputJar.toFile())) {
-      entries = Collections.list(zip.entries()).stream()
-          .filter(entry -> !entry.isDirectory())
-          .sorted(Comparator.comparing(ZipEntry::getName))
-          .toList();
-      List<ResourceRecord> copied = new ArrayList<>();
-      for (ZipEntry entry : entries) {
-        String name = entry.getName().replace('\\', '/');
-        if (name.endsWith(".class") || isSignatureFile(name)) continue;
-        Path destination = resourceRoot.resolve(name).normalize();
-        if (!destination.startsWith(resourceRoot)) {
-          throw new IOException("Rejected unsafe JAR resource path: " + name);
+    java.util.Map<String, ResourceRecord> copied = new java.util.TreeMap<>();
+    java.util.List<ResourceConflict> conflicts = new ArrayList<>();
+    for (Path inputJar : inputJars) {
+      try (ZipFile zip = new ZipFile(inputJar.toFile())) {
+        List<? extends ZipEntry> entries = Collections.list(zip.entries()).stream()
+            .filter(entry -> !entry.isDirectory())
+            .sorted(Comparator.comparing(ZipEntry::getName))
+            .toList();
+        for (ZipEntry entry : entries) {
+          String name = entry.getName().replace('\\', '/');
+          if (name.endsWith(".class") || isSignatureFile(name)) continue;
+          if (copied.containsKey(name)) {
+            conflicts.add(new ResourceConflict(name, inputJar.toString(), "first input wins"));
+            continue;
+          }
+          Path destination = resourceRoot.resolve(name).normalize();
+          if (!destination.startsWith(resourceRoot)) {
+            throw new IOException("Rejected unsafe JAR resource path: " + name);
+          }
+          Files.createDirectories(destination.getParent());
+          try (var stream = zip.getInputStream(entry)) {
+            Files.copy(stream, destination, StandardCopyOption.REPLACE_EXISTING);
+          }
+          copied.put(name, new ResourceRecord(name, Files.size(destination)));
         }
-        Files.createDirectories(destination.getParent());
-        try (var stream = zip.getInputStream(entry)) {
-          Files.copy(stream, destination, StandardCopyOption.REPLACE_EXISTING);
-        }
-        copied.add(new ResourceRecord(name, Files.size(destination)));
       }
-      Files.writeString(root.resolve("resource-index.json"),
-          new GsonBuilder().setPrettyPrinting().create().toJson(copied) + System.lineSeparator(),
-          StandardCharsets.UTF_8);
-      return copied.size();
     }
+    Files.writeString(root.resolve("resource-index.json"),
+        new GsonBuilder().setPrettyPrinting().create().toJson(copied.values()) + System.lineSeparator(),
+        StandardCharsets.UTF_8);
+    if (!conflicts.isEmpty()) {
+      Files.writeString(root.resolve("resource-conflicts.json"),
+          new GsonBuilder().setPrettyPrinting().create().toJson(conflicts) + System.lineSeparator(),
+          StandardCharsets.UTF_8);
+    }
+    return copied.size();
+  }
+
+  private static int copyResources(Path inputJar, Path root) throws IOException {
+    return copyResources(inputJar == null ? List.of() : List.of(inputJar), root);
   }
 
   /**
@@ -381,7 +438,7 @@ public final class JavaScriptModTranslationExporter {
    * methods are still represented explicitly inside that module.
    */
   private static ClassCoverageReport writeClassCoverage(
-      Path inputJar, List<ClassModel> classes, Path root) throws IOException {
+      List<Path> inputJars, List<ClassModel> classes, Path root) throws IOException {
     java.util.Set<String> modeled = new java.util.TreeSet<>();
     for (ClassModel clazz : classes) {
       modeled.add(clazz.name().replace('.', '/'));
@@ -390,17 +447,19 @@ public final class JavaScriptModTranslationExporter {
     java.util.Set<String> jarClasses = new java.util.TreeSet<>();
     java.util.Set<String> unreadableClassEntries = new java.util.TreeSet<>();
     int jarClassEntries = 0;
-    if (inputJar != null) {
-      try (ZipFile zip = new ZipFile(inputJar.toFile())) {
-        for (ZipEntry entry : Collections.list(zip.entries())) {
-          if (entry.isDirectory() || !entry.getName().endsWith(".class")) continue;
-          jarClassEntries++;
-          try (var stream = zip.getInputStream(entry)) {
-            jarClasses.add(new org.objectweb.asm.ClassReader(stream).getClassName());
-          } catch (RuntimeException invalidClass) {
-            // Keep export resilient for malformed .class payloads, but never report
-            // complete coverage when an input class entry could not be inspected.
-            unreadableClassEntries.add(entry.getName());
+    if (inputJars != null && !inputJars.isEmpty()) {
+      for (Path inputJar : inputJars) {
+        try (ZipFile zip = new ZipFile(inputJar.toFile())) {
+          for (ZipEntry entry : Collections.list(zip.entries())) {
+            if (entry.isDirectory() || !entry.getName().endsWith(".class")) continue;
+            jarClassEntries++;
+            try (var stream = zip.getInputStream(entry)) {
+              jarClasses.add(new org.objectweb.asm.ClassReader(stream).getClassName());
+            } catch (RuntimeException invalidClass) {
+              // Keep export resilient for malformed .class payloads, but never report
+              // complete coverage when an input class entry could not be inspected.
+              unreadableClassEntries.add(inputJar + "!" + entry.getName());
+            }
           }
         }
       }
@@ -423,9 +482,12 @@ public final class JavaScriptModTranslationExporter {
       }
     }
 
+    String inputDescription = inputJars == null || inputJars.isEmpty() ? null
+        : inputJars.size() == 1 ? inputJars.get(0).toString()
+        : inputJars.stream().map(Path::toString).collect(java.util.stream.Collectors.joining(","));
     ClassCoverageReport report = new ClassCoverageReport(
         "gold-client-class-coverage-v1",
-        inputJar == null ? null : inputJar.toAbsolutePath().normalize().toString(),
+        inputDescription,
         jarClassEntries, jarClasses.size(), modeled.size(), translatedModules,
         unmodeledJarClasses, modeledClassesAbsentFromJar, missingModules, unreadableClassEntries,
         unmodeledJarClasses.isEmpty() && modeledClassesAbsentFromJar.isEmpty()
@@ -434,6 +496,11 @@ public final class JavaScriptModTranslationExporter {
         new GsonBuilder().setPrettyPrinting().create().toJson(report)
             + System.lineSeparator(), StandardCharsets.UTF_8);
     return report;
+  }
+
+  private static ClassCoverageReport writeClassCoverage(
+      Path inputJar, List<ClassModel> classes, Path root) throws IOException {
+    return writeClassCoverage(inputJar == null ? List.of() : List.of(inputJar), classes, root);
   }
 
   public record ClassCoverageReport(
@@ -464,6 +531,7 @@ public final class JavaScriptModTranslationExporter {
   }
 
   public record ResourceRecord(String path, long sizeBytes) {}
+  public record ResourceConflict(String path, String ignoredInput, String policy) {}
 
   private static Path outputPath(Path root, String className) throws IOException {
     String relative = className.replace('\\', '/').replace('.', '/');
