@@ -10,6 +10,7 @@ public final class TranslationContext {
   private final Deque<String> loopLabels = new ArrayDeque<>();
   private final Set<String> loopJsLabels = new LinkedHashSet<>();
   private final Deque<String> loopExitLabels = new ArrayDeque<>();
+  private final java.util.Map<String, String> loopExitOwners = new java.util.HashMap<>();
   private final Deque<BreakScope> breakScopes = new ArrayDeque<>();
   private final Deque<Set<String>> suppressedTryHandlers = new ArrayDeque<>();
 
@@ -57,12 +58,21 @@ public final class TranslationContext {
   public void enterLoopExit(String label) {
     loopExitLabels.push(label);
     breakScopes.push(new BreakScope(label, BreakKind.LOOP_EXIT));
+    String loop = loopLabels.peek();
+    if (loop != null && loopJsLabels.contains(loop)) loopExitOwners.put(label, loop);
   }
 
   public void exitLoopExit() {
-    loopExitLabels.pop();
+    loopExitOwners.remove(loopExitLabels.pop());
     breakScopes.pop();
   }
+
+  /**
+   * The JavaScript label of the loop whose exit this is, or null when the loop
+   * was not labeled. A jump to the exit from inside a nested switch or loop
+   * needs it: a plain {@code break} would leave the nested scope instead.
+   */
+  public String loopExitLabel(String label) { return loopExitOwners.get(label); }
 
   /** A join label of the switch statement currently being rendered. */
   public void enterSwitchJoin(String label) {

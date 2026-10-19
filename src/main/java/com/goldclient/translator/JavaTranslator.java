@@ -172,13 +172,22 @@ public final class JavaTranslator {
 
       if ("CONDITIONAL_BRANCH".equals(operation.kind())
           && operation.operands().size() >= 2) {
-        if (context.isInnermostBreakTarget(labelKey(operation.operands().get(1)))) {
-          // An early exit of the enclosing break-loop or switch: the taken edge
-          // leaves that scope, so the branch is a break guard.
-          source.append(indent(indent)).append("if (")
-              .append(normalizeCondition(operation.operands().get(0)))
-              .append(") break;\n");
-          continue;
+        if (context.isBreakTarget(labelKey(operation.operands().get(1)))) {
+          // An early exit of an enclosing break-loop or switch. The taken edge
+          // leaves that scope, so the branch becomes a break guard.
+          String breakStatement = null;
+          if (context.isInnermostBreakTarget(labelKey(operation.operands().get(1)))) {
+            breakStatement = "break;";
+          } else {
+            String loopLabel = context.loopExitLabel(labelKey(operation.operands().get(1)));
+            if (loopLabel != null) breakStatement = "break " + jsLabel(loopLabel) + ";";
+          }
+          if (breakStatement != null) {
+            source.append(indent(indent)).append("if (")
+                .append(normalizeCondition(operation.operands().get(0)))
+                .append(") ").append(breakStatement).append("\n");
+            continue;
+          }
         }
         ConditionalRender booleanReturn = renderBooleanReturnChain(
             operations, i, end, indent, context, labels);
@@ -244,6 +253,14 @@ public final class JavaTranslator {
           i = branchReturn.lastIndex();
           continue;
         }
+        ConditionalRender forwardDecision = renderForwardDecision(
+            operations, i, end, indent, context, labels);
+        if (forwardDecision != null) {
+          source.append(forwardDecision.source());
+          complete &= forwardDecision.complete();
+          i = forwardDecision.lastIndex();
+          continue;
+        }
         ConditionalRender branch = renderConditional(
             operations, i, end, indent, context, labels);
 
@@ -306,12 +323,19 @@ public final class JavaTranslator {
             source.append(indent(indent)).append("break;\n");
           } else {
             // A nested loop or switch sits between this jump and the scope it
-            // leaves; a plain break would leave the wrong scope.
-            source.append(indent(indent))
-                .append("GoldClientRuntime.unsupported(\"JUMP\", \"")
-                .append(escapeJava(String.join(" | ", operation.operands())))
-                .append("\");\n");
-            complete = false;
+            // leaves, so a plain break would leave the wrong scope. A labeled
+            // loop break still reaches the intended exit.
+            String loopLabel = context.loopExitLabel(labelKey(target));
+            if (loopLabel != null) {
+              source.append(indent(indent)).append("break ")
+                  .append(jsLabel(loopLabel)).append(";\n");
+            } else {
+              source.append(indent(indent))
+                  .append("GoldClientRuntime.unsupported(\"JUMP\", \"")
+                  .append(escapeJava(String.join(" | ", operation.operands())))
+                  .append("\");\n");
+              complete = false;
+            }
           }
           continue;
         }
@@ -2292,6 +2316,168 @@ public final class JavaTranslator {
     return -1;
   }
 
+  /**
+   * Renders a forward-only decision region where a nested branch selects a
+   * block that lies past the outer branch target. javac emits this shape when
+   * one arm of a nested if is shared with the outer else path, and a plain
+   * if/else cannot express the jump into that shared block. The arms are
+   * rendered independently, which duplicates the shared block but keeps every
+   * path faithful. Regions containing loops, switches, or exception regions are
+   * rejected so the regular structurers keep handling them.
+   */
+  private static ConditionalRender renderForwardDecision(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    IrOperationModel branch = operations.get(branchIndex);
+    if (branch.operands().size() < 2) return null;
+    Integer targetIndex = labels.get(labelKey(branch.operands().get(1)));
+    if (targetIndex == null || targetIndex <= branchIndex || targetIndex >= end) return null;
+    if (!hasBlockBeyond(operations, branchIndex + 1, targetIndex, targetIndex, labels)) {
+      return null;
+    }
+    int[] extent = {branchIndex};
+    int[] budget = {256};
+    RenderResult source = renderForwardArm(
+        operations, branchIndex, end, indent, context, labels, extent, budget, 0);
+    if (source == null || extent[0] <= branchIndex) return null;
+    // The region must own every block it rendered: an entry into one of those
+    // labels from outside would make the block shared with code that was not
+    // consumed here.
+    for (int i = 0; i < operations.size(); i++) {
+      if (i >= branchIndex && i <= extent[0]) continue;
+      IrOperationModel operation = operations.get(i);
+      if (!"CONDITIONAL_BRANCH".equals(operation.kind())
+          && !"JUMP".equals(operation.kind())) continue;
+      if (operation.operands().isEmpty()) continue;
+      Integer entry = labels.get(
+          labelKey(operation.operands().get(operation.operands().size() - 1)));
+      if (entry != null && entry > branchIndex && entry <= extent[0]) return null;
+    }
+    return new ConditionalRender(source.source(), source.complete(), extent[0]);
+  }
+
+  /**
+   * True when a nested branch reaches past the outer target and the block in
+   * between actually contains code. When only labels separate the two targets
+   * the regular nested-if rendering already reaches the shared join.
+   */
+  private static boolean hasBlockBeyond(
+      List<IrOperationModel> operations, int start, int end, int targetIndex,
+      Map<String, Integer> labels) {
+    for (int i = start; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (!"CONDITIONAL_BRANCH".equals(operation.kind())
+          || operation.operands().size() < 2) continue;
+      Integer target = labels.get(labelKey(operation.operands().get(1)));
+      if (target == null || target <= targetIndex) continue;
+      for (int between = targetIndex; between < target; between++) {
+        if (!isBranchValueMetadata(operations.get(between))) return true;
+      }
+    }
+    return false;
+  }
+
+  private static RenderResult renderForwardArm(
+      List<IrOperationModel> operations,
+      int start,
+      int limit,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels,
+      int[] extent,
+      int[] budget,
+      int depth) {
+    if (depth > 24) return null;
+    StringBuilder source = new StringBuilder();
+    boolean complete = true;
+    int i = start;
+    while (i < limit) {
+      if (--budget[0] < 0) return null;
+      IrOperationModel operation = operations.get(i);
+      String kind = operation.kind();
+      if ("TRY_BEGIN".equals(kind) || "TRY_END".equals(kind)
+          || "CATCH_BEGIN".equals(kind) || "TABLE_SWITCH".equals(kind)
+          || "LOOKUP_SWITCH".equals(kind)) return null;
+      if (isBranchValueMetadata(operation)) {
+        i++;
+        continue;
+      }
+      extent[0] = Math.max(extent[0], i);
+      if ("CONDITIONAL_BRANCH".equals(kind)) {
+        if (operation.operands().size() < 2) return null;
+        Integer targetIndex = labels.get(labelKey(operation.operands().get(1)));
+        if (targetIndex == null || targetIndex <= i || targetIndex >= limit) return null;
+        RenderResult taken = renderForwardArm(
+            operations, targetIndex, limit, indent + 1, context, labels,
+            extent, budget, depth + 1);
+        if (taken == null) return null;
+        RenderResult fallthrough = renderForwardArm(
+            operations, i + 1, limit, indent + 1, context, labels,
+            extent, budget, depth + 1);
+        if (fallthrough == null) return null;
+        source.append(indent(indent)).append("if (")
+            .append(normalizeCondition(operation.operands().get(0))).append(") {\n")
+            .append(taken.source())
+            .append(indent(indent)).append("} else {\n")
+            .append(fallthrough.source())
+            .append(indent(indent)).append("}\n");
+        return new RenderResult(
+            source.toString(), taken.complete() && fallthrough.complete());
+      }
+      if ("JUMP".equals(kind)) {
+        if (operation.operands().isEmpty()) return null;
+        String target = operation.operands().get(0);
+        if (context.isActiveLoop(labelKey(target))) {
+          source.append(indent(indent)).append("continue");
+          if (context.hasLoopLabel(labelKey(target))) {
+            source.append(" ").append(jsLabel(target));
+          }
+          source.append(";\n");
+          return new RenderResult(source.toString(), complete);
+        }
+        if (context.isBreakTarget(labelKey(target))) {
+          if (context.isInnermostBreakTarget(labelKey(target))) {
+            source.append(indent(indent)).append("break;\n");
+          } else {
+            String loopLabel = context.loopExitLabel(labelKey(target));
+            if (loopLabel == null) return null;
+            source.append(indent(indent)).append("break ")
+                .append(jsLabel(loopLabel)).append(";\n");
+          }
+          return new RenderResult(source.toString(), complete);
+        }
+        Integer targetIndex = labels.get(labelKey(target));
+        if (targetIndex != null
+            && (targetIndex == limit || isFallthroughJump(operations, i, targetIndex))) {
+          i++;
+          continue;
+        }
+        return null;
+      }
+      if ("RETURN".equals(kind) || "THROW".equals(kind)) {
+        String line = translateOperation(operation, context);
+        if (line == null) return null;
+        source.append(indent(indent)).append(line).append("\n");
+        return new RenderResult(source.toString(), complete);
+      }
+      String line = translateOperation(operation, context);
+      if (line == null) {
+        if (isExpressionOnly(operation)) {
+          i++;
+          continue;
+        }
+        return null;
+      }
+      if (!line.isBlank()) source.append(indent(indent)).append(line).append("\n");
+      i++;
+    }
+    return new RenderResult(source.toString(), complete);
+  }
+
   private static ConditionalRender renderConditional(
       List<IrOperationModel> operations,
       int branchIndex,
@@ -2416,7 +2602,8 @@ public final class JavaTranslator {
     if (jumpIndex >= 0) {
       IrOperationModel jump = operations.get(jumpIndex);
       if (!jump.operands().isEmpty()
-          && context.isLoopExit(labelKey(jump.operands().get(0)))) {
+          && context.isLoopExit(labelKey(jump.operands().get(0)))
+          && onlyConditionWork(operations, branchIndex + 1, jumpIndex, targetIndex, labels)) {
         // The fall-through path immediately leaves the enclosing break-loop
         // while the taken path stays inside: guard the fall-through with a
         // break and render the taken body. A chain of branches that share the
@@ -2447,7 +2634,8 @@ public final class JavaTranslator {
             .append(takenBody.source());
         return new ConditionalRender(source.toString(), takenBody.complete(), end - 1);
       }
-      if (!jump.operands().isEmpty()) {
+      if (!jump.operands().isEmpty()
+          && !context.isLoopExit(labelKey(jump.operands().get(0)))) {
         Integer endIndex = labels.get(labelKey(jump.operands().get(0)));
         if (endIndex != null && endIndex > targetIndex) {
           // A nested if may join at a label outside the current render range
@@ -2780,7 +2968,9 @@ public final class JavaTranslator {
     String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
     String exitLabel = labelKey(operations.get(loop.exitIndex()).operands().get(0));
     boolean labeled = needsLoopLabel(
-        operations, loopHeaderIndex + 1, loop.backEdgeIndex(), loopLabel);
+        operations, loopHeaderIndex + 1, loop.backEdgeIndex(), loopLabel)
+        || needsExitBreakLabel(
+            operations, loopHeaderIndex + 1, loop.backEdgeIndex(), exitLabel);
     context.enterLoop(loopLabel, labeled);
     context.enterLoopExit(exitLabel);
     RenderResult body;
@@ -2870,7 +3060,8 @@ public final class JavaTranslator {
     }
 
     String exitLabel = labelKey(operations.get(exitIndex).operands().get(0));
-    boolean labeled = needsLoopLabel(operations, bodyIndex, exitIndex, loopLabel);
+    boolean labeled = needsLoopLabel(operations, bodyIndex, exitIndex, loopLabel)
+        || needsExitBreakLabel(operations, bodyIndex, exitIndex, exitLabel);
     context.enterLoop(loopLabel, labeled);
     context.enterLoopExit(exitLabel);
     RenderResult body;
@@ -2985,6 +3176,9 @@ public final class JavaTranslator {
       TranslationContext context,
       Map<String, Integer> labels) {
     String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
+    String exitLabel = loop.exitIndex() < operations.size()
+        && !operations.get(loop.exitIndex()).operands().isEmpty()
+        ? labelKey(operations.get(loop.exitIndex()).operands().get(0)) : null;
     String condition = operations.get(loop.branchIndex()).operands().get(0);
     int extendedBodyEnd = extendLoopPastNestedLoops(
         operations, loopHeaderIndex, loop.backEdgeIndex(), end, labels);
@@ -2993,13 +3187,17 @@ public final class JavaTranslator {
       // shape was found through points into the body instead of leaving the
       // loop. Render the full body and let the branch structure itself.
       boolean labeled = needsLoopLabel(
-          operations, loopHeaderIndex + 1, extendedBodyEnd + 1, loopLabel);
+          operations, loopHeaderIndex + 1, extendedBodyEnd + 1, loopLabel)
+          || needsExitBreakLabel(
+              operations, loopHeaderIndex + 1, extendedBodyEnd + 1, exitLabel);
       context.enterLoop(loopLabel, labeled);
+      if (exitLabel != null) context.enterLoopExit(exitLabel);
       RenderResult body;
       try {
         body = renderRange(
             operations, loopHeaderIndex + 1, extendedBodyEnd + 1, indent + 1, context, labels);
       } finally {
+        if (exitLabel != null) context.exitLoopExit();
         context.exitLoop();
       }
       StringBuilder source = new StringBuilder();
@@ -3011,8 +3209,11 @@ public final class JavaTranslator {
       return new ConditionalRender(source.toString(), body.complete(), extendedBodyEnd);
     }
     boolean labeled = needsLoopLabel(
-        operations, loopHeaderIndex + 1, loop.backEdgeIndex(), loopLabel);
+        operations, loopHeaderIndex + 1, loop.backEdgeIndex(), loopLabel)
+        || needsExitBreakLabel(
+            operations, loopHeaderIndex + 1, loop.backEdgeIndex(), exitLabel);
     context.enterLoop(loopLabel, labeled);
+    if (exitLabel != null) context.enterLoopExit(exitLabel);
     RenderResult conditionPrelude;
     RenderResult body;
     try {
@@ -3024,6 +3225,7 @@ public final class JavaTranslator {
       body = renderRange(
           operations, loop.branchIndex() + 1, loop.backEdgeIndex(), indent + 1, context, labels);
     } finally {
+      if (exitLabel != null) context.exitLoopExit();
       context.exitLoop();
     }
 
@@ -3263,6 +3465,45 @@ public final class JavaTranslator {
       IrOperationModel operation = operations.get(i);
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
           && labelKey(loopLabel).equals(labelKey(operation.operands().get(0)))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * True when the instructions between a branch and its fall-through jump only
+   * contribute to the branch conditions. A guard {@code if (!cond) break;}
+   * replaces the fall-through, so it is only safe when the fall-through has no
+   * statement effects (a discarded call or a local write still has to run).
+   */
+  private static boolean onlyConditionWork(
+      List<IrOperationModel> operations, int start, int endExclusive,
+      int targetIndex, Map<String, Integer> labels) {
+    for (int i = start; i < endExclusive; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("LABEL".equals(operation.kind())) continue;
+      if ("CONDITIONAL_BRANCH".equals(operation.kind())) {
+        if (operation.operands().size() < 2) return false;
+        Integer target = labels.get(labelKey(operation.operands().get(1)));
+        if (target == null || !target.equals(targetIndex)) return false;
+        continue;
+      }
+      if (!isExpressionOnly(operation) || "DROP".equals(operation.kind())) return false;
+    }
+    return true;
+  }
+
+  /**
+   * True when the body jumps straight to the loop's exit label. A nested switch
+   * or loop would swallow a plain break, so such a loop needs a JavaScript
+   * label for the exit jump.
+   */
+  private static boolean needsExitBreakLabel(
+      List<IrOperationModel> operations, int bodyStart, int bodyEnd, String exitLabel) {
+    if (exitLabel == null) return false;
+    for (int i = bodyStart; i < bodyEnd; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(exitLabel).equals(labelKey(operation.operands().get(0)))) return true;
     }
     return false;
   }
