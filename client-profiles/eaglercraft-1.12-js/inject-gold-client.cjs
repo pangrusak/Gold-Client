@@ -134,9 +134,9 @@ const tickAdapter = `    var goldClientBridgePlayerSnapshot = null;
 
 const instrumentedSource = source.replace(tickMarker, tickAdapter + tickMarker);
 const closeBody = '</body>';
-const firstBody = instrumentedSource.indexOf(closeBody);
-if (firstBody < 0 || instrumentedSource.indexOf(closeBody, firstBody + closeBody.length) >= 0) {
-    throw new Error('Expected exactly one </body> insertion point in client HTML');
+const firstBody = instrumentedSource.lastIndexOf(closeBody);
+if (firstBody < 0) {
+    throw new Error('No </body> insertion point in client HTML');
 }
 
 let relativeEntry = path.relative(path.dirname(outputPath),

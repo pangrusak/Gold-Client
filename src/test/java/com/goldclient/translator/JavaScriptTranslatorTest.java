@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -27,6 +28,28 @@ class JavaScriptTranslatorTest {
     assertTrue(result.source().matches("(?s).*export function isReady__\\w+\\(\\) \\{.*"));
     assertTrue(result.source().contains("return true;"));
     assertFalse(result.source().contains("boolean isReady"));
+  }
+
+  @Test
+  void keepsCallsOnUppercaseForgeConstantsAsFieldReceivers() {
+    assertEquals(
+        "GoldClientRuntime.getStaticField(\"net.minecraftforge.fml.common.registry.ForgeRegistries\", \"ITEMS\").getValuesCollection()",
+        JavaScriptTranslator.rewriteCode(new StringBuilder(
+            "net.minecraftforge.fml.common.registry.ForgeRegistries.ITEMS.getValuesCollection()")));
+    assertEquals(
+        "GoldClientRuntime.getStaticField(\"net.minecraftforge.fml.common.network.NetworkRegistry\", \"INSTANCE\").newSimpleChannel(\"appleskin\")",
+        JavaScriptTranslator.rewriteCode(new StringBuilder(
+            "net.minecraftforge.fml.common.network.NetworkRegistry.INSTANCE.newSimpleChannel(\"appleskin\")")));
+    assertEquals(
+        "GoldClientRuntime.getStaticField(\"net.minecraftforge.common.MinecraftForge\", \"EVENT_BUS\").register(this)",
+        JavaScriptTranslator.rewriteCode(new StringBuilder(
+            "net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(this)")));
+    assertFalse(JavaScriptTranslator.rewriteCode(new StringBuilder(
+        "ForgeRegistries.ITEMS.getValuesCollection()")).contains("GoldClientRuntime\", \"GoldClientRuntime"));
+    assertEquals(
+        "\"appleskin\".toLowerCase(GoldClientRuntime.getStaticField(\"java.util.Locale\", \"ROOT\"))",
+        JavaScriptTranslator.rewriteCode(new StringBuilder(
+            "\"appleskin\".toLowerCase(java.util.Locale.ROOT)")));
   }
 
   @Test

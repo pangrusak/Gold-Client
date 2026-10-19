@@ -655,14 +655,23 @@ public final class JavaScriptTranslator {
   private static boolean looksLikeConstantFieldOwner(String owner, String source, int start) {
     int dot = owner.lastIndexOf('.');
     String last = owner.substring(dot + 1);
-    if (last.indexOf('_') < 0 || !last.matches("[A-Z][A-Z0-9_]*")) return false;
+    // Forge constants are not required to contain an underscore. INSTANCE,
+    // ITEMS, CHANNEL, UTIL, and INFO are all constant field receivers too.
+    // Misclassifying one as a class turns `Owner.INSTANCE.method()` into
+    // `Owner.GoldClientRuntime.invokeStaticClass("INSTANCE", "method")`.
+    if (!last.matches("[A-Z][A-Z0-9_]*")) return false;
     // The regex can start at the constant segment itself (EVENT_BUS.register),
     // leaving the owning class as a prefix. Both forms are static-field reads.
     return dot >= 0 || (start > 0 && source.charAt(start - 1) == '.');
   }
 
-  private static String rewriteCode(StringBuilder input) {
+  static String rewriteCode(StringBuilder input) {
     String result = input.toString()
+        // Locale constants are Java static fields, not JavaScript globals.
+        // String.toLowerCase(Locale) is otherwise valid JS once the argument
+        // is a real value; JavaScript ignores the extra argument.
+        .replaceAll("(?<![A-Za-z0-9_$.])java\\.util\\.Locale\\.(ROOT|US|UK|CANADA|FRANCE|GERMANY|JAPAN|CHINA)(?![A-Za-z0-9_$])",
+            "GoldClientRuntime.getStaticField(\"java.util.Locale\", \"$1\")")
         // Analyzer lattice markers are not JavaScript expressions. Keep the
         // output parseable while the method remains marked incomplete.
         .replace("<unknown-stack>", "undefined")

@@ -1,3 +1,36 @@
+// Log4j 2 and Guava helpers used by common Forge mods. These are real
+// console/validation implementations, not Minecraft substitutes.
+class GoldClientLog4jLogger {
+  constructor(name) {
+    this.name = name == null ? "root" : String(name);
+  }
+  static get(name) {
+    const key = name == null ? "root" : String(name);
+    let logger = goldClientLoggers.get(key);
+    if (!logger) {
+      logger = new GoldClientLog4jLogger(key);
+      goldClientLoggers.set(key, logger);
+    }
+    return logger;
+  }
+  trace(...values) { console.debug("[" + this.name + "]", ...values); }
+  debug(...values) { console.debug("[" + this.name + "]", ...values); }
+  info(...values) { console.info("[" + this.name + "]", ...values); }
+  warn(...values) { console.warn("[" + this.name + "]", ...values); }
+  error(...values) { console.error("[" + this.name + "]", ...values); }
+  fatal(...values) { console.error("[" + this.name + "]", ...values); }
+  log(level, ...values) { console.log("[" + this.name + "]", level, ...values); }
+  isTraceEnabled() { return true; }
+  isDebugEnabled() { return true; }
+  isInfoEnabled() { return true; }
+  isWarnEnabled() { return true; }
+  isErrorEnabled() { return true; }
+  isFatalEnabled() { return true; }
+  getName() { return this.name; }
+  toString() { return this.name; }
+}
+const goldClientLoggers = new Map();
+
 // Small compatibility helpers used by generated JavaScript.
 // This is not a replacement for Minecraft/Forge or a full JVM runtime.
 
@@ -475,6 +508,127 @@ class GoldClientJavaLocale {
   }
   static getDefault() { return GoldClientJavaLocale.defaultLocale ?? new GoldClientJavaLocale("en", "US"); }
   static setDefault(locale) { GoldClientJavaLocale.defaultLocale = locale; }
+}
+
+class GoldClientJavaDecimalFormatSymbols {
+  constructor() {
+    this.decimalSeparator = ".";
+    this.groupingSeparator = ",";
+    this.minusSign = "-";
+    this.zeroDigit = "0";
+  }
+  getDecimalSeparator() { return this.decimalSeparator; }
+  getGroupingSeparator() { return this.groupingSeparator; }
+  getMinusSign() { return this.minusSign; }
+  getZeroDigit() { return this.zeroDigit; }
+  setDecimalSeparator(value) { this.decimalSeparator = String(value).charAt(0); }
+  setGroupingSeparator(value) { this.groupingSeparator = String(value).charAt(0); }
+  clone() {
+    const copy = new GoldClientJavaDecimalFormatSymbols();
+    copy.decimalSeparator = this.decimalSeparator;
+    copy.groupingSeparator = this.groupingSeparator;
+    copy.minusSign = this.minusSign;
+    copy.zeroDigit = this.zeroDigit;
+    return copy;
+  }
+}
+
+class GoldClientJavaDecimalFormat {
+  constructor(pattern = "#,##0.###", symbols = null) {
+    this.symbols = symbols instanceof GoldClientJavaDecimalFormatSymbols
+      ? symbols : new GoldClientJavaDecimalFormatSymbols();
+    this.groupingUsed = true;
+    this.roundingMode = "HALF_EVEN";
+    this.applyPattern(pattern);
+  }
+  applyPattern(pattern) {
+    this.pattern = String(pattern);
+    const positive = this.pattern.split(";")[0];
+    const match = positive.match(/^([^0#]*)([0#,.]+)([^0#]*)$/);
+    if (!match) {
+      this.prefix = "";
+      this.suffix = positive;
+      this.minimumIntegerDigits = 1;
+      this.minimumFractionDigits = 0;
+      this.maximumFractionDigits = 0;
+      this.groupingUsed = false;
+      return this;
+    }
+    this.prefix = match[1];
+    this.suffix = match[3];
+    const numeric = match[2];
+    const dot = numeric.indexOf(".");
+    const integerPattern = dot < 0 ? numeric : numeric.slice(0, dot);
+    const fractionPattern = dot < 0 ? "" : numeric.slice(dot + 1);
+    this.minimumIntegerDigits = Math.max(1, (integerPattern.match(/0/g) || []).length);
+    this.minimumFractionDigits = (fractionPattern.match(/0/g) || []).length;
+    this.maximumFractionDigits = (fractionPattern.match(/[0#]/g) || []).length;
+    this.groupingUsed = integerPattern.includes(",");
+    return this;
+  }
+  toPattern() { return this.pattern; }
+  setGroupingUsed(value) { this.groupingUsed = Boolean(value); return this; }
+  isGroupingUsed() { return this.groupingUsed; }
+  setMinimumIntegerDigits(value) { this.minimumIntegerDigits = Math.max(0, Number(value)); return this; }
+  setMinimumFractionDigits(value) {
+    this.minimumFractionDigits = Math.max(0, Number(value));
+    this.maximumFractionDigits = Math.max(this.minimumFractionDigits, this.maximumFractionDigits);
+    return this;
+  }
+  setMaximumFractionDigits(value) {
+    this.maximumFractionDigits = Math.max(0, Number(value));
+    this.minimumFractionDigits = Math.min(this.minimumFractionDigits, this.maximumFractionDigits);
+    return this;
+  }
+  setDecimalSeparator(value) { this.symbols.decimalSeparator = String(value).charAt(0); }
+  setGroupingSeparator(value) { this.symbols.groupingSeparator = String(value).charAt(0); }
+  getDecimalFormatSymbols() { return this.symbols.clone(); }
+  setDecimalFormatSymbols(symbols) {
+    if (symbols) this.symbols = symbols.clone ? symbols.clone() : symbols;
+  }
+  setRoundingMode(mode) { this.roundingMode = String(mode); }
+  format(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return String(number);
+    const negative = number < 0;
+    const digits = Math.abs(number).toFixed(Math.max(0, this.maximumFractionDigits));
+    let [integerPart, fractionPart = ""] = digits.split(".");
+    while (fractionPart.length > this.minimumFractionDigits
+        && fractionPart.endsWith("0")) {
+      fractionPart = fractionPart.slice(0, -1);
+    }
+    integerPart = integerPart.padStart(this.minimumIntegerDigits, "0");
+    if (this.groupingUsed) {
+      const separator = this.symbols.groupingSeparator;
+      integerPart = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, separator);
+    }
+    let rendered = this.prefix + integerPart;
+    if (fractionPart.length || this.minimumFractionDigits > 0) {
+      rendered += this.symbols.decimalSeparator + fractionPart;
+    }
+    rendered += this.suffix;
+    if (negative) rendered = (this.symbols.minusSign || "-") + rendered;
+    return rendered;
+  }
+  parse(text) {
+    let value = String(text).trim();
+    if (this.symbols.groupingSeparator) {
+      value = value.split(this.symbols.groupingSeparator).join("");
+    }
+    if (this.symbols.decimalSeparator !== ".") {
+      value = value.replace(this.symbols.decimalSeparator, ".");
+    }
+    const parsed = Number(value);
+    if (Number.isNaN(parsed)) throw new TypeError("ParseException: " + text);
+    return parsed;
+  }
+  clone() {
+    const copy = new GoldClientJavaDecimalFormat(this.pattern, this.symbols.clone());
+    copy.groupingUsed = this.groupingUsed;
+    copy.roundingMode = this.roundingMode;
+    return copy;
+  }
+  toString() { return this.pattern; }
 }
 
 class GoldClientJavaProperties extends GoldClientJavaMap {
@@ -2218,6 +2372,13 @@ export const GoldClientRuntime = Object.freeze({
   },
   createJava(name, ...args) {
     switch (name) {
+      case "java.io.File": {
+        const FileClass = globalThis.goldClientForgeBindings?.virtualFileClass;
+        if (typeof FileClass !== "function") {
+          return this.unsupported("missing-file-adapter", "java.io.File requires the EaglerForge bindings adapter");
+        }
+        return new FileClass(...args);
+      }
       case "java.util.ArrayList":
       case "java.util.LinkedList":
       case "java.util.Vector":
@@ -2249,6 +2410,10 @@ export const GoldClientRuntime = Object.freeze({
         return new GoldClientJavaPriorityQueue(args[0] ?? [], args[1] ?? null);
       case "java.util.Locale":
         return new GoldClientJavaLocale(args[0] ?? "", args[1] ?? "", args[2] ?? "");
+      case "java.text.DecimalFormat":
+        return new GoldClientJavaDecimalFormat(args[0] ?? "#,##0.###", args[1] ?? null);
+      case "java.text.DecimalFormatSymbols":
+        return new GoldClientJavaDecimalFormatSymbols();
       case "java.util.BitSet":
         return new GoldClientJavaBitSet();
       case "java.util.Random":
@@ -2752,6 +2917,52 @@ export const GoldClientRuntime = Object.freeze({
     return this.unsupported("missing-java-static-adapter", owner + "." + method);
   },
   invokeStaticClass(className, methodName, ...args) {
+    if (className === "org.apache.logging.log4j.LogManager"
+        && (methodName === "getLogger" || methodName === "getFormatterLogger")) {
+      return GoldClientLog4jLogger.get(args[0]);
+    }
+    if (className === "com.google.common.base.Preconditions") {
+      const message = args[1] == null ? null : this.javaString(args[1]);
+      if (methodName === "checkNotNull") {
+        if (args[0] == null) throw new GoldClientJavaThrowable("java.lang.NullPointerException", message);
+        return args[0];
+      }
+      if (methodName === "checkArgument") {
+        if (!args[0]) throw new GoldClientJavaThrowable("java.lang.IllegalArgumentException", message);
+        return;
+      }
+      if (methodName === "checkState") {
+        if (!args[0]) throw new GoldClientJavaThrowable("java.lang.IllegalStateException", message);
+        return;
+      }
+      if (methodName === "checkElementIndex" || methodName === "checkPositionIndex") {
+        const index = Number(args[0]), size = Number(args[1]);
+        if (!Number.isInteger(index) || index < 0 || index > size
+            || (methodName === "checkElementIndex" && index === size)) {
+          throw new GoldClientJavaThrowable("java.lang.IndexOutOfBoundsException", message);
+        }
+        return index;
+      }
+    }
+    if (className === "com.google.common.base.Strings") {
+      if (methodName === "isNullOrEmpty") return args[0] == null || String(args[0]).length === 0;
+      if (methodName === "nullToEmpty") return args[0] == null ? "" : String(args[0]);
+      if (methodName === "emptyToNull") return args[0] == null || String(args[0]).length === 0 ? null : args[0];
+      if (methodName === "padStart" || methodName === "padEnd") {
+        const value = String(args[0] ?? ""), length = Number(args[1] ?? 0);
+        const pad = String(args[2] ?? " ");
+        const missing = Math.max(0, length - value.length);
+        const fill = pad.repeat(Math.ceil(missing / (pad.length || 1))).slice(0, missing);
+        return methodName === "padStart" ? fill + value : value + fill;
+      }
+      if (methodName === "repeat") {
+        const value = String(args[0] ?? "");
+        if (value.length * Number(args[1] ?? 0) > 1000000) {
+          throw new GoldClientJavaThrowable("java.lang.IllegalArgumentException", "too large");
+        }
+        return value.repeat(Math.max(0, Number(args[1] ?? 0)));
+      }
+    }
     const constructor = this.classes.get(className);
     if (!constructor) return this.unsupported("missing-static-class", className);
     this.ensureInitialized(constructor);
@@ -3003,6 +3214,15 @@ export const GoldClientRuntime = Object.freeze({
       if (className === "java.lang.Object") return receiver;
       if (GOLD_JAVA_SUPERCLASSES.has(className)) {
         return this.initializeJavaThrowable(receiver, className, args);
+      }
+      const service = this.platformService(className);
+      if (service) {
+        const bindings = globalThis.window?.goldClientForgeBindings ?? globalThis.goldClientForgeBindings;
+        const target = bindings?.[service];
+        if (typeof target?.construct === "function") {
+          return target.construct(className, args, receiver);
+        }
+        return this.unsupported("missing-platform-super-constructor-binding", className);
       }
       return this.unsupported("missing-super-constructor", className);
     }

@@ -587,12 +587,21 @@ public final class ModAnalyzer {
     return new InstructionModel(opcode, name, List.of(operands));
   }
 
+  /**
+   * Marks an LDC string so the IR does not have to guess its type from text.
+   * Without this marker "0.00" and 0.00 are indistinguishable after ASM
+   * resolves the constant, and the JavaScript backend emits a number for a
+   * string constructor argument.
+   */
+  static final String STRING_CONSTANT_MARKER = "\u0000string:";
+
   private static String constantText(Object value) {
     if (value == null) return "null";
     if (value instanceof Type type) return "Type(" + type.getDescriptor() + ")";
     if (value instanceof Handle handle) return handleText(handle);
     if (value instanceof ConstantDynamic dynamic)
       return "ConstantDynamic(" + dynamic.getName() + "," + dynamic.getDescriptor() + ")";
+    if (value instanceof String text) return STRING_CONSTANT_MARKER + text;
     return String.valueOf(value);
   }
 

@@ -724,7 +724,11 @@ public final class IntermediateRepresentationAnalyzer {
     }
 
     List<String> components = new ArrayList<>();
-    components.add(quoteJs(operands.get(4)));
+    String componentName = operands.get(4);
+    if (componentName.startsWith(ModAnalyzer.STRING_CONSTANT_MARKER)) {
+      componentName = componentName.substring(ModAnalyzer.STRING_CONSTANT_MARKER.length());
+    }
+    components.add(quoteJs(componentName));
     for (String descriptor : componentDescriptors) components.add(quoteJs(descriptor));
     String componentArguments = String.join(", ", components);
 
@@ -777,6 +781,9 @@ public final class IntermediateRepresentationAnalyzer {
         } else {
           String constant = constantIndex < constants.size()
               ? constants.get(constantIndex++) : "";
+          if (constant.startsWith(ModAnalyzer.STRING_CONSTANT_MARKER)) {
+            constant = constant.substring(ModAnalyzer.STRING_CONSTANT_MARKER.length());
+          }
           pieces.add(quoteJs(constant));
         }
       } else {
@@ -1026,6 +1033,9 @@ public final class IntermediateRepresentationAnalyzer {
       return opcode.substring("DCONST_".length());
     if (!instruction.operands().isEmpty()) {
       String value = instruction.operands().get(0);
+      if ("LDC".equals(opcode) && value.startsWith(ModAnalyzer.STRING_CONSTANT_MARKER)) {
+        return quoteJs(value.substring(ModAnalyzer.STRING_CONSTANT_MARKER.length()));
+      }
       if ("LDC".equals(opcode) && value.startsWith("Type(") && value.endsWith(")")) {
         String descriptor = value.substring(5, value.length() - 1);
         if (!descriptor.startsWith("(")) {

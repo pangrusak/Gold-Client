@@ -6,10 +6,25 @@ import com.goldclient.model.MethodModel;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class IntermediateRepresentationAnalyzerTest {
+  @Test
+  void keepsNumericLookingStringConstantsQuoted() {
+    MethodModel method = method("format", "()V", List.of(
+        instruction(18, "LDC", ModAnalyzer.STRING_CONSTANT_MARKER + "0.00"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertEquals(List.of("\"0.00\""), ir.operations().stream()
+        .filter(operation -> "CONSTANT".equals(operation.kind()))
+        .findFirst().orElseThrow().operands());
+  }
+
   @Test
   void translatesAconstNullAsARealNullConstant() {
     MethodModel method = method("nullValue", "()V", List.of(
