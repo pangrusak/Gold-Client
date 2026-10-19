@@ -40,7 +40,10 @@ declared event subscribers from original annotations.
   priority, and `receiveCanceled` metadata and registered before preInit.
 - [x] Translated `MinecraftForge.EVENT_BUS.register(...)` calls are intercepted
   by the runtime and routed to the host event bus. Instance `@SubscribeEvent`
-  methods are not registered automatically by the loader.
+  methods are not registered automatically by the loader. A
+  `register(SomeClass.class)` call registers that class's static
+  `@SubscribeEvent` methods, and translated class literals are cached so
+  `unregister`/identity checks use one object per class.
 - [x] The lifecycle dispatcher is phase-major: all mods are constructed before
   preInit, and every preInit handler runs before any init handler.
 - [x] `@SidedProxy` client implementations, `@Mod.Instance`,

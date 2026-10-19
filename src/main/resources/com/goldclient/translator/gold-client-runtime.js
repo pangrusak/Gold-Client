@@ -1457,21 +1457,32 @@ class GoldClientForgeEventBus {
       return GoldClientRuntime.unsupported(
         "missing-forge-event-bus", "MinecraftForge.EVENT_BUS.register");
     }
+    // Forge also accepts a Class argument and registers its static @SubscribeEvent
+    // methods. The translator represents a class literal as a frozen descriptor,
+    // not as the constructor itself, so detect that shape explicitly.
+    const classLiteralName = (target.__goldClassName && !target.__goldMethods)
+      ? target.__goldClassName : null;
+    const staticOnly = classLiteralName !== null;
     const owner = globalThis.goldClientCurrentForgeModId
-      ?? ("manual:" + (target.constructor?.__goldClassName ?? "anonymous"));
+      ?? ("manual:" + (classLiteralName ?? target.constructor?.__goldClassName ?? "anonymous"));
     const registrations = [];
     const visited = new Set();
-    let constructor = target.constructor;
+    let constructor = staticOnly
+      ? GoldClientRuntime.resolveClass(classLiteralName)
+      : target.constructor;
     while (constructor && !visited.has(constructor)) {
       visited.add(constructor);
+      const ownerClass = constructor;
       for (const [name, candidates] of constructor.__goldMethods ?? []) {
         for (const method of candidates) {
-          if (method.isStatic || !(method.annotations ?? []).includes(GOLD_SUBSCRIBE_EVENT)) {
-            continue;
-          }
+          if (method.isStatic !== staticOnly) continue;
+          if (!(method.annotations ?? []).includes(GOLD_SUBSCRIBE_EVENT)) continue;
           const eventType = goldForgeEventType(method.descriptor);
           if (!eventType) continue;
-          registrations.push(bus.subscribe(eventType, event => target[name](event), {
+          const callback = staticOnly
+            ? event => ownerClass[name](event)
+            : event => target[name](event);
+          registrations.push(bus.subscribe(eventType, callback, {
             owner,
             priority: method.subscribePriority ?? "NORMAL",
             receiveCanceled: method.receiveCanceled === true
@@ -1509,6 +1520,10 @@ class GoldClientForgeEventBus {
 }
 
 const GoldClientForgeEventBusInstance = new GoldClientForgeEventBus();
+
+// JVM Class objects are singletons. Caching keeps literal identity usable in
+// equality checks and lets EVENT_BUS.unregister(SomeClass.class) find its entry.
+const goldClientClassLiterals = new Map();
 
 export const GoldClientRuntime = Object.freeze({
   intDiv(a, b) {
@@ -1806,8 +1821,10 @@ export const GoldClientRuntime = Object.freeze({
     return constructor ? value instanceof constructor : false;
   },
   classLiteral(className) {
+    const cached = goldClientClassLiterals.get(className);
+    if (cached) return cached;
     const runtime = this;
-    return Object.freeze({
+    const literal = Object.freeze({
       __goldClassName: className,
       getName() { return className; },
       getSimpleName() { return className.split(/[.$]/).pop(); },
@@ -1821,6 +1838,8 @@ export const GoldClientRuntime = Object.freeze({
       },
       toString() { return (className.endsWith("[]") ? "class " : "class ") + className; }
     });
+    goldClientClassLiterals.set(className, literal);
+    return literal;
   },
   methodType(descriptor) {
     return Object.freeze({

@@ -226,12 +226,18 @@ class ForgeLoaderTest {
         export class ChildEvent extends BaseEvent {
           constructor(id) { super(); this.id = id; }
         }
+        export class StaticHandlers {
+          static onChild(event) { seen.push("static:" + event.id); }
+        }
         export class AMod {
           constructor() { seen.push("construct:a"); }
           preInit() {
             seen.push("preInit:a");
             GoldClientRuntime.getStaticField(
               "net.minecraftforge.common.MinecraftForge", "EVENT_BUS").register(this);
+            GoldClientRuntime.getStaticField(
+              "net.minecraftforge.common.MinecraftForge", "EVENT_BUS")
+              .register(GoldClientRuntime.classLiteral("sample.StaticHandlers"));
           }
           onTick(event) { seen.push("tick:a:" + event.id); }
           onBase(event) { seen.push("base:a:" + event.id); }
@@ -243,6 +249,17 @@ class ForgeLoaderTest {
         GoldClientRuntime.registerClass("sample.BaseEvent", BaseEvent);
         GoldClientRuntime.registerClass("sample.ChildEvent", ChildEvent, null,
           { superName: "sample.BaseEvent" });
+        GoldClientRuntime.registerClass("sample.StaticHandlers", StaticHandlers, null, {
+          methods: new Map([["onChild", [{
+            arity: 1,
+            descriptor: "(Lsample/BaseEvent;)V",
+            isStatic: true,
+            annotations: ["net.minecraftforge.fml.common.eventhandler.SubscribeEvent"],
+            subscribePriority: "NORMAL",
+            receiveCanceled: false,
+            fn: StaticHandlers.onChild
+          }]]])
+        });
         GoldClientRuntime.registerClass("sample.AMod", AMod, null, {
           methods: new Map([
             ["onTick", [{
@@ -267,7 +284,8 @@ class ForgeLoaderTest {
         });
         GoldClientRuntime.registerClass("sample.BMod", BMod);
         export const classes = Object.freeze({
-          "sample.AMod": {}, "sample.BMod": {}, "sample.BaseEvent": {}, "sample.ChildEvent": {}
+          "sample.AMod": {}, "sample.BMod": {}, "sample.BaseEvent": {}, "sample.ChildEvent": {},
+          "sample.StaticHandlers": {}
         });
         """, StandardCharsets.UTF_8);
 
@@ -299,7 +317,7 @@ class ForgeLoaderTest {
           "event:init:a", "event:init:b", "init:b",
           "event:postInit:a", "event:postInit:b",
           "event:loadComplete:a", "event:loadComplete:b",
-          "tick:a:7", "base:a:9"
+          "tick:a:7", "base:a:9", "static:9"
         ];
         if (seen.join(",") !== expectedPrefix.join(",")) {
           throw new Error("phase-major order mismatch: " + seen.join(","));
