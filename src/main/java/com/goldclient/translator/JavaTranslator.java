@@ -204,6 +204,14 @@ public final class JavaTranslator {
           i = constantMerge.lastIndex();
           continue;
         }
+        ConditionalRender decisionTree = renderDecisionTreeValue(
+            operations, i, end, indent, context, labels);
+        if (decisionTree != null) {
+          source.append(decisionTree.source());
+          complete &= decisionTree.complete();
+          i = decisionTree.lastIndex();
+          continue;
+        }
         ConditionalRender branchChain = renderConditionalValueChain(
             operations, i, end, indent, context, labels);
         if (branchChain != null) {
@@ -2014,6 +2022,176 @@ public final class JavaTranslator {
     if (lowered == null || lowered.isBlank()) return null;
     source.append(indent(indent)).append(lowered).append("\n");
     return new ConditionalRender(source.toString(), true, sinkIndex);
+  }
+
+  /**
+   * Rebuilds a decision tree that materializes one value per path. javac lowers
+   * short-circuit boolean expressions with intermediate labels, so a leaf block
+   * can be reached both as a branch target and by falling through the previous
+   * block. Nested ternaries keep the evaluation order of every path, and the
+   * shared sink becomes a single return or assignment instead of an unresolved
+   * jump to an unknown value.
+   */
+  private static ConditionalRender renderDecisionTreeValue(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    if (!"CONDITIONAL_BRANCH".equals(operations.get(branchIndex).kind())) return null;
+    int blockEnd = nextLabelIndex(operations, branchIndex + 1, end);
+    java.util.Set<Integer> owned = new java.util.HashSet<>();
+    java.util.Set<Integer> active = new java.util.HashSet<>();
+    java.util.Map<Integer, String> memo = new java.util.HashMap<>();
+    int[] sink = {-1};
+    String expression = decisionTreeValue(
+        operations, branchIndex, blockEnd, end, labels, owned, active, memo, sink, 0);
+    if (expression == null || sink[0] < 0 || sink[0] >= end) return null;
+    if (!"LABEL".equals(operations.get(sink[0]).kind())) return null;
+    int sinkIndex = nextExecutableIndex(operations, sink[0] + 1, end);
+    if (sinkIndex < 0 || sinkIndex >= end) return null;
+    IrOperationModel sinkOperation = operations.get(sinkIndex);
+    boolean returnsValue = "RETURN".equals(sinkOperation.kind());
+    boolean assignsValue = "LOCAL_WRITE".equals(sinkOperation.kind())
+        && sinkOperation.operands().size() >= 2;
+    if (!returnsValue && !assignsValue) return null;
+    if (!"<unknown>".equals(
+        sinkOperation.operands().get(sinkOperation.operands().size() - 1))) return null;
+
+    // The tree owns every block it evaluated. A branch into one of those labels
+    // from outside the consumed range would mean the blocks are shared, and
+    // consuming them here would hide that path.
+    owned.add(sink[0]);
+    for (int i = 0; i < operations.size(); i++) {
+      if (i >= branchIndex && i <= sinkIndex) continue;
+      IrOperationModel operation = operations.get(i);
+      if (!"CONDITIONAL_BRANCH".equals(operation.kind())
+          && !"JUMP".equals(operation.kind())) continue;
+      if (operation.operands().isEmpty()) continue;
+      Integer targetIndex = labels.get(
+          labelKey(operation.operands().get(operation.operands().size() - 1)));
+      if (targetIndex != null && owned.contains(targetIndex)) return null;
+    }
+
+    StringBuilder source = new StringBuilder();
+    if (returnsValue) {
+      source.append(indent(indent)).append("return ").append(expression).append(";\n");
+    } else {
+      String local = sinkOperation.operands().get(0);
+      String assignment = context.declareLocal(local) ? "var " + local : local;
+      source.append(indent(indent)).append(assignment).append(" = ")
+          .append(expression).append(";\n");
+    }
+    return new ConditionalRender(source.toString(), true, sinkIndex);
+  }
+
+  private static String decisionTreeValue(
+      List<IrOperationModel> operations,
+      int blockStart,
+      int blockEnd,
+      int end,
+      Map<String, Integer> labels,
+      java.util.Set<Integer> owned,
+      java.util.Set<Integer> active,
+      java.util.Map<Integer, String> memo,
+      int[] sink,
+      int depth) {
+    if (depth > 24) return null;
+    List<String> conditions = new java.util.ArrayList<>();
+    List<Integer> targets = new java.util.ArrayList<>();
+    int lastValueIndex = -1;
+    for (int i = blockStart; i < blockEnd; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("LABEL".equals(operation.kind())) return null;
+      if ("TRY_BEGIN".equals(operation.kind()) || "TRY_END".equals(operation.kind())
+          || "CATCH_BEGIN".equals(operation.kind())) return null;
+      if ("CONDITIONAL_BRANCH".equals(operation.kind())) {
+        if (operation.operands().size() < 2) return null;
+        String condition = operation.operands().get(0);
+        if (condition.contains("<unknown>") || condition.contains("<exception>")) return null;
+        Integer target = labels.get(labelKey(operation.operands().get(1)));
+        if (target == null || target <= blockStart || target >= end) return null;
+        conditions.add(condition);
+        targets.add(target);
+        continue;
+      }
+      if ("JUMP".equals(operation.kind())) {
+        // A jump only ends a pure value block; condition blocks fall through to
+        // the next label so every path stays inside the tree.
+        if (!conditions.isEmpty() || lastValueIndex < 0
+            || operation.operands().isEmpty()) return null;
+        Integer target = labels.get(labelKey(operation.operands().get(0)));
+        if (target == null || target <= blockStart || target >= end) return null;
+        String value = expressionFromOperation(operations.get(lastValueIndex));
+        if (value == null) return null;
+        if (sink[0] < 0) sink[0] = target;
+        else if (sink[0] != target) return null;
+        return value;
+      }
+      if ("RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())) return null;
+      if (!isExpressionOnly(operation) || "DROP".equals(operation.kind())
+          || "DUP".equals(operation.kind()) || "SWAP".equals(operation.kind())
+          || "STACK_OPERATION".equals(operation.kind())) return null;
+      String value = expressionFromOperation(operation);
+      if (value == null) return null;
+      if (value.contains("<unknown>") || value.contains("<exception>")) return null;
+      lastValueIndex = i;
+    }
+    if (conditions.isEmpty()) {
+      // A leaf without a jump falls straight into the sink label.
+      if (lastValueIndex < 0) return null;
+      String value = expressionFromOperation(operations.get(lastValueIndex));
+      if (value == null) return null;
+      if (sink[0] < 0) sink[0] = blockEnd;
+      else if (sink[0] != blockEnd) return null;
+      return value;
+    }
+    String fallthrough = decisionTreeValueAt(
+        operations, blockEnd, end, labels, owned, active, memo, sink, depth + 1);
+    if (fallthrough == null) return null;
+    String expression = fallthrough;
+    for (int k = conditions.size() - 1; k >= 0; k--) {
+      String targetValue = decisionTreeValueAt(
+          operations, targets.get(k), end, labels, owned, active, memo, sink, depth + 1);
+      if (targetValue == null) return null;
+      expression = "(" + normalizeCondition(conditions.get(k)) + " ? " + targetValue
+          + " : " + expression + ")";
+      if (expression.length() > 8192) return null;
+    }
+    return expression;
+  }
+
+  private static String decisionTreeValueAt(
+      List<IrOperationModel> operations,
+      int labelIndex,
+      int end,
+      Map<String, Integer> labels,
+      java.util.Set<Integer> owned,
+      java.util.Set<Integer> active,
+      java.util.Map<Integer, String> memo,
+      int[] sink,
+      int depth) {
+    if (labelIndex < 0 || labelIndex >= end) return null;
+    if (!"LABEL".equals(operations.get(labelIndex).kind())) return null;
+    String cached = memo.get(labelIndex);
+    if (cached != null) return cached;
+    if (!active.add(labelIndex)) return null;
+    owned.add(labelIndex);
+    int blockEnd = nextLabelIndex(operations, labelIndex + 1, end);
+    String value = decisionTreeValue(
+        operations, labelIndex + 1, blockEnd, end, labels, owned, active, memo, sink, depth);
+    active.remove(labelIndex);
+    if (value != null) memo.put(labelIndex, value);
+    return value;
+  }
+
+  private static int nextLabelIndex(
+      List<IrOperationModel> operations, int start, int end) {
+    for (int i = start; i < end; i++) {
+      if ("LABEL".equals(operations.get(i).kind())) return i;
+    }
+    return end;
   }
 
   private static String constantBlockValue(
