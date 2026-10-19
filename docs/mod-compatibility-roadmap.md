@@ -53,6 +53,10 @@ The profile injector prefers this file when present and emits a classic
   `2` rather than claiming a complete translation. Two `BookmarkList`
   try-with-resources methods were corrected by rendering the JVM catch-all
   handler as `finally` instead of an unreachable sibling `catch (Throwable)`.
+  The two `JeiTextureMap` methods now leave their try block through a labeled
+  break when the normal-path join sits past catch-only code; they remain
+  incomplete because the merged multi-catch cannot prove finally behavior when
+  a typed handler itself throws.
 - [x] Generated AppleSkin and AppleSkin+JEI modules pass `node --check` and
   import through `forge-lifecycle.js` without executing game APIs.
 - [x] `--single-file --compact` packs the AppleSkin+JEI build (398 modules) into

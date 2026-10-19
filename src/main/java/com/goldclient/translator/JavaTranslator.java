@@ -611,11 +611,17 @@ public final class JavaTranslator {
     }
     Integer normalTarget =
         normalJoinLabel == null ? null : labels.get(labelKey(normalJoinLabel));
+    // A target just past the range boundary belongs to the enclosing block
+    // (javac may place exception markers between the range end and the label).
+    // It cannot be inlined here and must be reached with a labeled break.
+    boolean targetAtRangeExit = normalTarget != null && normalTarget >= end
+        && allExceptionMarkers(operations, end, normalTarget);
     boolean escapingNormalPath = normalCompletionJump >= 0 && normalTarget != null
-        && normalTarget < end
+        && (normalTarget < end || targetAtRangeExit)
         && normalTarget > resumeIndex
         && !fallsThroughTo(normalTarget, resumeIndex, operations);
-    boolean inlineTailBlock = escapingNormalPath && canInlineJumpBlock(operations, end);
+    boolean inlineTailBlock = escapingNormalPath && normalTarget < end
+        && canInlineJumpBlock(operations, end);
     String breakLabel = escapingNormalPath && !inlineTailBlock ? "_try" + begin : null;
 
     int[] handlerEnds = new int[handlerBegins.length];
@@ -1045,6 +1051,15 @@ public final class JavaTranslator {
     source.append(indent(indent)).append("}\n");
     boolean complete = tryBody.complete() && catchBody.complete() && finallyBody.complete();
     return new ConditionalRender(source.toString(), complete, finallyThrow);
+  }
+
+  private static boolean allExceptionMarkers(
+      List<IrOperationModel> operations, int from, int to) {
+    if (from < 0 || to > operations.size() || from > to) return false;
+    for (int i = from; i < to; i++) {
+      if (!isExceptionBoundary(operations.get(i))) return false;
+    }
+    return true;
   }
 
   private static boolean isExceptionBoundary(IrOperationModel operation) {

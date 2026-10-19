@@ -579,6 +579,44 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void leavesTryAtRangeBoundaryWhenCatchOnlyCodePrecedesNormalJoin() {
+    IrMethodModel method = new IrMethodModel(
+        "conditionalTry",
+        "()V",
+        List.of(
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("cond == 0", "Ltry"), 0),
+            new IrOperationModel("JUMP", List.of("Lnormal"), 1),
+            new IrOperationModel(
+                "TRY_BEGIN", List.of("Ltry", "Lend", "Lhandler", "java.lang.RuntimeException", "false"), 2),
+            new IrOperationModel("LABEL", List.of("Ltry"), 2),
+            new IrOperationModel("METHOD_CALL", List.of("work()"), 3),
+            new IrOperationModel(
+                "TRY_END", List.of("Ltry", "Lend", "Lhandler", "java.lang.RuntimeException", "false"), 4),
+            new IrOperationModel("LABEL", List.of("Lend"), 4),
+            new IrOperationModel("JUMP", List.of("Lnormal"), 5),
+            new IrOperationModel(
+                "CATCH_BEGIN", List.of("Ltry", "Lend", "Lhandler", "java.lang.RuntimeException", "false"), 6),
+            new IrOperationModel("LABEL", List.of("Lhandler"), 6),
+            new IrOperationModel("LOCAL_WRITE", List.of("local1", "<exception>"), 7),
+            new IrOperationModel("METHOD_CALL", List.of("logFailure()"), 8),
+            new IrOperationModel("THROW", List.of("local1"), 9),
+            new IrOperationModel("LABEL", List.of("LcatchOnly"), 10),
+            new IrOperationModel("METHOD_CALL", List.of("catchOnly()"), 10),
+            new IrOperationModel("RETURN", List.of(), 11),
+            new IrOperationModel("LABEL", List.of("Lnormal"), 12),
+            new IrOperationModel("METHOD_CALL", List.of("after()"), 12),
+            new IrOperationModel("RETURN", List.of(), 13)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("break _try"), result.source());
+    assertTrue(result.source().contains("catchOnly();"), result.source());
+    assertTrue(result.source().contains("after();"), result.source());
+    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
   void matchesExceptionMarkersWithBracketedLabels() {
     IrMethodModel method = new IrMethodModel("bracketedGuard", "()V", List.of(
         new IrOperationModel("TRY_BEGIN",
