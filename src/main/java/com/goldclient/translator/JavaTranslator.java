@@ -627,11 +627,48 @@ public final class JavaTranslator {
       }
     }
     if (bodyLimit < bodyStart) bodyLimit = bodyStart;
+    // Nested regions may place their handlers after this region's TRY_END:
+    // javac emits try-with-resources cleanup after the protected range. The
+    // body has to reach those handlers, but never past this region's own
+    // handler clauses.
+    boolean extendedBody = false;
+    if (bodyLimit == tryEnd && handlerBegins[0] > bodyLimit) {
+      int handlerLimit = handlerBegins[0];
+      for (int i = bodyStart; i < bodyLimit; i++) {
+        IrOperationModel candidate = operations.get(i);
+        if (!"TRY_BEGIN".equals(candidate.kind()) || candidate.operands().size() < 3) continue;
+        String nestedStart = candidate.operands().get(0);
+        String nestedEnd = candidate.operands().get(1);
+        boolean extendsBeyond = false;
+        for (int j = bodyLimit; j < handlerLimit; j++) {
+          IrOperationModel marker = operations.get(j);
+          if (marker.operands().size() >= 3
+              && labelKey(nestedStart).equals(labelKey(marker.operands().get(0)))
+              && labelKey(nestedEnd).equals(labelKey(marker.operands().get(1)))) {
+            extendsBeyond = true;
+            break;
+          }
+        }
+        if (extendsBeyond) {
+          bodyLimit = handlerLimit;
+          extendedBody = true;
+          break;
+        }
+      }
+    }
+    // The normal path may leave the try body for the block after the handler
+    // clauses. Falling out of the generated try/catch reaches that block, so
+    // stop before the completion jump instead of lowering it.
+    if (normalCompletionJump >= 0 && normalCompletionJump < bodyLimit
+        && normalTarget != null && handlerEnd >= lastCatchBegin
+        && normalTarget >= handlerEnd) {
+      bodyLimit = normalCompletionJump;
+    }
     RenderResult tryBodyCore = renderRange(
         operations, bodyStart, bodyLimit, indent + 1, context, labels);
     StringBuilder tryBodySource = new StringBuilder(tryBodyCore.source());
     boolean tryBodyComplete = tryBodyCore.complete();
-    boolean renderedNormalPath = false;
+    boolean renderedNormalPath = extendedBody;
     if (bodyLimit < tryEnd) {
       RenderResult normalPath = renderRange(
           operations, bodyLimit, handlerBegins[0], indent + 1, context, labels);
