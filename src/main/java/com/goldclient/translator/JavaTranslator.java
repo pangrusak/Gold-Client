@@ -563,6 +563,7 @@ public final class JavaTranslator {
     Integer normalTarget =
         normalJoinLabel == null ? null : labels.get(labelKey(normalJoinLabel));
     boolean escapingNormalPath = normalCompletionJump >= 0 && normalTarget != null
+        && normalTarget < end
         && normalTarget > resumeIndex
         && !fallsThroughTo(normalTarget, resumeIndex, operations);
     boolean inlineTailBlock = escapingNormalPath && canInlineJumpBlock(operations, end);
@@ -608,14 +609,40 @@ public final class JavaTranslator {
     while (bodyStart < tryEnd
         && ("LABEL".equals(operations.get(bodyStart).kind())
             || "TRY_BEGIN".equals(operations.get(bodyStart).kind()))) bodyStart++;
+    // A region that starts exactly at this region's end label emits its
+    // TRY_BEGIN marker before this region's TRY_END. The body has to stop at
+    // that marker: the nested region belongs to the normal completion path,
+    // which is rendered inside the try block below.
+    int bodyLimit = tryEnd;
+    Integer protectedEndIndex = labels.get(labelKey(endLabel));
+    if (protectedEndIndex != null) {
+      for (int i = bodyStart; i < tryEnd; i++) {
+        IrOperationModel candidate = operations.get(i);
+        if (!"TRY_BEGIN".equals(candidate.kind()) || candidate.operands().isEmpty()) continue;
+        Integer nestedStart = labels.get(labelKey(candidate.operands().get(0)));
+        if (nestedStart != null && nestedStart >= protectedEndIndex) {
+          bodyLimit = i;
+          break;
+        }
+      }
+    }
+    if (bodyLimit < bodyStart) bodyLimit = bodyStart;
     RenderResult tryBodyCore = renderRange(
-        operations, bodyStart, tryEnd, indent + 1, context, labels);
+        operations, bodyStart, bodyLimit, indent + 1, context, labels);
     StringBuilder tryBodySource = new StringBuilder(tryBodyCore.source());
     boolean tryBodyComplete = tryBodyCore.complete();
+    boolean renderedNormalPath = false;
+    if (bodyLimit < tryEnd) {
+      RenderResult normalPath = renderRange(
+          operations, bodyLimit, handlerBegins[0], indent + 1, context, labels);
+      tryBodySource.append(normalPath.source());
+      tryBodyComplete &= normalPath.complete();
+      renderedNormalPath = true;
+    }
     // The normal path often contains its return/cleanup immediately after
     // TRY_END. Keep that path inside the generated try block instead of
     // skipping it when the catch handlers are consumed.
-    if (normalCompletionEnd > tryEnd + 1
+    if (!renderedNormalPath && normalCompletionEnd > tryEnd + 1
         && isSimpleNormalCompletion(operations, tryEnd + 1, normalCompletionEnd)) {
       RenderResult normalCompletion = renderRange(
           operations, tryEnd + 1, normalCompletionEnd, indent + 1, context, labels);
@@ -716,8 +743,17 @@ public final class JavaTranslator {
     int normalBlockStart = normalTarget == null
         ? -1 : inlinedBlockStart(operations, normalTarget, labels);
     if (breakLabel != null) {
+      // Stop before a sibling handler of an enclosing region: that block is
+      // rendered by the enclosing try and does not run after this catch.
+      int catchOnlyEnd = normalBlockStart;
+      for (int i = resumeIndex; i < catchOnlyEnd; i++) {
+        if ("CATCH_BEGIN".equals(operations.get(i).kind())) {
+          catchOnlyEnd = i;
+          break;
+        }
+      }
       RenderResult catchOnly = renderRange(
-          operations, resumeIndex, normalBlockStart, indent + 1, context, labels);
+          operations, resumeIndex, catchOnlyEnd, indent + 1, context, labels);
       complete &= catchOnly.complete();
       source.append(catchOnly.source());
       source.append(indent(indent)).append("}\n");
@@ -3647,6 +3683,7 @@ public final class JavaTranslator {
         String type = trimmed.substring(4, open);
         String argument = trimmed.substring(open + 1, trimmed.length() - 1);
         if (!argument.isBlank() && !isQuoted(argument) && !isJavaLiteral(argument)
+            && argument.indexOf(',') < 0 && !argument.contains("\"")
             && !looksLikeExpression(argument)) {
           return "new " + type + "(\"" + escapeJava(argument) + "\")";
         }
