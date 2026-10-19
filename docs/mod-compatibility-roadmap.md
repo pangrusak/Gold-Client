@@ -59,6 +59,14 @@ declared event subscribers from original annotations.
 - [x] Missing required mod dependencies, duplicate IDs, missing proxies,
   unsupported handler signatures, server-only entries, and absent superclasses
   become explicit blockers rather than guessed behavior.
+- [x] Java throwables keep their class identity. `new java.*Exception(...)` is
+  lowered to a runtime throwable, and `instanceof`/`checkcast`/catch dispatch
+  follow both translated superclasses/interfaces and a built-in hierarchy for
+  common JDK exception, error, I/O, and concurrency classes.
+- [x] Superclass and same-class constructor delegation (`super(...)` /
+  `this(...)`) is routed through the runtime instead of emitting an invalid
+  JavaScript `this(...)` call. Translated classes extending a JDK throwable
+  initialize message, cause, suppression, and stack-trace state.
 
 ### Not demonstrated / unsupported
 
@@ -68,6 +76,10 @@ declared event subscribers from original annotations.
 - [ ] Mixins, coremods, access transformers, and Forge class transformation.
 - [ ] Rendering, input, recipe registration/lookup, networking, resources,
   capabilities, and most Minecraft/Forge API calls.
+- [ ] Precise classification of platform exceptions thrown by host bindings.
+  A plain JavaScript error is treated as `java.lang.Throwable` unless its
+  message starts with a known JDK exception class; hosts can throw
+  `GoldClientRuntime.javaException(...)` when a specific Java type is required.
 - [ ] Server-only mods in this client-side host. They are blocked explicitly.
 - [ ] Any claim that `READY_FOR_REAL_FORGE_HOST` means the mods run. It means
   the discovered lifecycle plan has no structural blockers and is ready to be

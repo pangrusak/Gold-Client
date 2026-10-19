@@ -1,5 +1,144 @@
 // Small compatibility helpers used by generated JavaScript.
 // This is not a replacement for Minecraft/Forge or a full JVM runtime.
+
+// Translated classes do not use JavaScript `extends`, and JDK exception
+// classes are not part of a mod bundle at all. Record the Java hierarchy here
+// so instanceof/checkcast/catch dispatch can still follow Java semantics.
+const GOLD_JAVA_SUPERCLASSES = new Map([
+  ["java.lang.Throwable", "java.lang.Object"],
+  ["java.lang.Error", "java.lang.Throwable"],
+  ["java.lang.AssertionError", "java.lang.Error"],
+  ["java.lang.LinkageError", "java.lang.Error"],
+  ["java.lang.ClassFormatError", "java.lang.LinkageError"],
+  ["java.lang.NoClassDefFoundError", "java.lang.LinkageError"],
+  ["java.lang.UnsatisfiedLinkError", "java.lang.LinkageError"],
+  ["java.lang.ExceptionInInitializerError", "java.lang.LinkageError"],
+  ["java.lang.AbstractMethodError", "java.lang.LinkageError"],
+  ["java.lang.NoSuchFieldError", "java.lang.LinkageError"],
+  ["java.lang.NoSuchMethodError", "java.lang.LinkageError"],
+  ["java.lang.IncompatibleClassChangeError", "java.lang.LinkageError"],
+  ["java.lang.InstantiationError", "java.lang.IncompatibleClassChangeError"],
+  ["java.lang.IllegalAccessError", "java.lang.IncompatibleClassChangeError"],
+  ["java.lang.VirtualMachineError", "java.lang.Error"],
+  ["java.lang.StackOverflowError", "java.lang.VirtualMachineError"],
+  ["java.lang.OutOfMemoryError", "java.lang.VirtualMachineError"],
+  ["java.lang.InternalError", "java.lang.VirtualMachineError"],
+  ["java.lang.UnknownError", "java.lang.VirtualMachineError"],
+  ["java.lang.Exception", "java.lang.Throwable"],
+  ["java.lang.RuntimeException", "java.lang.Exception"],
+  ["java.lang.ArithmeticException", "java.lang.RuntimeException"],
+  ["java.lang.ArrayStoreException", "java.lang.RuntimeException"],
+  ["java.lang.ClassCastException", "java.lang.RuntimeException"],
+  ["java.lang.EnumConstantNotPresentException", "java.lang.RuntimeException"],
+  ["java.lang.IllegalArgumentException", "java.lang.RuntimeException"],
+  ["java.lang.IllegalStateException", "java.lang.RuntimeException"],
+  ["java.lang.IllegalMonitorStateException", "java.lang.RuntimeException"],
+  ["java.lang.IndexOutOfBoundsException", "java.lang.RuntimeException"],
+  ["java.lang.ArrayIndexOutOfBoundsException", "java.lang.IndexOutOfBoundsException"],
+  ["java.lang.StringIndexOutOfBoundsException", "java.lang.IndexOutOfBoundsException"],
+  ["java.lang.NegativeArraySizeException", "java.lang.RuntimeException"],
+  ["java.lang.NullPointerException", "java.lang.RuntimeException"],
+  ["java.lang.NumberFormatException", "java.lang.IllegalArgumentException"],
+  ["java.lang.SecurityException", "java.lang.RuntimeException"],
+  ["java.lang.TypeNotPresentException", "java.lang.RuntimeException"],
+  ["java.lang.UnsupportedOperationException", "java.lang.RuntimeException"],
+  ["java.util.NoSuchElementException", "java.lang.RuntimeException"],
+  ["java.util.ConcurrentModificationException", "java.lang.RuntimeException"],
+  ["java.util.InputMismatchException", "java.util.NoSuchElementException"],
+  ["java.util.EmptyStackException", "java.lang.RuntimeException"],
+  ["java.util.MissingResourceException", "java.lang.RuntimeException"],
+  ["java.util.IllformedLocaleException", "java.lang.IllegalArgumentException"],
+  ["java.lang.ReflectiveOperationException", "java.lang.Exception"],
+  ["java.lang.ClassNotFoundException", "java.lang.ReflectiveOperationException"],
+  ["java.lang.IllegalAccessException", "java.lang.ReflectiveOperationException"],
+  ["java.lang.InstantiationException", "java.lang.ReflectiveOperationException"],
+  ["java.lang.NoSuchFieldException", "java.lang.ReflectiveOperationException"],
+  ["java.lang.NoSuchMethodException", "java.lang.ReflectiveOperationException"],
+  ["java.lang.InterruptedException", "java.lang.Exception"],
+  ["java.lang.CloneNotSupportedException", "java.lang.Exception"],
+  ["java.io.IOException", "java.lang.Exception"],
+  ["java.io.FileNotFoundException", "java.io.IOException"],
+  ["java.io.EOFException", "java.io.IOException"],
+  ["java.io.UncheckedIOException", "java.lang.RuntimeException"],
+  ["java.io.UnsupportedEncodingException", "java.io.IOException"],
+  ["java.net.URISyntaxException", "java.lang.Exception"],
+  ["java.net.MalformedURLException", "java.io.IOException"],
+  ["java.net.SocketException", "java.io.IOException"],
+  ["java.net.UnknownHostException", "java.io.IOException"],
+  ["java.sql.SQLException", "java.lang.Exception"],
+  ["java.text.ParseException", "java.lang.Exception"],
+  ["java.security.GeneralSecurityException", "java.lang.Exception"],
+  ["java.util.concurrent.ExecutionException", "java.lang.Exception"],
+  ["java.util.concurrent.TimeoutException", "java.lang.Exception"],
+  ["java.util.concurrent.CancellationException", "java.lang.IllegalStateException"],
+  ["java.util.concurrent.CompletionException", "java.lang.RuntimeException"],
+  ["javax.crypto.BadPaddingException", "java.security.GeneralSecurityException"],
+  ["javax.crypto.IllegalBlockSizeException", "java.security.GeneralSecurityException"],
+  ["javax.crypto.NoSuchPaddingException", "java.security.GeneralSecurityException"],
+  ["java.util.zip.DataFormatException", "java.lang.Exception"],
+  ["java.util.zip.ZipException", "java.io.IOException"]
+]);
+
+const GOLD_JAVA_SIMPLE_NAMES = new Map();
+for (const name of GOLD_JAVA_SUPERCLASSES.keys()) {
+  const simple = name.slice(name.lastIndexOf(".") + 1);
+  if (!GOLD_JAVA_SIMPLE_NAMES.has(simple)) GOLD_JAVA_SIMPLE_NAMES.set(simple, name);
+}
+
+// Throwable objects need identity, type, message, cause and suppression
+// behavior. A plain JavaScript Error cannot carry a Java class name, so this
+// subclass records it explicitly.
+class GoldClientJavaThrowable extends Error {
+  constructor(className, ...args) {
+    const message = args[0] === null || args[0] === undefined ? "" : String(args[0]);
+    super(message);
+    this.name = className;
+    this.javaClassName = className;
+    this.javaThrowable = true;
+    this.cause = args.length > 1 ? args[1] : null;
+    this.suppressedExceptions = [];
+    this.javaStackTrace = [];
+  }
+  getMessage() { return this.message; }
+  getLocalizedMessage() { return this.message; }
+  getCause() { return this.cause ?? null; }
+  initCause(cause) {
+    if (this.cause != null) throw new GoldClientJavaThrowable("java.lang.IllegalStateException", "Can't overwrite cause");
+    this.cause = cause;
+    return this;
+  }
+  addSuppressed(exception) {
+    if (exception === this) {
+      throw new GoldClientJavaThrowable("java.lang.IllegalArgumentException", "Self-suppression not permitted");
+    }
+    this.suppressedExceptions.push(exception);
+  }
+  getSuppressed() { return this.suppressedExceptions.slice(); }
+  getStackTrace() { return this.javaStackTrace.slice(); }
+  setStackTrace(stackTrace) { this.javaStackTrace = Array.from(stackTrace ?? []); }
+  fillInStackTrace() { return this; }
+  printStackTrace() { if (typeof console !== "undefined") console.error(this.toString()); }
+  toString() { return this.message ? this.name + ": " + this.message : this.name; }
+}
+
+function goldClientJavaClassName(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value.javaClassName === "string") return value.javaClassName;
+  if (typeof value.__goldClassName === "string") return value.__goldClassName;
+  const constructorName = value.constructor?.__goldClassName;
+  if (typeof constructorName === "string") return constructorName;
+  if (value instanceof Error) {
+    const message = String(value.message ?? "");
+    const match = /^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)(?::|$)/.exec(message);
+    if (match) {
+      const resolved = GOLD_JAVA_SIMPLE_NAMES.get(match[1]) ?? match[1];
+      if (GOLD_JAVA_SUPERCLASSES.has(resolved)) return resolved;
+    }
+    return "java.lang.Throwable";
+  }
+  return null;
+}
+
 class GoldClientJavaList {
   constructor(initial = []) {
     this.items = Array.isArray(initial) ? initial.slice() : [];
@@ -1761,6 +1900,10 @@ export const GoldClientRuntime = Object.freeze({
   javaString(value) {
     if (value === null || value === undefined) return "null";
     if (typeof value === "boolean") return value ? "true" : "false";
+    if (typeof value === "object" && value.javaThrowable === true) {
+      const name = value.javaClassName ?? value.name ?? "java.lang.Throwable";
+      return value.message ? name + ": " + value.message : name;
+    }
     if (typeof value === "object") {
       const method = value.toString;
       if (typeof method === "function" && method !== Object.prototype.toString) {
@@ -1818,10 +1961,37 @@ export const GoldClientRuntime = Object.freeze({
   checkCast(value, className) {
     if (value === null || value === undefined) return value;
     const constructor = this.classes.get(className);
-    if (constructor && !(value instanceof constructor)) {
-      throw new TypeError("ClassCastException: " + className);
+    const known = constructor || GOLD_JAVA_SUPERCLASSES.has(className)
+        || className === "java.lang.String" || className === "java.lang.Number"
+        || className === "java.lang.Boolean" || className === "java.lang.CharSequence";
+    if (known && !this.instanceOf(value, className)) {
+      throw new GoldClientJavaThrowable("java.lang.ClassCastException", className);
     }
     return value;
+  },
+  javaClassName(value) {
+    return goldClientJavaClassName(value);
+  },
+  javaAssignable(actual, target) {
+    if (!actual || !target) return false;
+    if (target === "java.lang.Object") return true;
+    const pending = [actual];
+    const visited = new Set();
+    while (pending.length) {
+      const name = pending.pop();
+      if (!name || visited.has(name)) continue;
+      visited.add(name);
+      if (name === target) return true;
+      const translated = this.classes.get(name);
+      if (translated) {
+        if (translated.__goldSuperName) pending.push(translated.__goldSuperName);
+        for (const implemented of translated.__goldInterfaces ?? []) pending.push(implemented);
+      } else {
+        const parent = GOLD_JAVA_SUPERCLASSES.get(name);
+        if (parent) pending.push(parent);
+      }
+    }
+    return false;
   },
   instanceOf(value, className) {
     if (value === null || value === undefined) return false;
@@ -1836,7 +2006,9 @@ export const GoldClientRuntime = Object.freeze({
       return typeof value === "string" || value instanceof String;
     }
     const constructor = this.classes.get(className);
-    return constructor ? value instanceof constructor : false;
+    if (constructor && value instanceof constructor) return true;
+    const actual = this.javaClassName(value);
+    return actual ? this.javaAssignable(actual, className) : false;
   },
   classLiteral(className) {
     const cached = goldClientClassLiterals.get(className);
@@ -1969,6 +2141,11 @@ export const GoldClientRuntime = Object.freeze({
   },
   resolveClass(name) {
     return this.classes.get(name) ?? null;
+  },
+  // Constructs a Java throwable without pretending it is an arbitrary host
+  // object. Used by the JavaScript translator for `new java.*Exception(...)`.
+  javaException(className, ...args) {
+    return new GoldClientJavaThrowable(className, ...args);
   },
   create(name, ...args) {
     const adapter = GoldClientMinecraftAdapters.get(name);
@@ -2540,7 +2717,41 @@ export const GoldClientRuntime = Object.freeze({
     if (methodName === "toString") return this.javaString(receiver);
     if (methodName === "getClass") {
       if (Array.isArray(receiver)) return this.classLiteral("java.lang.Object[]");
-      return this.classLiteral(receiver?.constructor?.__goldClassName ?? "java.lang.Object");
+      return this.classLiteral(
+        this.javaClassName(receiver) ?? receiver?.constructor?.__goldClassName ?? "java.lang.Object");
+    }
+    if (receiver.javaThrowable === true || receiver instanceof Error) {
+      switch (methodName) {
+        case "getMessage":
+        case "getLocalizedMessage":
+          return receiver.message ?? null;
+        case "getCause":
+          return receiver.cause ?? null;
+        case "initCause":
+          if (receiver.cause != null) {
+            throw new GoldClientJavaThrowable("java.lang.IllegalStateException", "Can't overwrite cause");
+          }
+          receiver.cause = args[0];
+          return receiver;
+        case "addSuppressed":
+          if (args[0] === receiver) {
+            throw new GoldClientJavaThrowable("java.lang.IllegalArgumentException", "Self-suppression not permitted");
+          }
+          (receiver.suppressedExceptions ??= []).push(args[0]);
+          return;
+        case "getSuppressed":
+          return (receiver.suppressedExceptions ?? []).slice();
+        case "getStackTrace":
+          return (receiver.javaStackTrace ?? []).slice();
+        case "setStackTrace":
+          receiver.javaStackTrace = Array.from(args[0] ?? []);
+          return;
+        case "fillInStackTrace":
+          return receiver;
+        case "printStackTrace":
+          if (typeof console !== "undefined") console.error(this.javaString(receiver));
+          return;
+      }
     }
     if (Array.isArray(receiver) && methodName === "clone") return receiver.slice();
     if (methodName === "compareTo") {
@@ -2726,6 +2937,40 @@ export const GoldClientRuntime = Object.freeze({
       if (target) return target;
     }
     return null;
+  },
+  // Runs a specific class's constructor against an existing receiver. This is
+  // needed because generated classes have no JavaScript `extends` chain, so a
+  // translated constructor cannot call `super(...)` directly.
+  invokeNamedConstructor(receiver, className, ...args) {
+    if (receiver === null || receiver === undefined) {
+      throw new GoldClientJavaThrowable("java.lang.NullPointerException", "<init>");
+    }
+    const constructor = this.classes.get(className);
+    if (!constructor) {
+      if (className === "java.lang.Object") return receiver;
+      if (GOLD_JAVA_SUPERCLASSES.has(className)) {
+        return this.initializeJavaThrowable(receiver, className, args);
+      }
+      return this.unsupported("missing-super-constructor", className);
+    }
+    this.ensureInitialized(constructor);
+    const candidates = constructor.__goldMethods?.get("<init>") ?? [];
+    const target = this.bestMethod(candidates, args, false);
+    if (!target) {
+      return this.unsupported("missing-super-constructor", className + "/" + args.length);
+    }
+    return target.fn.apply(receiver, args);
+  },
+  initializeJavaThrowable(receiver, className, args) {
+    if (receiver.javaThrowable) return receiver;
+    receiver.javaThrowable = true;
+    receiver.javaClassName = receiver.constructor?.__goldClassName ?? className;
+    receiver.name = receiver.javaClassName;
+    receiver.message = args[0] === null || args[0] === undefined ? "" : String(args[0]);
+    receiver.cause = args.length > 1 ? args[1] : null;
+    receiver.suppressedExceptions = [];
+    receiver.javaStackTrace = [];
+    return receiver;
   },
   invoke(receiver, methods, name, args, optional = false) {
     const className = receiver?.constructor?.__goldClassName;

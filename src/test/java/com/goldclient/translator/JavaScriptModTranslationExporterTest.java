@@ -277,6 +277,137 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void javaThrowableHierarchyAndConstructionArePreserved() throws Exception {
+    Path output = tempDir.resolve("java-throwable-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("java-throwable-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const io = r.javaException("java.io.IOException", "boom");
+        if (!r.instanceOf(io, "java.io.IOException")) throw new Error("exact throwable type lost");
+        if (!r.instanceOf(io, "java.lang.Exception")) throw new Error("Exception supertype lost");
+        if (!r.instanceOf(io, "java.lang.Throwable")) throw new Error("Throwable supertype lost");
+        if (r.instanceOf(io, "java.lang.RuntimeException")) throw new Error("IOException is not RuntimeException");
+        if (r.instanceOf(io, "java.lang.Error")) throw new Error("IOException is not Error");
+        if (r.invokeInstance(io, "getMessage") !== "boom") throw new Error("getMessage mismatch");
+        if (r.invokeInstance(io, "getClass").getName() !== "java.io.IOException") {
+          throw new Error("getClass mismatch");
+        }
+        const numberFormat = r.javaException("java.lang.NumberFormatException", "bad");
+        if (!r.instanceOf(numberFormat, "java.lang.IllegalArgumentException")) {
+          throw new Error("NumberFormatException hierarchy lost");
+        }
+        if (r.instanceOf(r.javaException("java.lang.IllegalArgumentException", "bad"),
+            "java.lang.NumberFormatException")) {
+          throw new Error("instanceof accepted a supertype as a subtype");
+        }
+
+        const methods = new Map([
+          ["<init>", [{
+            arity: 1,
+            descriptor: "(Ljava/lang/String;)V",
+            isStatic: false,
+            isAbstract: false,
+            annotations: [],
+            fn: function (message) {
+              return r.invokeNamedConstructor(this, "java.lang.RuntimeException", message);
+            }
+          }]]
+        ]);
+        class TranslatedException {
+          constructor(...args) { r.invoke(this, methods, "<init>", args, true); }
+        }
+        r.registerClass("sample.TranslatedException", TranslatedException, null,
+          { superName: "java.lang.RuntimeException", interfaces: [], methods });
+        const translated = new TranslatedException("oops");
+        if (!r.instanceOf(translated, "sample.TranslatedException")) {
+          throw new Error("translated throwable identity lost");
+        }
+        if (!r.instanceOf(translated, "java.lang.RuntimeException")
+            || !r.instanceOf(translated, "java.lang.Exception")
+            || !r.instanceOf(translated, "java.lang.Throwable")) {
+          throw new Error("translated throwable supertype lost");
+        }
+        if (r.invokeInstance(translated, "getMessage") !== "oops") {
+          throw new Error("translated throwable message lost");
+        }
+        let caught = null;
+        try {
+          throw translated;
+        } catch (error) {
+          if (!r.instanceOf(error, "java.lang.RuntimeException")) throw error;
+          caught = error;
+        }
+        if (caught !== translated) throw new Error("catch dispatch lost the throwable");
+
+        const baseMethods = new Map([
+          ["<init>", [{
+            arity: 1,
+            descriptor: "(Ljava/lang/String;)V",
+            isStatic: false,
+            isAbstract: false,
+            annotations: [],
+            fn: function (message) {
+              return r.invokeNamedConstructor(this, "java.lang.RuntimeException", message);
+            }
+          }]]
+        ]);
+        class TranslatedBaseException {
+          constructor(...args) { r.invoke(this, baseMethods, "<init>", args, true); }
+        }
+        r.registerClass("sample.TranslatedBaseException", TranslatedBaseException, null,
+          { superName: "java.lang.RuntimeException", interfaces: [], methods: baseMethods });
+        const childMethods = new Map([
+          ["<init>", [{
+            arity: 1,
+            descriptor: "(Ljava/lang/String;)V",
+            isStatic: false,
+            isAbstract: false,
+            annotations: [],
+            fn: function (message) {
+              return r.invokeNamedConstructor(this, "sample.TranslatedBaseException", message);
+            }
+          }]]
+        ]);
+        class TranslatedChildException {
+          constructor(...args) { r.invoke(this, childMethods, "<init>", args, true); }
+        }
+        r.registerClass("sample.TranslatedChildException", TranslatedChildException, null,
+          { superName: "sample.TranslatedBaseException", interfaces: [], methods: childMethods });
+        const child = new TranslatedChildException("nested");
+        if (!r.instanceOf(child, "sample.TranslatedChildException")
+            || !r.instanceOf(child, "sample.TranslatedBaseException")
+            || !r.instanceOf(child, "java.lang.RuntimeException")
+            || !r.instanceOf(child, "java.lang.Exception")
+            || r.instanceOf(child, "java.lang.Error")) {
+          throw new Error("two-level translated throwable hierarchy lost");
+        }
+        if (r.invokeInstance(child, "getMessage") !== "nested") {
+          throw new Error("two-level translated throwable message lost");
+        }
+        if (r.checkCast(translated, "java.lang.Exception") !== translated) {
+          throw new Error("checkcast rejected a throwable supertype");
+        }
+        let badCast = false;
+        try { r.checkCast("not-an-exception", "java.lang.Exception"); }
+        catch (error) { badCast = r.instanceOf(error, "java.lang.ClassCastException"); }
+        if (!badCast) throw new Error("checkcast accepted a non-throwable");
+        console.log("java-throwable-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Java throwable runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("java-throwable-ok", outputText);
+  }
+
+  @Test
   void javaRandomMatchesTheJdkSeededSequence() throws Exception {
     Path output = tempDir.resolve("java-random-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);

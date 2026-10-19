@@ -587,16 +587,6 @@ public final class JavaScriptTranslator {
         continue;
       }
 
-      // Exception construction has a dedicated lowering to JavaScript Error in
-      // rewriteCode; preserve it for that pass instead of routing it through createJava.
-      if (className.startsWith("java.lang.")
-          && (className.endsWith("Exception") || className.endsWith("Error")
-              || className.endsWith("Throwable"))) {
-        output.append(source, i, close + 1);
-        i = close + 1;
-        continue;
-      }
-
       String args = source.substring(nameEnd + 1, close);
       int expressionEnd = close;
       // Recover duplicated NEW/DUP receivers represented as new Type()(args).
@@ -606,6 +596,18 @@ public final class JavaScriptTranslator {
           args = source.substring(close + 2, chainedClose);
           expressionEnd = chainedClose;
         }
+      }
+      // Java throwables need their exact class name for catch/instanceof
+      // dispatch, so do not collapse them into a plain JavaScript Error.
+      if (isJavaThrowableClass(className)) {
+        output.append("GoldClientRuntime.javaException(")
+            .append(quote(className.replace('/', '.')));
+        if (!args.isBlank()) {
+          output.append(", ").append(rewriteConstructorExpressions(args));
+        }
+        output.append(")");
+        i = expressionEnd + 1;
+        continue;
       }
       String runtimeHelper = className.startsWith("java.") || className.startsWith("javax.")
           ? "createJava" : "create";
@@ -618,6 +620,13 @@ public final class JavaScriptTranslator {
       i = expressionEnd + 1;
     }
     return output.toString();
+  }
+
+  private static boolean isJavaThrowableClass(String className) {
+    if (!className.startsWith("java.") && !className.startsWith("javax.")) return false;
+    String simpleName = className.substring(className.lastIndexOf('.') + 1);
+    return simpleName.endsWith("Exception") || simpleName.endsWith("Error")
+        || simpleName.endsWith("Throwable");
   }
 
   private static int matchingParenthesis(String source, int open) {
@@ -666,12 +675,6 @@ public final class JavaScriptTranslator {
         .replace("System.currentTimeMillis(", "Date.now(")
         .replace("Integer.parseInt(", "Number.parseInt(")
         .replace("Long.parseLong(", "Number.parseInt(")
-        .replace("new java.lang.IllegalStateException", "new Error")
-        .replace("new java.lang.IllegalArgumentException", "new Error")
-        .replace("new java.lang.NullPointerException", "new TypeError")
-        .replace("new java.lang.UnsupportedOperationException", "new Error")
-        .replace("new java.lang.RuntimeException", "new Error")
-        .replace("new java.lang.Exception", "new Error")
         .replace("java.lang.String.valueOf(", "String(")
         .replace("Integer.toString(", "String(")
         .replace("Boolean.toString(", "String(")

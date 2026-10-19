@@ -116,7 +116,9 @@ class JavaScriptTranslatorTest {
     String lowered = new JavaScriptTranslator().lowerJavaSyntax(source);
     assertTrue(lowered.contains("console.log(\"java.lang.IllegalStateException should stay text\")"),
         lowered);
-    assertTrue(lowered.contains("throw new Error(\"real failure\")"), lowered);
+    assertTrue(lowered.contains(
+        "throw GoldClientRuntime.javaException(\"java.lang.IllegalStateException\", \"real failure\")"),
+        lowered);
   }
 
   @Test

@@ -500,6 +500,18 @@ public final class IntermediateRepresentationAnalyzer {
 
     String call;
     boolean retainedConstructorReference = false;
+    if ("<init>".equals(name) && receiver != null && !receiver.trim().startsWith("new ")) {
+      // A constructor call on an existing receiver is either a superclass
+      // constructor or same-class constructor delegation. Generated classes do
+      // not use JavaScript `extends`, so `this(...)` is not valid; invoke the
+      // declaring class's <init> against this receiver through the runtime.
+      StringBuilder delegated = new StringBuilder("GoldClientRuntime.invokeNamedConstructor(")
+          .append(receiver).append(", ").append(quoteJs(owner.replace('/', '.')));
+      for (String argument : args) delegated.append(", ").append(argument);
+      delegated.append(")");
+      operations.add(op("METHOD_CALL", List.of(delegated.toString()), sourceInstruction));
+      return;
+    }
     if ("<init>".equals(name) && receiver != null) {
       call = receiver + "(" + String.join(", ", args) + ")";
       // NEW/DUP leaves one reference beneath the constructor receiver. Replace
