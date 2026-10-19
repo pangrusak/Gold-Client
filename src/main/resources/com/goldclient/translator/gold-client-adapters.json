@@ -12,6 +12,7 @@
     { "owner": "net.minecraft.util.math.MathHelper", "kind": "static-utils" },
     { "owner": "net.minecraft.util.text.TextFormatting", "kind": "enum" },
     { "owner": "net.minecraft.item.EnumRarity", "kind": "enum" },
+    { "owner": "net.minecraftforge.fml.relauncher.Side", "kind": "enum" },
     { "owner": "net.minecraft.util.NonNullList", "kind": "collection" }
   ]
 }

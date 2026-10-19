@@ -408,6 +408,55 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void forgeSideEnumIsStableAndComplete() throws Exception {
+    Path output = tempDir.resolve("forge-side-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("forge-side-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const owner = "net.minecraftforge.fml.relauncher.Side";
+        const client = r.getStaticField(owner, "CLIENT");
+        const server = r.getStaticField(owner, "SERVER");
+        if (client === server) throw new Error("Side constants are not distinct");
+        if (r.getStaticField(owner, "CLIENT") !== client) throw new Error("Side.CLIENT is not stable");
+        if (r.getStaticField(owner, "SERVER") !== server) throw new Error("Side.SERVER is not stable");
+        if (r.invokeInstance(client, "isClient") !== true || r.invokeInstance(client, "isServer") !== false) {
+          throw new Error("Side.CLIENT predicates are wrong");
+        }
+        if (r.invokeInstance(server, "isServer") !== true || r.invokeInstance(client, "isServer") !== false) {
+          throw new Error("Side.SERVER predicates are wrong");
+        }
+        if (r.invokeInstance(client, "getOpposite") !== server) throw new Error("Side.CLIENT opposite mismatch");
+        if (r.invokeInstance(server, "getOpposite") !== client) throw new Error("Side.SERVER opposite mismatch");
+        if (r.invokeInstance(client, "name") !== "CLIENT" || r.invokeInstance(server, "name") !== "SERVER") {
+          throw new Error("Side.name mismatch");
+        }
+        if (r.invokePlatformStatic(owner, "valueOf", "CLIENT") !== client) {
+          throw new Error("Side.valueOf mismatch");
+        }
+        const values = r.invokePlatformStatic(owner, "values");
+        if (values.length !== 2 || values[0] !== client || values[1] !== server) {
+          throw new Error("Side.values mismatch");
+        }
+        if (!r.instanceOf(client, owner) || r.instanceOf("CLIENT", owner)) {
+          throw new Error("Side instanceof mismatch");
+        }
+        console.log("forge-side-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Forge Side runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("forge-side-ok", outputText);
+  }
+
+  @Test
   void javaRandomMatchesTheJdkSeededSequence() throws Exception {
     Path output = tempDir.resolve("java-random-runtime");
     new JavaScriptModTranslationExporter().export(List.of(), output);

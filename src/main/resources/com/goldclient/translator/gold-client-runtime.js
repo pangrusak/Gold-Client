@@ -1393,6 +1393,40 @@ class GoldClientMinecraftNonNullList extends GoldClientJavaList {
   }
 }
 
+// Forge's Side enum. Generated code compares Side.CLIENT/Side.SERVER by
+// identity, so these must be stable singletons. Host bindings and lifecycle
+// events should return the same objects so a comparison made in mod code sees
+// the host's side rather than a look-alike value.
+class GoldClientMinecraftSide {
+  constructor(constantName, ordinal) {
+    this.constantName = constantName;
+    this.ordinalValue = ordinal;
+  }
+  name() { return this.constantName; }
+  ordinal() { return this.ordinalValue; }
+  isClient() { return this.constantName === "CLIENT"; }
+  isServer() { return this.constantName === "SERVER"; }
+  getOpposite() {
+    return this.constantName === "CLIENT"
+      ? GoldClientMinecraftSide.SERVER : GoldClientMinecraftSide.CLIENT;
+  }
+  toString() { return this.constantName; }
+  equals(other) { return other != null && this.constantName === other.constantName; }
+  hashCode() { return this.ordinalValue; }
+  compareTo(other) { return Math.sign((other?.ordinal?.() ?? 0) - this.ordinal()); }
+  static values() { return GoldClientMinecraftSide.VALUES.slice(); }
+  static valueOf(name) {
+    const found = GoldClientMinecraftSide.VALUES.find(value => value.constantName === String(name));
+    if (!found) {
+      throw new TypeError("IllegalArgumentException: No enum constant net.minecraftforge.fml.relauncher.Side." + name);
+    }
+    return found;
+  }
+}
+GoldClientMinecraftSide.CLIENT = new GoldClientMinecraftSide("CLIENT", 0);
+GoldClientMinecraftSide.SERVER = new GoldClientMinecraftSide("SERVER", 1);
+GoldClientMinecraftSide.VALUES = [GoldClientMinecraftSide.CLIENT, GoldClientMinecraftSide.SERVER];
+
 // Built-in platform adapters. These registrations are the runtime's single
 // source of truth for owners served without host bindings;
 // gold-client-adapters.json mirrors them for the Java compatibility planner and
@@ -1541,6 +1575,14 @@ registerMinecraftAdapter("net.minecraft.item.EnumRarity", {
   staticMethods: {
     values: () => GoldClientMinecraftEnumRarity.values(),
     valueOf: args => GoldClientMinecraftEnumRarity.valueOf(args[0])
+  }
+});
+registerMinecraftAdapter("net.minecraftforge.fml.relauncher.Side", {
+  kind: "enum",
+  staticFields: GoldClientMinecraftSide,
+  staticMethods: {
+    values: () => GoldClientMinecraftSide.values(),
+    valueOf: args => GoldClientMinecraftSide.valueOf(args[0])
   }
 });
 registerMinecraftAdapter("net.minecraft.util.NonNullList", {
@@ -1963,7 +2005,8 @@ export const GoldClientRuntime = Object.freeze({
     const constructor = this.classes.get(className);
     const known = constructor || GOLD_JAVA_SUPERCLASSES.has(className)
         || className === "java.lang.String" || className === "java.lang.Number"
-        || className === "java.lang.Boolean" || className === "java.lang.CharSequence";
+        || className === "java.lang.Boolean" || className === "java.lang.CharSequence"
+        || className === "net.minecraftforge.fml.relauncher.Side";
     if (known && !this.instanceOf(value, className)) {
       throw new GoldClientJavaThrowable("java.lang.ClassCastException", className);
     }
@@ -2004,6 +2047,9 @@ export const GoldClientRuntime = Object.freeze({
     if (className === "java.lang.Boolean") return typeof value === "boolean";
     if (className === "java.lang.CharSequence") {
       return typeof value === "string" || value instanceof String;
+    }
+    if (className === "net.minecraftforge.fml.relauncher.Side") {
+      return value instanceof GoldClientMinecraftSide;
     }
     const constructor = this.classes.get(className);
     if (constructor && value instanceof constructor) return true;

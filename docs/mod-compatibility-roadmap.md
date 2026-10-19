@@ -74,6 +74,11 @@ declared event subscribers from original annotations.
   initializer still falls through to host bindings; lifecycle handlers see it.
   This runtime query is not part of `forge-compatibility-plan.json`, which stays
   conservative about `Loader` as a whole.
+- [x] `net.minecraftforge.fml.relauncher.Side` is a built-in enum adapter.
+  `Side.CLIENT`/`Side.SERVER` are stable singletons with `isClient`, `isServer`,
+  `getOpposite`, `name`, `ordinal`, `values`, and `valueOf`, so generated side
+  comparisons and network-message side filters work without a host binding.
+  Host bindings and lifecycle events should return these same objects.
 
 ### Not demonstrated / unsupported
 
