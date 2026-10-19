@@ -268,6 +268,14 @@ public final class JavaTranslator {
           i = forwardDecision.lastIndex();
           continue;
         }
+        ConditionalRender guardBlock = renderGuardBlockChain(
+            operations, i, end, indent, context, labels);
+        if (guardBlock != null) {
+          source.append(guardBlock.source());
+          complete &= guardBlock.complete();
+          i = guardBlock.lastIndex();
+          continue;
+        }
         ConditionalRender branch = renderConditional(
             operations, i, end, indent, context, labels);
 
@@ -351,6 +359,16 @@ public final class JavaTranslator {
               complete = false;
             }
           }
+          continue;
+        }
+
+        // Several jumps often share the same loop edge through a block whose
+        // only content is another jump (javac places it for conditional
+        // expressions in loop tests). Following that chain keeps the shared
+        // edge visible as continue/break instead of leaving it unresolved.
+        String edgeAction = loopEdgeAction(operations, target, context, labels);
+        if (edgeAction != null) {
+          source.append(indent(indent)).append(edgeAction).append(";\n");
           continue;
         }
 
@@ -2401,6 +2419,163 @@ public final class JavaTranslator {
       return context.isActiveLoop(loopTarget) ? i : -1;
     }
     return -1;
+  }
+
+  /**
+   * Resolves the loop edge a jump ultimately performs. javac shares one back
+   * edge between several jumps by routing them through a block whose only
+   * content is another jump; following that chain keeps the edge visible as
+   * {@code continue}/{@code break} instead of leaving it unresolved.
+   */
+  private static String loopEdgeAction(
+      List<IrOperationModel> operations,
+      String targetLabel,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    String label = labelKey(targetLabel);
+    for (int hop = 0; hop < 8; hop++) {
+      if (context.isActiveLoop(label)) {
+        return context.hasLoopLabel(label) ? "continue " + jsLabel(label) : "continue";
+      }
+      if (context.isBreakTarget(label)) {
+        if (context.isInnermostBreakTarget(label)) return "break";
+        String loopLabel = context.loopExitLabel(label);
+        return loopLabel == null ? null : "break " + jsLabel(loopLabel);
+      }
+      Integer index = labels.get(label);
+      if (index == null) return null;
+      int jumpIndex = -1;
+      for (int i = index + 1; i < operations.size(); i++) {
+        IrOperationModel operation = operations.get(i);
+        if (isBranchValueMetadata(operation)) continue;
+        if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) jumpIndex = i;
+        break;
+      }
+      if (jumpIndex < 0) return null;
+      label = labelKey(operations.get(jumpIndex).operands().get(0));
+    }
+    return null;
+  }
+
+  /** The label a jump or conditional branch transfers control to. */
+  private static String branchTarget(IrOperationModel operation) {
+    if ("CONDITIONAL_BRANCH".equals(operation.kind()) && operation.operands().size() >= 2) {
+      return operation.operands().get(1);
+    }
+    if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+      return operation.operands().get(0);
+    }
+    return null;
+  }
+
+  /**
+   * Structures a condition chain that guards one shared block which ends by
+   * leaving the enclosing loop. javac lowers loop tests such as
+   * {@code if (a || (b = ...)) { ...; continue; }} by letting each condition
+   * either enter a block placed right before the join or skip it. The block is
+   * rendered once per arm, which keeps every path faithful even though a plain
+   * nested if/else cannot express the sharing (a skip condition sends only its
+   * taken edge to the join, while its fall-through still enters the block).
+   */
+  private static ConditionalRender renderGuardBlockChain(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    IrOperationModel first = operations.get(branchIndex);
+    if (first.operands().size() < 2) return null;
+    Integer blockIndex = labels.get(labelKey(first.operands().get(1)));
+    if (blockIndex == null || blockIndex <= branchIndex || blockIndex >= end) return null;
+
+    List<Integer> conditionals = new java.util.ArrayList<>();
+    List<Boolean> entersBlock = new java.util.ArrayList<>();
+    Integer joinIndex = null;
+    for (int i = branchIndex; i < blockIndex; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("CONDITIONAL_BRANCH".equals(operation.kind()) && operation.operands().size() >= 2) {
+        Integer target = labels.get(labelKey(operation.operands().get(1)));
+        if (target == null) return null;
+        if (target.equals(blockIndex)) {
+          entersBlock.add(true);
+        } else if (target > blockIndex && target < end) {
+          if (joinIndex == null) joinIndex = target;
+          else if (!joinIndex.equals(target)) return null;
+          entersBlock.add(false);
+        } else {
+          return null;
+        }
+        conditionals.add(i);
+        continue;
+      }
+      switch (operation.kind()) {
+        case "JUMP", "RETURN", "THROW", "TABLE_SWITCH", "LOOKUP_SWITCH",
+            "TRY_BEGIN", "TRY_END", "CATCH_BEGIN" -> {
+          return null;
+        }
+        default -> {
+        }
+      }
+    }
+    if (conditionals.isEmpty() || joinIndex == null) return null;
+
+    // The shared block has to end by leaving the enclosing loop: the duplicated
+    // arms then never need to fall into the join.
+    int blockTail = -1;
+    for (int i = blockIndex; i < joinIndex; i++) {
+      if (!isLoopExitMetadata(operations.get(i))) blockTail = i;
+    }
+    if (blockTail < 0) return null;
+    IrOperationModel tail = operations.get(blockTail);
+    if (!"JUMP".equals(tail.kind()) || tail.operands().isEmpty()) return null;
+    if (loopEdgeAction(operations, tail.operands().get(0), context, labels) == null) return null;
+
+    // No path outside the chain may enter it, and the block may not jump back
+    // into the condition work: the arms are independent copies.
+    for (int i = 0; i < operations.size(); i++) {
+      if (i >= branchIndex && i < joinIndex) continue;
+      String target = branchTarget(operations.get(i));
+      if (target == null) continue;
+      Integer index = labels.get(labelKey(target));
+      if (index != null && index > branchIndex && index < joinIndex) return null;
+    }
+    for (int i = blockIndex; i < joinIndex; i++) {
+      String target = branchTarget(operations.get(i));
+      if (target == null) continue;
+      Integer index = labels.get(labelKey(target));
+      if (index != null && index > branchIndex && index < blockIndex) return null;
+    }
+
+    StringBuilder source = new StringBuilder();
+    boolean complete = true;
+    int cursor = branchIndex;
+    for (int k = 0; k < conditionals.size(); k++) {
+      int conditionIndex = conditionals.get(k);
+      RenderResult work = renderRange(operations, cursor, conditionIndex, indent, context, labels);
+      source.append(work.source());
+      complete &= work.complete();
+      boolean toBlock = entersBlock.get(k);
+      String condition = normalizeCondition(operations.get(conditionIndex).operands().get(0));
+      int armStart = toBlock ? blockIndex : conditionIndex + 1;
+      RenderResult arm = renderRange(operations, armStart, joinIndex, indent + 1, context, labels);
+      complete &= arm.complete();
+      source.append(indent(indent)).append("if (")
+          .append(toBlock ? condition : negateCondition(condition)).append(") {\n")
+          .append(arm.source())
+          .append(indent(indent)).append("}\n");
+      cursor = conditionIndex + 1;
+      if (!toBlock) {
+        // The skipped path leaves for the join while the fall-through still
+        // runs the rest of the chain, which the arm just rendered.
+        cursor = joinIndex;
+        break;
+      }
+    }
+    RenderResult tailWork = renderRange(operations, cursor, joinIndex, indent, context, labels);
+    source.append(tailWork.source());
+    complete &= tailWork.complete();
+    return new ConditionalRender(source.toString(), complete, joinIndex - 1);
   }
 
   /**
