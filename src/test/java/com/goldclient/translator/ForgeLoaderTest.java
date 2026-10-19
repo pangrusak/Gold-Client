@@ -430,17 +430,20 @@ class ForgeLoaderTest {
         const path = require("node:path");
         const vm = require("node:vm");
         const source = fs.readFileSync(path.join(__dirname, "gold-client-forge.js"), "utf8");
-        const window = {};
+        // Browsers expose window === globalThis. Keep that shape so the host
+        // installation path cannot define a non-writable property and then
+        // assign it again.
         const sandbox = {
-          window, console, Date, Math, Map, Set, Promise, Object, Array, String, Number,
+          console, Date, Math, Map, Set, Promise, Object, Array, String, Number,
           Error, TypeError, RangeError, RegExp, JSON, setTimeout, clearTimeout, queueMicrotask
         };
         sandbox.globalThis = sandbox;
+        sandbox.window = sandbox;
         vm.createContext(sandbox);
         vm.runInContext(source, sandbox, { filename: "gold-client-forge.js" });
         const bundle = sandbox.GoldClientForge;
         if (!bundle) throw new Error("GoldClientForge missing");
-        if (!window.goldClientForgeEntrypoint) throw new Error("entrypoint was not installed");
+        if (!sandbox.window.goldClientForgeEntrypoint) throw new Error("entrypoint was not installed");
         if (!Array.isArray(bundle.mods) || bundle.mods.length !== 2) {
           throw new Error("mod metadata missing from the single-file bundle");
         }
@@ -462,7 +465,7 @@ class ForgeLoaderTest {
         (async () => {
           const started = await bundle.start(bindings);
           if (started.modCount !== 2) throw new Error("single-file start did not run two mods");
-          const host = window.goldClientForgeHost;
+          const host = sandbox.window.goldClientForgeHost;
           host.postEvent("net.minecraftforge.event.TickEvent$ClientTickEvent", { id: 7 });
           const ChildEvent = bundle.runtime.resolveClass("sample.ChildEvent");
           host.postEvent("sample.ChildEvent", new ChildEvent(9));

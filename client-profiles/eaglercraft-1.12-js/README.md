@@ -178,3 +178,33 @@ resource-merging, reflection, or arbitrary-mod compatibility.
 The generic Eaglercraft injector now requires the supplied 1.12.2 client to expose exactly one verified `nmc_Minecraft_runTick($this)` hook. It wraps that hook and publishes `window.goldClientClientApi` (API version 1), with tick subscriptions, a defensive player snapshot, and capability flags. The snapshot currently probes position plus best-effort health, hunger, saturation, and exhaustion fields; unavailable values remain `null`. The injector does not modify the original input HTML and refuses clients missing the known hook.
 
 This is a live-data bridge, not yet full AppleSkin or Xaero's Minimap support. AppleSkin's original Forge event subscribers and game-GL HUD/tooltip drawing are not yet mapped to the browser client renderer. Xaero's terrain map additionally requires a verified live block/chunk sampling adapter, which is explicitly reported as `blockSampling: false`; the bridge must not fabricate terrain. These are the next compatibility gates before claiming either original mod works. The current CI tests execute the generated injector against a mock TeaVM-shaped player/world and verify snapshot/tick dispatch; they do not replace a real browser run of either mod.
+
+## EaglerForge candidate build and browser evidence
+
+The stripped `EaglerForgeInjector/` can produce an isolated candidate that
+contains EaglerForge 2.7.97, the pinned SRG-to-MCP member table, the
+`goldClientForgeBindings` adapter, and an optional single-file Gold Client
+bundle:
+
+```bash
+node client-profiles/eaglercraft-1.12-js/build-forge-client.cjs \
+  unminified-clients/1.12.2.html /tmp/gold-client-forge \
+  --bundle output/appleskin-only/gold-client-forge.js
+```
+
+The input client is never modified. The command writes
+`forge-client-provenance.json`, including input/output SHA-256 values and the
+adapter/member-map/bundle hashes. Its `browserExecutionVerified` and
+`modExecutionVerified` fields are packaging flags, not claims that a browser
+or a mod was executed.
+
+A separate headless-Firefox run of the generated AppleSkin candidate verified
+that `ModAPI`, `goldClientForgeBindings`, and `GoldClientForge` exist, that the
+19,659-entry member table loads, and that SRG member calls resolve against the
+real client. The same run completed AppleSkin's `preInit`, `init`, `postInit`,
+and `loadComplete` phases through `GoldClientForge.start(bindings)`. JEI is
+blocked earlier because translated `JeiTextureMap` extends the native
+`TextureMap` class; the adapter raises `unsupported-platform-superclass`
+rather than guessing how to copy native constructor state. Rendering, real
+networking, registries, capabilities, and most gameplay APIs remain explicit
+unsupported boundaries.

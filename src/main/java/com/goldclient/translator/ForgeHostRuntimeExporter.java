@@ -107,12 +107,17 @@ public final class ForgeHostRuntimeExporter {
           // calls. Creating one host just to install it would disconnect stopMod.
           const host = createForgeHost(bindings);
           const started = await startForgeMods(host);
-          if (globalThis.window) {
+          // In a browser window === globalThis. Defining the host as
+          // non-writable on window and then assigning globalThis would throw.
+          // Install it once on each distinct global object instead.
+          Object.defineProperty(globalThis, "goldClientForgeHost", {
+            value: host, configurable: true, writable: false
+          });
+          if (globalThis.window && globalThis.window !== globalThis) {
             Object.defineProperty(globalThis.window, "goldClientForgeHost", {
               value: host, configurable: true, writable: false
             });
           }
-          globalThis.goldClientForgeHost = host;
           return Object.freeze({
             started: Object.freeze(started),
             modCount: forgeMods.length,

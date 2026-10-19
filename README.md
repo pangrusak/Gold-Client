@@ -8,9 +8,9 @@ Gold Client is an experimental Java-bytecode-to-JavaScript translation pipeline 
 
 **This is not yet a general-purpose Forge mod converter.** Successful export means the represented bytecode was emitted; it does not prove semantic equivalence or that the translated mod runs in Minecraft. The target runtime still needs concrete implementations for Minecraft/Forge APIs, events, registries, rendering, resources, networking, configuration, logging, and other services.
 
-The latest previously recorded JEI 1.12.2 benchmark reported 371 classes, 2,195 methods, zero methods marked incomplete in the represented IR, and **348 adapter-required declarations**. These are different measures: zero incomplete methods does not mean zero adapters or complete game compatibility. The adapter work is intended to reduce the latter count by implementing reusable runtime mappings, not by relabeling unresolved APIs as supported.
+The latest recorded AppleSkin + JEI loader build translates 393 classes and 2,287 methods, with zero adapter-required declarations in `loader-plan.json` and **four incomplete JEI methods**. Those measures are not proof of game compatibility: zero incomplete methods does not mean zero platform bindings, and an adapter declaration is not a runtime implementation. The four incomplete JEI methods are listed in `loader-plan.json` and keep the translation-complete flag false.
 
-**Build/CI status:** the loader work in this worktree has been verified with `mvn package`, `mvn --batch-mode verify` (257 tests, 0 failures, 0 errors, 3 optional skips), and both standalone Node test files. The older `5e7ef56` failure note is historical; re-run the build before repeating it.
+**Build/CI status:** the current checkpoint passed `mvn --batch-mode verify` (260 tests, 0 failures, 0 errors, 3 optional skips) and all three standalone Node suites. The older `5e7ef56` failure note is historical.
 
 ## Usage
 
@@ -81,6 +81,45 @@ or incomplete methods remain, but still writes the bundle and plan for
 diagnostics. A real host must supply `window.goldClientForgeBindings`;
 Mixin/coremods, access transformers, and most Minecraft/Forge APIs remain
 unsupported or unbound.
+
+### EaglerForge client candidate
+
+The stripped `EaglerForgeInjector/` and the host adapter can package an isolated
+Eaglercraft 1.12.2 client candidate without modifying the input:
+
+```bash
+node client-profiles/eaglercraft-1.12-js/build-forge-client.cjs \
+  unminified-clients/1.12.2.html /tmp/gold-client-forge \
+  --bundle output/appleskin-only/gold-client-forge.js
+```
+
+The builder injects EaglerForge 2.7.97, the pinned SRG-to-MCP member table,
+the `goldClientForgeBindings` adapter, and an optional single-file Gold Client
+bundle. It writes `forge-client-provenance.json` with input/output hashes and
+the adapter/member-map hashes, and refuses to overwrite a non-empty output
+directory. `browserExecutionVerified` and `modExecutionVerified` stay `false`
+in that provenance file because packaging is not execution evidence.
+
+A real headless-Firefox load of a candidate has been performed separately. It
+confirmed that `ModAPI`, `goldClientForgeBindings`, and `GoldClientForge` exist,
+that the adapter loads all 19,659 member mappings, and that SRG calls such as
+`TextFormatting.func_96300_b` resolve through the real client. Native field
+proxies, virtual config persistence, and explicit failure for unsupported
+registry/network operations were also exercised.
+
+The same candidate completed an AppleSkin `GoldClientForge.start(bindings)`
+call: `status().started` became true, the single mod was constructed, and its
+preInit, init, postInit, and loadComplete phases ran without a binding error.
+This is real lifecycle execution evidence for the translated AppleSkin class,
+not proof that its HUD/tooltip rendering, gameplay effects, or event handlers
+work once the game starts. The adapter remains strict: a missing platform API
+throws instead of returning a no-op.
+
+`NetworkRegistry.INSTANCE.newSimpleChannel(...)` and packet-class registration
+are kept virtual because that registration is metadata. Any actual packet send
+throws `unsupported-network`; it is not silently dropped. Translated classes
+that extend native Minecraft classes still fail explicitly with
+`unsupported-platform-superclass` rather than faking the superclass state.
 
 `test-mods/xaeros.jar` is a legacy Xaero's Minimap 26.6.0 Forge mod targeting
 Minecraft 1.12.2. Its metadata declares no additional mod dependencies; the

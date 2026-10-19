@@ -13,7 +13,7 @@ Inputs and generated outputs remain outside tracked repository contents.
 | Minified JavaScript clients | No matching build profile or runtime verification. | Unsupported; retained as a product requirement. |
 | Eaglercraft 26.2 WebAssembly | Existing assessment found WASM exports without Minecraft-facing methods. | Unsupported; retained as a product requirement. |
 | Forge 1.12.2 client | No Forge runtime/loader is present in the supplied Eaglercraft client. | Unsupported. |
-| Eaglercraft 1.12.2 with EaglerForge injected | The loader can emit one classic-script bundle for injection, but this repository contains no verified EaglerForge binding adapter. | Host adapter required; translation or injection alone is not proof that a mod runs. |
+| Eaglercraft 1.12.2 with EaglerForge injected | The stripped EaglerForge injector, SRG-to-MCP table, binding adapter, and client-candidate builder are implemented. A headless-Firefox candidate run resolved real client members and completed AppleSkin's four client lifecycle phases. JEI still fails explicitly at a native `TextureMap` superclass, and rendering/network I/O remain unsupported. | Partial host adapter; AppleSkin lifecycle works, arbitrary mod support does not. |
 | Fabric Minecraft 1.16.2-1.16.5 client | No exact client build or Fabric loader supplied. | Unsupported. |
 
 ## Multi-mod Forge loader bundle
@@ -36,6 +36,40 @@ self-contained JavaScript, but it still requires
 a real host binding object (`window.goldClientForgeBindings`) before `start()`.
 The profile injector prefers this file when present and emits a classic
 `<script src="...">`; otherwise it keeps using the ES-module entrypoint.
+
+### EaglerForge adapter evidence
+
+- [x] `client-profiles/eaglercraft-1.12-js/build-forge-client.cjs` injects the
+  stripped EaglerForge 2.7.97 client runtime, the pinned 19,659-entry
+  SRG-to-MCP table, and `goldClientForgeBindings` into an isolated copy of
+  `unminified-clients/1.12.2.html`. The input hash is
+  `b23decdca4ff9af58f63eea4e93772d8a0a1dcbb59781a32e505e9c9735d1e67`.
+  The generated HTML is 85,514,257 bytes and has SHA-256
+  `7c896eed194d83cdd56a0656ca9563f8ab3489619d224557a2fd6aff556d0894` for
+  the AppleSkin candidate. The separate bundle and adapter are hashed in
+  `forge-client-provenance.json`.
+- [x] A real headless-Firefox load exposes `ModAPI`, `goldClientForgeBindings`,
+  and `GoldClientForge`; the adapter reports 19,659 member mappings.
+- [x] Real-client member resolution was exercised without starting a world:
+  `TextFormatting.RED.getColorIndex()` returned `12`, SRG
+  `TextFormatting.func_96300_b("red")` mapped to `getValueByName` and returned
+  the red enum, and a wrong-arity call failed with an explicit
+  `missing-method-arity` error.
+- [x] An AppleSkin candidate completed `GoldClientForge.start(bindings)`:
+  `status().started` became true and `preInit`, `init`, `postInit`, and
+  `loadComplete` all ran. This proves the translated constructor, lifecycle
+  dispatcher, event objects, virtual config file, Forge `Configuration`,
+  `DecimalFormat`, Locale, Log4j, and virtual channel registration are
+  reachable against the real injected client. It does not prove AppleSkin's
+  HUD/tooltip rendering or gameplay effects work.
+- [x] `NetworkRegistry.INSTANCE.newSimpleChannel(...)` and
+  `registerMessage(...)` are virtual metadata registration. Any packet send
+  throws `unsupported-network`; the adapter does not silently drop it.
+- [x] A translated class extending a native Minecraft class fails with
+  `unsupported-platform-superclass`. JEI currently reaches this at
+  `mezz.jei.gui.textures.JeiTextureMap extends TextureMap`; the supplied
+  client only exposes the one-argument `TextureMap` constructor, so copying
+  or guessing the Forge constructor state would be unsafe.
 
 ### Demonstrated
 
@@ -118,9 +152,10 @@ The profile injector prefers this file when present and emits a classic
 
 ### Not demonstrated / unsupported
 
-- [ ] A real client host. `window.goldClientForgeBindings` must provide
-  Minecraft/Forge services; the loader bundle by itself does not implement
-  them.
+- [ ] A complete real client host. The EaglerForge adapter implements the
+  strict binding surface and AppleSkin's client lifecycle, but rendering,
+  input, resource lookup, real packet I/O, capabilities, and most game APIs
+  remain explicit unsupported boundaries.
 - [ ] Mixins, coremods, access transformers, and Forge class transformation.
   Classes carrying `org.spongepowered.asm.mixin` annotations, or implementing
   `IFMLLoadingPlugin`/`IClassTransformer`, are detected and make the lifecycle
