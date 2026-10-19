@@ -1424,6 +1424,26 @@ function goldForgeEventType(descriptor) {
   return match ? match[1].replace(/\//g, ".") : null;
 }
 
+// Forge also notifies listeners registered for an event's superclasses and
+// interfaces. Translated event classes carry that hierarchy in the registry;
+// platform event classes that are absent from the bundle keep exact matching.
+function goldForgeEventTypes(eventType) {
+  const result = [];
+  const pending = [eventType];
+  const visited = new Set();
+  while (pending.length) {
+    const name = pending.pop();
+    if (!name || name === "java.lang.Object" || visited.has(name)) continue;
+    visited.add(name);
+    result.push(name);
+    const constructor = GoldClientRuntime.resolveClass(name);
+    if (!constructor) continue;
+    if (constructor.__goldSuperName) pending.push(constructor.__goldSuperName);
+    for (const implemented of constructor.__goldInterfaces ?? []) pending.push(implemented);
+  }
+  return result;
+}
+
 class GoldClientForgeEventBus {
   #registrations = new WeakMap();
 
@@ -1889,6 +1909,9 @@ export const GoldClientRuntime = Object.freeze({
   },
   builtinAdapterOwners() {
     return Array.from(GoldClientMinecraftAdapters.keys()).sort();
+  },
+  forgeEventTypes(eventType) {
+    return Object.freeze(goldForgeEventTypes(eventType));
   },
   invokePlatformStatic(owner, method, ...args) {
     const adapter = GoldClientMinecraftAdapters.get(owner);
@@ -2696,3 +2719,7 @@ export const GoldClientRuntime = Object.freeze({
     throw new Error("Unsupported translated JVM operation: " + operation + " " + detail);
   }
 });
+
+// Host-side event dispatch needs the translated event hierarchy. Keep the one
+// runtime instance discoverable without importing this module from the host.
+globalThis.goldClientRuntime = GoldClientRuntime;

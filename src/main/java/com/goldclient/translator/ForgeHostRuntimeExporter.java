@@ -272,7 +272,15 @@ public final class ForgeHostRuntimeExporter {
           }
 
           post(eventType, event, options = {}) {
-            const listeners = [...(this.#listeners.get(eventType) ?? [])];
+            // FML posts an event to listeners registered for the event class and
+            // then for its superclasses/interfaces. Translated events carry that
+            // hierarchy in the shared registry; unknown platform events stay exact.
+            const eventTypes = globalThis.goldClientRuntime?.forgeEventTypes?.(eventType)
+              ?? [eventType];
+            const listeners = [];
+            for (const type of eventTypes) {
+              listeners.push(...(this.#listeners.get(type) ?? []));
+            }
             const failures = [];
             const results = [];
             this.#dispatchDepth++;
@@ -672,6 +680,8 @@ public final class ForgeHostRuntimeExporter {
               if (!validOwner(owner)) {
                 throw new Error("Forge subscriber is missing an owning mod ID");
               }
+              // EventBus.post walks the event's superclass/interface chain, so a
+              // listener is registered only for the declared event type.
               return eventBus.subscribe(subscriber.eventType, callback, {
                 owner,
                 priority: subscriber.priority ?? "NORMAL",

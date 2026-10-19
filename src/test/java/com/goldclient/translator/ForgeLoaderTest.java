@@ -186,6 +186,13 @@ class ForgeLoaderTest {
     Files.writeString(output.resolve("mod-index.js"), """
         import { GoldClientRuntime } from "./gold-client-runtime.js";
         const seen = globalThis.__forgeLoaderEvents = [];
+        export class BaseEvent {
+          constructor() { this.cancelled = false; }
+          isCanceled() { return this.cancelled; }
+        }
+        export class ChildEvent extends BaseEvent {
+          constructor(id) { super(); this.id = id; }
+        }
         export class AMod {
           constructor() { seen.push("construct:a"); }
           preInit() {
@@ -194,30 +201,48 @@ class ForgeLoaderTest {
               "net.minecraftforge.common.MinecraftForge", "EVENT_BUS").register(this);
           }
           onTick(event) { seen.push("tick:a:" + event.id); }
+          onBase(event) { seen.push("base:a:" + event.id); }
         }
         export class BMod {
           constructor() { seen.push("construct:b"); }
           init() { seen.push("init:b"); }
         }
+        GoldClientRuntime.registerClass("sample.BaseEvent", BaseEvent);
+        GoldClientRuntime.registerClass("sample.ChildEvent", ChildEvent, null,
+          { superName: "sample.BaseEvent" });
         GoldClientRuntime.registerClass("sample.AMod", AMod, null, {
-          methods: new Map([["onTick", [{
-            arity: 1,
-            descriptor: "(Lnet/minecraftforge/event/TickEvent$ClientTickEvent;)V",
-            isStatic: false,
-            annotations: ["net.minecraftforge.fml.common.eventhandler.SubscribeEvent"],
-            subscribePriority: "NORMAL",
-            receiveCanceled: false,
-            fn: AMod.prototype.onTick
-          }]]])
+          methods: new Map([
+            ["onTick", [{
+              arity: 1,
+              descriptor: "(Lnet/minecraftforge/event/TickEvent$ClientTickEvent;)V",
+              isStatic: false,
+              annotations: ["net.minecraftforge.fml.common.eventhandler.SubscribeEvent"],
+              subscribePriority: "NORMAL",
+              receiveCanceled: false,
+              fn: AMod.prototype.onTick
+            }]],
+            ["onBase", [{
+              arity: 1,
+              descriptor: "(Lsample/BaseEvent;)V",
+              isStatic: false,
+              annotations: ["net.minecraftforge.fml.common.eventhandler.SubscribeEvent"],
+              subscribePriority: "NORMAL",
+              receiveCanceled: false,
+              fn: AMod.prototype.onBase
+            }]]
+          ])
         });
         GoldClientRuntime.registerClass("sample.BMod", BMod);
-        export const classes = Object.freeze({ "sample.AMod": {}, "sample.BMod": {} });
+        export const classes = Object.freeze({
+          "sample.AMod": {}, "sample.BMod": {}, "sample.BaseEvent": {}, "sample.ChildEvent": {}
+        });
         """, StandardCharsets.UTF_8);
 
     Path runner = output.resolve("loader-runtime-test.mjs");
     Files.writeString(runner, """
         import { startForgeMods, stopForgeMods, forgeLoaderStatus } from "./forge-lifecycle.js";
         import { createForgeHost } from "./forge-host-runtime.js";
+        import { ChildEvent } from "./mod-index.js";
         const seen = globalThis.__forgeLoaderEvents;
         const bindings = {
           events: { createLifecycleEvent: async (mod, phase) => {
@@ -234,13 +259,14 @@ class ForgeLoaderTest {
         const started = await startForgeMods(host);
         if (started.length !== 2) throw new Error("expected two started mods");
         host.postEvent("net.minecraftforge.event.TickEvent$ClientTickEvent", { id: 7 });
+        host.postEvent("sample.ChildEvent", new ChildEvent(9));
         const expectedPrefix = [
           "construct:a", "construct:b",
           "event:preInit:a", "preInit:a", "event:preInit:b",
           "event:init:a", "event:init:b", "init:b",
           "event:postInit:a", "event:postInit:b",
           "event:loadComplete:a", "event:loadComplete:b",
-          "tick:a:7"
+          "tick:a:7", "base:a:9"
         ];
         if (seen.join(",") !== expectedPrefix.join(",")) {
           throw new Error("phase-major order mismatch: " + seen.join(","));
