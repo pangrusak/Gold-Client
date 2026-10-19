@@ -372,6 +372,20 @@ public final class JavaTranslator {
           continue;
         }
 
+        // Early exits of a for loop are routed through the increment block: a
+        // jump to that tail has to run its statements before continuing.
+        // Duplicating the tail for this jump keeps the update on every path.
+        int loopTail = targetIndex == null
+            ? -1
+            : loopTailJumpIndex(operations, targetIndex, context);
+        if (loopTail >= 0) {
+          RenderResult tail = renderRange(
+              operations, targetIndex, loopTail + 1, indent, context, labels);
+          source.append(tail.source());
+          complete &= tail.complete();
+          continue;
+        }
+
         if (targetIndex != null
             && (targetIndex == end || isFallthroughJump(operations, i, targetIndex))) {
           // A goto whose destination is the next executable instruction does
@@ -2455,6 +2469,38 @@ public final class JavaTranslator {
       label = labelKey(operations.get(jumpIndex).operands().get(0));
     }
     return null;
+  }
+
+  /**
+   * Returns the index of the jump that closes a shared loop-tail block starting
+   * at {@code targetIndex}, or -1. javac routes early exits of a for loop
+   * through the increment block, so a jump to that tail has to run those
+   * statements before continuing.
+   */
+  private static int loopTailJumpIndex(
+      List<IrOperationModel> operations,
+      int targetIndex,
+      TranslationContext context) {
+    boolean seenStatement = false;
+    for (int i = targetIndex + 1; i < operations.size() && i < targetIndex + 32; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("LABEL".equals(operation.kind())) {
+        if (seenStatement) return -1;
+        continue;
+      }
+      if ("JUMP".equals(operation.kind())) {
+        if (operation.operands().isEmpty()) return -1;
+        return context.isActiveLoop(labelKey(operation.operands().get(0))) ? i : -1;
+      }
+      switch (operation.kind()) {
+        case "CONDITIONAL_BRANCH", "RETURN", "THROW", "TABLE_SWITCH", "LOOKUP_SWITCH",
+            "TRY_BEGIN", "TRY_END", "CATCH_BEGIN" -> {
+          return -1;
+        }
+        default -> seenStatement = true;
+      }
+    }
+    return -1;
   }
 
   /** The label a jump or conditional branch transfers control to. */
