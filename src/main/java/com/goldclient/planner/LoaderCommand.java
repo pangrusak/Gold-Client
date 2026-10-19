@@ -117,13 +117,25 @@ public final class LoaderCommand {
       }
 
       Map<String, Object> report = new LinkedHashMap<>();
+      List<String> incompleteMethods = export.methods().stream()
+          .filter(method -> "incomplete".equals(method.status()))
+          .map(method -> method.className().replace('/', '.') + "#" + method.methodName()
+              + method.descriptor())
+          .toList();
+      List<String> adapterRequiredMethods = export.methods().stream()
+          .filter(method -> "adapter-required".equals(method.status()))
+          .map(method -> method.className().replace('/', '.') + "#" + method.methodName()
+              + method.descriptor())
+          .toList();
       report.put("formatVersion", "gold-forge-loader-build-v1");
       report.put("inputs", records);
       report.put("output", destination.toString());
       report.put("classCount", classes.size());
       report.put("methodCount", export.methodCount());
       report.put("adapterRequiredCount", export.adapterRequiredCount());
+      report.put("adapterRequiredMethods", adapterRequiredMethods);
       report.put("incompleteCount", export.incompleteCount());
+      report.put("incompleteMethods", incompleteMethods);
       report.put("mods", modIds);
       report.put("loadOrder", lifecycle.get("loadOrder").getAsString());
       report.put("lifecycleStatus", lifecycle.get("status").getAsString());
@@ -141,6 +153,10 @@ public final class LoaderCommand {
       out.println("Methods inspected: " + export.methodCount());
       out.println("Adapter-required declarations: " + export.adapterRequiredCount());
       out.println("Incomplete methods: " + export.incompleteCount());
+      if (!incompleteMethods.isEmpty()) {
+        out.println("Incomplete method list:");
+        for (String method : incompleteMethods) out.println("  - " + method);
+      }
       out.println("Translation complete: " + (export.incompleteCount() == 0 ? "yes" : "no"));
       out.println("Mods: " + (modIds.isEmpty() ? "(none)" : String.join(", ", modIds)));
       out.println("Load order: " + lifecycle.get("loadOrder").getAsString());

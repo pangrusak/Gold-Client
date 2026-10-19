@@ -32,8 +32,9 @@ declared event subscribers from original annotations.
 - [x] AppleSkin plus JEI translates to 393 classes and two mod entries
   (`jei`, `appleskin`) with dependency ordering and a ready lifecycle plan.
   Six JEI methods are marked incomplete because their JVM catch-clause shapes
-  were merged as an explicit approximation; the command reports them and exits
-  with status `2` rather than claiming a complete translation.
+  were merged as an explicit approximation; the command reports them, lists
+  them in `loader-plan.json` (`incompleteMethods`), and exits with status `2`
+  rather than claiming a complete translation.
 - [x] Generated AppleSkin and AppleSkin+JEI modules pass `node --check` and
   import through `forge-lifecycle.js` without executing game APIs.
 - [x] Static `@Mod.EventBusSubscriber` methods are discovered with owner,
