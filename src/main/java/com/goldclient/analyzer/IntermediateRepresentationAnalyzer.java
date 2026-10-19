@@ -227,6 +227,23 @@ public final class IntermediateRepresentationAnalyzer {
     if (isStore(opcode)) {
       String value = pop(stack);
       String local = localName(instruction);
+      // A duplicated stack value that reads the local being written goes stale
+      // as soon as the store lands. The surviving copy has to keep the value
+      // read before the store, so bind it to a temporary first. This is the
+      // shape javac emits for assignments used as expressions, for example
+      // if ((e = e.next) == null).
+      if (stack.contains(value) && referencesLocal(value, local)) {
+        String temp = "dupValue" + sourceInstruction;
+        List<String> entries = new ArrayList<>(stack);
+        stack.clear();
+        for (int i = entries.size() - 1; i >= 0; i--) {
+          String entry = entries.get(i);
+          stack.push(entry.equals(value) ? temp : entry);
+        }
+        operations.add(op("LOCAL_WRITE", List.of(temp, value), sourceInstruction));
+        operations.add(op("LOCAL_WRITE", List.of(local, temp), sourceInstruction));
+        return;
+      }
       operations.add(op("LOCAL_WRITE", List.of(local, value), sourceInstruction));
       return;
     }
@@ -1098,6 +1115,29 @@ public final class IntermediateRepresentationAnalyzer {
 
   private static String pop(Deque<String> stack) {
     return stack.isEmpty() ? "<unknown>" : stack.pop();
+  }
+
+  /**
+   * True when the expression reads the local as a whole identifier. Locals are
+   * emitted as {@code localN}, so a longer name such as {@code local40} or a
+   * field such as {@code owner.local4} must not count as a reference.
+   */
+  private static boolean referencesLocal(String expression, String local) {
+    if (expression == null || local == null || local.isEmpty()) return false;
+    int index = expression.indexOf(local);
+    while (index >= 0) {
+      boolean startBoundary = index == 0 || !isIdentifierPart(expression.charAt(index - 1));
+      int end = index + local.length();
+      boolean endBoundary = end >= expression.length()
+          || !isIdentifierPart(expression.charAt(end));
+      if (startBoundary && endBoundary) return true;
+      index = expression.indexOf(local, index + 1);
+    }
+    return false;
+  }
+
+  private static boolean isIdentifierPart(char c) {
+    return Character.isLetterOrDigit(c) || c == '_' || c == '$';
   }
 
   private static IrOperationModel op(String kind, List<String> operands, int sourceInstruction) {

@@ -8,6 +8,7 @@ import java.util.Deque;
 public final class TranslationContext {
   private final Set<String> declaredLocals = new LinkedHashSet<>();
   private final Deque<String> loopLabels = new ArrayDeque<>();
+  private final Set<String> loopJsLabels = new LinkedHashSet<>();
   private final Deque<String> loopExitLabels = new ArrayDeque<>();
   private final Deque<BreakScope> breakScopes = new ArrayDeque<>();
   private final Deque<Set<String>> suppressedTryHandlers = new ArrayDeque<>();
@@ -25,14 +26,26 @@ public final class TranslationContext {
   }
 
   public void enterLoop(String label) {
+    enterLoop(label, false);
+  }
+
+  /**
+   * Enters a loop, optionally emitting a JavaScript label for it. A nested
+   * loop's {@code continue} for an outer loop needs that label to keep the
+   * jump from binding to the innermost loop.
+   */
+  public void enterLoop(String label, boolean jsLabeled) {
     loopLabels.push(label);
+    if (jsLabeled) loopJsLabels.add(label);
     breakScopes.push(new BreakScope(label, BreakKind.LOOP));
   }
 
   public void exitLoop() {
-    loopLabels.pop();
+    loopJsLabels.remove(loopLabels.pop());
     breakScopes.pop();
   }
+
+  public boolean hasLoopLabel(String label) { return loopJsLabels.contains(label); }
 
   public boolean isActiveLoop(String label) { return loopLabels.contains(label); }
 

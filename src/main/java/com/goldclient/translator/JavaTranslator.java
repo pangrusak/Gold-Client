@@ -285,7 +285,11 @@ public final class JavaTranslator {
         Integer targetIndex = labels.get(labelKey(target));
 
         if (context.isActiveLoop(labelKey(target))) {
-          source.append(indent(indent)).append("continue;\n");
+          source.append(indent(indent)).append("continue");
+          if (context.hasLoopLabel(labelKey(target))) {
+            source.append(" ").append(jsLabel(target));
+          }
+          source.append(";\n");
           continue;
         }
 
@@ -1551,7 +1555,11 @@ public final class JavaTranslator {
       if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
         String target = operation.operands().get(0);
         if (context.isInnermostLoop(labelKey(target))) {
-          action = "continue";
+          action = context.hasLoopLabel(labelKey(target))
+              ? "continue " + jsLabel(target) : "continue";
+        } else if (context.isActiveLoop(labelKey(target))
+            && context.hasLoopLabel(labelKey(target))) {
+          action = "continue " + jsLabel(target);
         } else if (context.isInnermostBreakTarget(labelKey(target))) {
           action = "break";
         }
@@ -2167,7 +2175,9 @@ public final class JavaTranslator {
           return new ConditionalRender(source.toString(), fallthrough.complete(), backwardJump);
         }
         if (!context.isActiveLoop(normalizedLoopTarget)) {
-          context.enterLoop(normalizedLoopTarget);
+          boolean labeled = needsLoopLabel(
+              operations, branchIndex + 1, backwardJump, normalizedLoopTarget);
+          context.enterLoop(normalizedLoopTarget, labeled);
           RenderResult body;
           try {
             body = renderRange(
@@ -2176,7 +2186,9 @@ public final class JavaTranslator {
             context.exitLoop();
           }
           StringBuilder source = new StringBuilder();
-          source.append(indent(indent)).append("while (")
+          source.append(indent(indent));
+          if (labeled) source.append(jsLabel(normalizedLoopTarget)).append(": ");
+          source.append("while (")
               .append(normalizeCondition(condition)).append(") {\n")
               .append(body.source())
               .append(indent(indent)).append("}\n");
@@ -2311,7 +2323,9 @@ public final class JavaTranslator {
       Map<String, Integer> labels,
       String condition) {
     String loopLabel = labelKey(operations.get(targetIndex).operands().get(0));
-    context.enterLoop(loopLabel);
+    boolean labeled = needsLoopLabel(
+        operations, targetIndex + 1, branchIndex, loopLabel);
+    context.enterLoop(loopLabel, labeled);
     RenderResult body;
     try {
       body = renderRange(
@@ -2321,8 +2335,9 @@ public final class JavaTranslator {
     }
 
     StringBuilder source = new StringBuilder();
-    source.append(indent(indent))
-        .append("do {\n");
+    source.append(indent(indent));
+    if (labeled) source.append(jsLabel(loopLabel)).append(": ");
+    source.append("do {\n");
     source.append(body.source());
     source.append(indent(indent))
         .append("} while (")
@@ -2398,8 +2413,49 @@ public final class JavaTranslator {
     return null;
   }
 
-  private static boolean isLoopExitMetadata(IrOperationModel operation) {
-    return "LABEL".equals(operation.kind()) || "TRY_BEGIN".equals(operation.kind())
+  /**
+   * A loop body can contain a nested loop whose back edge lies after the outer
+   * loop's own back edge: javac rotates loops so the outer continue is emitted
+   * before the inner loop's tail. The outer body then extends to the end of
+   * that nested loop. Returns the last index of the extended body, or -1 when
+   * the body already ends at its back edge.
+   */
+  private static int extendLoopPastNestedLoops(
+      List<IrOperationModel> operations,
+      int loopHeaderIndex,
+      int backEdgeIndex,
+      int end,
+      Map<String, Integer> labels) {
+    int loopEnd = backEdgeIndex;
+    boolean extended = false;
+    boolean changed = true;
+    while (changed) {
+      changed = false;
+      for (int i = loopEnd + 1; i < end; i++) {
+        IrOperationModel operation = operations.get(i);
+        if (!"JUMP".equals(operation.kind()) || operation.operands().isEmpty()) continue;
+        Integer target = labels.get(labelKey(operation.operands().get(0)));
+        if (target == null || target <= loopHeaderIndex || target > loopEnd) continue;
+        // The jump back to a label inside the loop is a nested loop's back
+        // edge; that nested loop runs to its last edge.
+        int innerEnd = i;
+        for (int j = i + 1; j < end; j++) {
+          IrOperationModel later = operations.get(j);
+          if ("JUMP".equals(later.kind()) && !later.operands().isEmpty()
+              && target.equals(labels.get(labelKey(later.operands().get(0))))) {
+            innerEnd = j;
+          }
+        }
+        loopEnd = innerEnd;
+        extended = true;
+        changed = true;
+        break;
+      }
+    }
+    return extended ? loopEnd : -1;
+  }
+
+  private static boolean isLoopExitMetadata(IrOperationModel operation) {    return "LABEL".equals(operation.kind()) || "TRY_BEGIN".equals(operation.kind())
         || "TRY_END".equals(operation.kind()) || "CATCH_BEGIN".equals(operation.kind())
         || "STACK_OPERATION".equals(operation.kind());
   }
@@ -2428,7 +2484,9 @@ public final class JavaTranslator {
       TranslationContext context,
       Map<String, Integer> labels) {
     String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
-    context.enterLoop(loopLabel);
+    boolean labeled = needsLoopLabel(
+        operations, loopHeaderIndex + 1, loop.backEdgeIndex(), loopLabel);
+    context.enterLoop(loopLabel, labeled);
     RenderResult body;
     try {
       body = renderRange(
@@ -2437,7 +2495,9 @@ public final class JavaTranslator {
       context.exitLoop();
     }
     StringBuilder source = new StringBuilder();
-    source.append(indent(indent)).append("while (true) {\n")
+    source.append(indent(indent));
+    if (labeled) source.append(jsLabel(loopLabel)).append(": ");
+    source.append("while (true) {\n")
         .append(body.source())
         .append(indent(indent)).append("}\n");
     return new ConditionalRender(source.toString(), body.complete(), loop.backEdgeIndex());
@@ -2505,7 +2565,9 @@ public final class JavaTranslator {
       Map<String, Integer> labels) {
     String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
     String exitLabel = labelKey(operations.get(loop.exitIndex()).operands().get(0));
-    context.enterLoop(loopLabel);
+    boolean labeled = needsLoopLabel(
+        operations, loopHeaderIndex + 1, loop.backEdgeIndex(), loopLabel);
+    context.enterLoop(loopLabel, labeled);
     context.enterLoopExit(exitLabel);
     RenderResult body;
     try {
@@ -2516,7 +2578,9 @@ public final class JavaTranslator {
       context.exitLoop();
     }
     StringBuilder source = new StringBuilder();
-    source.append(indent(indent)).append("while (true) {\n")
+    source.append(indent(indent));
+    if (labeled) source.append(jsLabel(loopLabel)).append(": ");
+    source.append("while (true) {\n")
         .append(body.source())
         .append(indent(indent)).append("}\n");
     return new ConditionalRender(source.toString(), body.complete(), loop.backEdgeIndex());
@@ -2592,7 +2656,8 @@ public final class JavaTranslator {
     }
 
     String exitLabel = labelKey(operations.get(exitIndex).operands().get(0));
-    context.enterLoop(loopLabel);
+    boolean labeled = needsLoopLabel(operations, bodyIndex, exitIndex, loopLabel);
+    context.enterLoop(loopLabel, labeled);
     context.enterLoopExit(exitLabel);
     RenderResult body;
     try {
@@ -2602,7 +2667,9 @@ public final class JavaTranslator {
       context.exitLoop();
     }
     StringBuilder source = new StringBuilder();
-    source.append(indent(indent)).append("while (").append(condition).append(") {\n")
+    source.append(indent(indent));
+    if (labeled) source.append(jsLabel(loopLabel)).append(": ");
+    source.append("while (").append(condition).append(") {\n")
         .append(body.source())
         .append(indent(indent)).append("}\n");
     return new ConditionalRender(source.toString(), body.complete(), exitIndex - 1);
@@ -2657,7 +2724,8 @@ public final class JavaTranslator {
       int indent, TranslationContext context, Map<String, Integer> labels) {
     if (operations.get(loopHeaderIndex).operands().isEmpty()) return null;
     String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
-    context.enterLoop(loopLabel);
+    boolean labeled = needsLoopLabel(operations, loopHeaderIndex + 1, end, loopLabel);
+    context.enterLoop(loopLabel, labeled);
     RenderResult body;
     try {
       body = renderRange(operations, loopHeaderIndex + 1, end, indent + 1, context, labels);
@@ -2665,7 +2733,9 @@ public final class JavaTranslator {
       context.exitLoop();
     }
     StringBuilder source = new StringBuilder();
-    source.append(indent(indent)).append("while (true) {\n")
+    source.append(indent(indent));
+    if (labeled) source.append(jsLabel(loopLabel)).append(": ");
+    source.append("while (true) {\n")
         .append(body.source())
         .append(indent(indent)).append("}\n");
     return new ConditionalRender(source.toString(), body.complete(), end - 1);
@@ -2702,7 +2772,33 @@ public final class JavaTranslator {
       Map<String, Integer> labels) {
     String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
     String condition = operations.get(loop.branchIndex()).operands().get(0);
-    context.enterLoop(loopLabel);
+    int extendedBodyEnd = extendLoopPastNestedLoops(
+        operations, loopHeaderIndex, loop.backEdgeIndex(), end, labels);
+    if (extendedBodyEnd >= 0) {
+      // A nested loop continues past this loop's back edge, so the branch this
+      // shape was found through points into the body instead of leaving the
+      // loop. Render the full body and let the branch structure itself.
+      boolean labeled = needsLoopLabel(
+          operations, loopHeaderIndex + 1, extendedBodyEnd + 1, loopLabel);
+      context.enterLoop(loopLabel, labeled);
+      RenderResult body;
+      try {
+        body = renderRange(
+            operations, loopHeaderIndex + 1, extendedBodyEnd + 1, indent + 1, context, labels);
+      } finally {
+        context.exitLoop();
+      }
+      StringBuilder source = new StringBuilder();
+      source.append(indent(indent));
+      if (labeled) source.append(jsLabel(loopLabel)).append(": ");
+      source.append("while (true) {\n")
+          .append(body.source())
+          .append(indent(indent)).append("}\n");
+      return new ConditionalRender(source.toString(), body.complete(), extendedBodyEnd);
+    }
+    boolean labeled = needsLoopLabel(
+        operations, loopHeaderIndex + 1, loop.backEdgeIndex(), loopLabel);
+    context.enterLoop(loopLabel, labeled);
     RenderResult conditionPrelude;
     RenderResult body;
     try {
@@ -2718,7 +2814,9 @@ public final class JavaTranslator {
     }
 
     StringBuilder source = new StringBuilder();
-    source.append(indent(indent)).append("while (true) {\n")
+    source.append(indent(indent));
+    if (labeled) source.append(jsLabel(loopLabel)).append(": ");
+    source.append("while (true) {\n")
         .append(conditionPrelude.source())
         .append(indent(indent + 1)).append("if (")
         .append(normalizeCondition(condition)).append(") break;\n")
@@ -2919,6 +3017,38 @@ public final class JavaTranslator {
       normalized = normalized.substring(1, normalized.length() - 1).trim();
     if (normalized.endsWith(":")) normalized = normalized.substring(0, normalized.length() - 1).trim();
     return normalized;
+  }
+
+  /**
+   * JavaScript label for a JVM label. Keep identifier-safe characters only;
+   * bytecode labels are already simple, this only guards against malformed
+   * input.
+   */
+  private static String jsLabel(String label) {
+    String key = labelKey(label);
+    StringBuilder safe = new StringBuilder();
+    for (int i = 0; i < key.length(); i++) {
+      char c = key.charAt(i);
+      if (Character.isLetterOrDigit(c) || c == '_' || c == '$') safe.append(c);
+    }
+    if (safe.isEmpty()) return "_label";
+    if (Character.isDigit(safe.charAt(0))) safe.insert(0, '_');
+    return safe.toString();
+  }
+
+  /**
+   * True when a loop body contains a jump back to its own header. Such a jump
+   * can only come from a nested loop, so the loop needs a JavaScript label for
+   * {@code continue} to keep binding to this loop.
+   */
+  private static boolean needsLoopLabel(
+      List<IrOperationModel> operations, int bodyStart, int bodyEnd, String loopLabel) {
+    for (int i = bodyStart; i < bodyEnd; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(loopLabel).equals(labelKey(operation.operands().get(0)))) return true;
+    }
+    return false;
   }
 
   private static Map<String, Integer> findLabels(
