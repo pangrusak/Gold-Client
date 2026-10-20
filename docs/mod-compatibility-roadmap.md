@@ -101,11 +101,13 @@ The profile injector prefers this file when present and emits a classic
   2 incomplete; Mixin/coremod blockers), Biomes O' Plenty (551 classes,
   2 incomplete; ready lifecycle), Universal Tweaks (1191 classes, 2 incomplete;
   Mixin/coremod and missing dependency blockers), Xaero's Minimap
-  (1280 classes, 5 incomplete; coremod and missing `xaerolib` blockers), and
+  (1280 classes, 1 incomplete; coremod and missing `xaerolib` blockers), and
   MixinBooter (1305 classes, 8 incomplete; no `@Mod` entry plus Mixin/coremod
   blockers). Each single-file bundle passed `node --check` and loaded in a Node
   `vm` sandbox exposing `GoldClientForge` with the expected mod IDs and class
-  counts (for example Biomes O' Plenty: 551 classes, 0 blockers). These are
+  counts (for example Biomes O' Plenty: 551 classes, 0 blockers). FancyMenu and
+  Konkrete loaded together (901 classes) clear the missing-dependency blocker;
+  only Konkrete's two methods and the Mixin/coremod blockers remain. These are
   structural translation results, not proof that the mods run without real
   Minecraft/Forge bindings.
 - [x] Loop/exception structuring now keeps a protected region outside a loop
@@ -134,11 +136,12 @@ The profile injector prefers this file when present and emits a classic
     `ComparisonExpression$Operator.matches`. They combine stack merges,
     exception-stack values, and shared-return decision trees that the current
     structured renderer refuses to approximate.
-  - Xaero's Minimap (5): `GuiAddWaypoint.updateMutual`,
-    `GuiWorldTpCommand.func_73876_c`, `RadarRenderer.setupRenderForList`,
-    `RadarRenderProvider.setupContextForList`, and
-    `MinimapWriter.writeChunk`. They are boolean/stack value merges inside
-    loops and switches; `writeChunk` also has an exception-stack value.
+  - Xaero's Minimap (1): `MinimapWriter.writeChunk`, a loop/switch value
+    merge that also carries an exception-stack value. A decision tree that
+    feeds a field write is now materialized as one nested ternary, which
+    removed `GuiAddWaypoint.updateMutual`, `GuiWorldTpCommand.func_73876_c`,
+    `RadarRenderer.setupRenderForList`, and
+    `RadarRenderProvider.setupContextForList`.
   - Universal Tweaks (2): `ConcurrentHashMapV8.fullAddCount` (jump into a
     shared tail with an exception-stack merge) and
     `UTBlockOverlayMixin.utRenderBlockOverlay` (a try/catch region with six

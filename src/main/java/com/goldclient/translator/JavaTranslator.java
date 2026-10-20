@@ -2970,7 +2970,12 @@ public final class JavaTranslator {
     boolean returnsValue = "RETURN".equals(sinkOperation.kind());
     boolean assignsValue = "LOCAL_WRITE".equals(sinkOperation.kind())
         && sinkOperation.operands().size() >= 2;
-    if (!returnsValue && !assignsValue) return null;
+    // A boolean decision tree frequently feeds a field write, such as a
+    // widget's enabled flag. The value is still a pure expression, so the
+    // same nested ternary can be substituted for the stack phi.
+    boolean writesValue = "FIELD_WRITE".equals(sinkOperation.kind())
+        && sinkOperation.operands().size() >= 3;
+    if (!returnsValue && !assignsValue && !writesValue) return null;
     if (!"<unknown>".equals(
         sinkOperation.operands().get(sinkOperation.operands().size() - 1))) return null;
 
@@ -2992,11 +2997,18 @@ public final class JavaTranslator {
     StringBuilder source = new StringBuilder();
     if (returnsValue) {
       source.append(indent(indent)).append("return ").append(expression).append(";\n");
-    } else {
+    } else if (assignsValue) {
       String local = sinkOperation.operands().get(0);
       String assignment = context.declareLocal(local) ? "var " + local : local;
       source.append(indent(indent)).append(assignment).append(" = ")
           .append(expression).append(";\n");
+    } else {
+      List<String> operands = new java.util.ArrayList<>(sinkOperation.operands());
+      operands.set(operands.size() - 1, expression);
+      String lowered = translateOperation(new IrOperationModel(
+          sinkOperation.kind(), operands, sinkOperation.sourceInstruction()), context);
+      if (lowered == null || lowered.isBlank()) return null;
+      source.append(indent(indent)).append(lowered).append("\n");
     }
     return new ConditionalRender(source.toString(), true, sinkIndex);
   }

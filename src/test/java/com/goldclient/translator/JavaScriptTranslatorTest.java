@@ -869,6 +869,33 @@ class JavaScriptTranslatorTest {
     assertFalse(lowered.contains(", )"), lowered);
   }
 
+  @Test
+  void materializesBooleanDecisionTreeIntoFieldWrite() {
+    var method = new IrMethodModel("refresh", "()V", List.of(
+        op("LOCAL_READ", "local0"),
+        op("FIELD_READ", "local0", "example.Flag", "local0.flag"),
+        op("CONDITIONAL_BRANCH", "local0.flag == null", "L0"),
+        op("CONDITIONAL_BRANCH", "local0.flag.length() <= 0", "L0"),
+        op("CONDITIONAL_BRANCH", "local0.other > 0", "L1"),
+        op("LABEL", "L0"),
+        op("CONDITIONAL_BRANCH", "local0.fallback == 0", "L2"),
+        op("LABEL", "L1"),
+        op("CONSTANT", "1"),
+        op("JUMP", "L3"),
+        op("LABEL", "L2"),
+        op("CONSTANT", "0"),
+        op("LABEL", "L3"),
+        op("FIELD_WRITE", "local0", "example.Flag.enabled", "<unknown>"),
+        op("RETURN")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method, false);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("this.enabled ="), result.source());
+    assertTrue(result.source().contains("fallback"), result.source());
+    assertFalse(result.source().contains("<unknown>"), result.source());
+  }
+
   private static IrOperationModel op(String kind, String... operands) {
     return new IrOperationModel(kind, List.of(operands), 0);
   }

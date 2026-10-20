@@ -20,7 +20,7 @@ The latest recorded AppleSkin + JEI loader build translates 393 classes and 2,28
 
 The current `loader --single-file --compact` smoke matrix covers 12 tracked JARs, including Biomes O' Plenty, Clumps, EnchantmentDescriptions, FancyMenu, Konkrete, MixinBooter, Universal Tweaks, and Xaero's Minimap. Every generated `gold-client-forge.js` passes `node --check`; per-input class counts, incomplete methods, and explicit blockers are recorded in `docs/mod-compatibility-roadmap.md`.
 
-**Build/CI status:** the current checkpoint passed `mvn --batch-mode test` (285 tests, 0 failures, 0 errors, 3 optional skips), `mvn --batch-mode verify`, and the standalone Node suites. The older `5e7ef56` failure note is historical.
+**Build/CI status:** the current checkpoint passed `mvn --batch-mode test` (286 tests, 0 failures, 0 errors, 3 optional skips), `mvn --batch-mode verify`, and the standalone Node suites. The older `5e7ef56` failure note is historical.
 
 ## Usage
 
