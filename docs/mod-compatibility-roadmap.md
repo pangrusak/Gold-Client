@@ -97,18 +97,34 @@ The profile injector prefers this file when present and emits a classic
   Minimap (1280 classes, 1 incomplete; coremod and missing `xaerolib`
   blockers), Universal Tweaks (1191 classes, 0 incomplete; Mixin/coremod and
   missing dependency blockers), ConfigAnytime (3 classes, 0 incomplete;
-  coremod blocker), and MixinBooter (1305 classes, 8 incomplete; no `@Mod`
+  coremod blocker), and MixinBooter (1305 classes, 4 incomplete; no `@Mod`
   entry plus Mixin/coremod blockers). These are structural translation
   results, not proof that the mods run without real Minecraft/Forge bindings.
 - [x] Loop/exception structuring now keeps a protected region outside a loop
   that exits onto the region's start, keeps a loop header that is also the
   start of a protected range, keeps a try's catch handler inside the
   fall-through arm of an `if`/`else`, and does not end a catch clause at a
-  nested switch arm's jump to the shared join. This removed five of Xaero's
-  six and five of MixinBooter's thirteen incomplete methods; the remaining
-  methods are unresolved stack merges, table switches split across
-  compiler-generated exception regions, and user-catch/finally shapes, and stay
-  explicit.
+  nested switch arm's jump to the shared join. It also:
+  - counts a primitive-array parameter such as `[C` as one invocation
+    argument instead of counting the element type again, so array-taking
+    calls keep their receiver and argument alignment;
+  - renders a user `try`/`catch`/`finally` once, excluding javac's duplicated
+    cleanup copies on the normal and catch paths;
+  - merges the per-case protected ranges javac emits for a string switch into
+    one try/catch when every range shares one handler, so the switch arms and
+    the handler stay in the same structured region;
+  - treats a `return`/`throw` inside a catch handler's loop or switch arm as
+    an inner exit when an earlier branch still targets code after it, instead
+    of truncating the handler at that instruction.
+
+  These changes removed five of Xaero's six and nine of MixinBooter's thirteen
+  incomplete methods. MixinBooter's four remaining methods are
+  `JsonReader.nextUnquotedValue` (loop/switch with an unresolved
+  compiler-generated edge and a stack merge), `ClassWrapper.init` (conditional
+  early exit inside a try body plus a stack merge), `ConverterHelper.toBeRenamed`
+  (stack-merged ternary argument and final return), and `LazyLoader.loadBytecode`
+  (nested try-with-resources with a return). They remain explicit rather than
+  being guessed.
 - [x] The transformation inspector parses Mixin configs (`package`, `mixins`,
   `client`, `server`, plugin, refmap), access-transformer rules, and
   coremod/tweak manifest keys, writes `forge-transformations.json`, and feeds

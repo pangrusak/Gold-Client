@@ -1117,6 +1117,10 @@ public final class IntermediateRepresentationAnalyzer {
         if (i + 1 < descriptor.length() && descriptor.charAt(i + 1) == 'L') {
           i += 2;
           while (i < descriptor.length() && descriptor.charAt(i) != ';') i++;
+        } else {
+          // Consume the primitive array element type as part of this single
+          // argument. Without this, [CII is counted as [C, C, I, I.
+          if (i + 1 < descriptor.length()) i++;
         }
         count++;
       } else {

@@ -14,6 +14,7 @@ public final class TranslationContext {
   private final Deque<BreakScope> breakScopes = new ArrayDeque<>();
   private final Deque<Set<String>> suppressedTryHandlers = new ArrayDeque<>();
   private final Deque<java.util.Map<String, String>> skipExitLabels = new ArrayDeque<>();
+  private boolean suppressNestedTryRegions;
 
   private enum BreakKind { LOOP, LOOP_EXIT, SWITCH_JOIN }
 
@@ -158,4 +159,14 @@ public final class TranslationContext {
     }
     return false;
   }
+
+  /**
+   * While rendering a try whose exception table was split into many disjoint
+   * protected ranges (javac's string switch emits one range per case), nested
+   * TRY_BEGIN markers are part of that same merged handler. They must not be
+   * structured as independent try/catch regions.
+   */
+  public boolean suppressesNestedTryRegions() { return suppressNestedTryRegions; }
+
+  public void setSuppressNestedTryRegions(boolean value) { suppressNestedTryRegions = value; }
 }

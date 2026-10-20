@@ -473,6 +473,31 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void countsAPrimitiveArrayParameterAsOneArgument() {
+    List<InstructionModel> instructions = List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(25, "ALOAD", "1"),
+        instruction(21, "ILOAD", "2"),
+        instruction(21, "ILOAD", "3"),
+        instruction(182, "INVOKEVIRTUAL",
+            "java/lang/StringBuilder", "append", "([CII)Ljava/lang/StringBuilder;"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN"));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(
+        method("append", "([CII)V", instructions));
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().equals(
+                List.of("local0.append(local1, local2, local3)"))),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        operation.operands().stream().anyMatch(operand -> operand.contains("<unknown>"))),
+        ir.operations().toString());
+  }
+
+  @Test
   void translatesShiftAndUnsignedShiftOpcodes() {
     List<InstructionModel> instructions = List.of(
         instruction(21, "ILOAD", "1"),

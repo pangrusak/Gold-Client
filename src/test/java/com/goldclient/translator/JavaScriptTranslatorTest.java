@@ -250,6 +250,124 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void rendersAUserCatchFinallyWithOneCleanupCopy() {
+    var method = new IrMethodModel("userCatchFinally", "()V", List.of(
+        op("TRY_BEGIN", "Ltry", "Lnormal", "Lcatch", "java.lang.Exception", "false"),
+        op("TRY_BEGIN", "Ltry", "Lnormal", "Lfinally", "java.lang.Throwable", "true"),
+        op("LABEL", "Ltry"),
+        op("METHOD_CALL", "work()"),
+        op("TRY_END", "Ltry", "Lnormal", "Lcatch", "java.lang.Exception", "false"),
+        op("TRY_END", "Ltry", "Lnormal", "Lfinally", "java.lang.Throwable", "true"),
+        op("LABEL", "Lnormal"),
+        op("METHOD_CALL", "cleanup()"),
+        op("JUMP", "Ljoin"),
+        op("CATCH_BEGIN", "Ltry", "Lnormal", "Lcatch", "java.lang.Exception", "false"),
+        op("TRY_BEGIN", "Lcatch", "LcatchEnd", "Lfinally", "java.lang.Throwable", "true"),
+        op("LABEL", "Lcatch"),
+        op("LOCAL_WRITE", "local1", "<exception>"),
+        op("METHOD_CALL", "recover(local1)"),
+        op("TRY_END", "Lcatch", "LcatchEnd", "Lfinally", "java.lang.Throwable", "true"),
+        op("LABEL", "LcatchEnd"),
+        op("METHOD_CALL", "cleanup()"),
+        op("JUMP", "Ljoin"),
+        op("CATCH_BEGIN", "Ltry", "Lnormal", "Lfinally", "java.lang.Throwable", "true"),
+        op("CATCH_BEGIN", "Lcatch", "LcatchEnd", "Lfinally", "java.lang.Throwable", "true"),
+        op("LABEL", "Lfinally"),
+        op("LOCAL_WRITE", "local2", "<exception>"),
+        op("METHOD_CALL", "cleanup()"),
+        op("LOCAL_READ", "local2"),
+        op("THROW", "local2"),
+        op("LABEL", "Ljoin"),
+        op("RETURN")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("catch (local1)"), result.source());
+    assertTrue(result.source().contains("instanceOf(local1, \"java.lang.Exception\")"), result.source());
+    assertTrue(result.source().contains("} finally {"), result.source());
+    assertTrue(result.source().contains("recover(local1);"), result.source());
+    assertEquals(1, result.source().split("cleanup\\(\\);", -1).length - 1, result.source());
+  }
+
+  @Test
+  void mergesASplitStringSwitchIntoOneTryCatch() {
+    var method = new IrMethodModel("splitSwitch", "(I)Ljava/lang/String;", List.of(
+        op("TRY_BEGIN", "Ltry", "Lnormal", "Lcatch", "java.lang.Exception", "false"),
+        op("LABEL", "Ltry"),
+        op("TABLE_SWITCH", "local0", "0", "1", "Ldefault", "Lcase0", "Lcase1"),
+        op("TRY_END", "Ltry", "Lnormal", "Lcatch", "java.lang.Exception", "false"),
+        op("LABEL", "Lnormal"),
+        op("CONSTANT", "\"first\""),
+        op("RETURN", "\"first\""),
+        op("TRY_BEGIN", "Lcase0", "Lcase0End", "Lcatch", "java.lang.Exception", "false"),
+        op("LABEL", "Lcase0"),
+        op("CONSTANT", "\"a\""),
+        op("TRY_END", "Lcase0", "Lcase0End", "Lcatch", "java.lang.Exception", "false"),
+        op("LABEL", "Lcase0End"),
+        op("RETURN", "\"a\""),
+        op("TRY_BEGIN", "Lcase1", "Lcase1End", "Lcatch", "java.lang.Exception", "false"),
+        op("LABEL", "Lcase1"),
+        op("CONSTANT", "\"b\""),
+        op("TRY_END", "Lcase1", "Lcase1End", "Lcatch", "java.lang.Exception", "false"),
+        op("LABEL", "Lcase1End"),
+        op("RETURN", "\"b\""),
+        op("TRY_BEGIN", "Ldefault", "Lcatch", "Lcatch", "java.lang.Exception", "false"),
+        op("LABEL", "Ldefault"),
+        op("THROW", "new java.lang.IllegalArgumentException()"),
+        op("TRY_END", "Ldefault", "Lcatch", "Lcatch", "java.lang.Exception", "false"),
+        op("CATCH_BEGIN", "Ltry", "Lnormal", "Lcatch", "java.lang.Exception", "false"),
+        op("CATCH_BEGIN", "Lcase0", "Lcase0End", "Lcatch", "java.lang.Exception", "false"),
+        op("CATCH_BEGIN", "Lcase1", "Lcase1End", "Lcatch", "java.lang.Exception", "false"),
+        op("CATCH_BEGIN", "Ldefault", "Lcatch", "Lcatch", "java.lang.Exception", "false"),
+        op("LABEL", "Lcatch"),
+        op("LOCAL_WRITE", "local1", "<exception>"),
+        op("CONSTANT", "\"fallback\""),
+        op("RETURN", "\"fallback\"")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains("switch (local0)"), result.source());
+    assertTrue(result.source().contains("case 0:"), result.source());
+    assertTrue(result.source().contains("case 1:"), result.source());
+    assertTrue(result.source().contains("fallback"), result.source());
+    assertFalse(result.source().contains("unsupported(\"TABLE_SWITCH\""), result.source());
+  }
+
+  @Test
+  void keepsAThrowInsideACatchLoopInsideTheHandler() {
+    var method = new IrMethodModel("catchLoopThrow", "()V", List.of(
+        op("TRY_BEGIN", "Ltry", "Lnormal", "Lcatch", "java.lang.Exception", "false"),
+        op("LABEL", "Ltry"),
+        op("METHOD_CALL", "work()"),
+        op("TRY_END", "Ltry", "Lnormal", "Lcatch", "java.lang.Exception", "false"),
+        op("LABEL", "Lnormal"),
+        op("JUMP", "Ljoin"),
+        op("CATCH_BEGIN", "Ltry", "Lnormal", "Lcatch", "java.lang.Exception", "false"),
+        op("LABEL", "Lcatch"),
+        op("LOCAL_WRITE", "local0", "<exception>"),
+        op("LABEL", "Lloop"),
+        op("CONDITIONAL_BRANCH", "hasNext == 0", "Lend"),
+        op("METHOD_CALL", "step()"),
+        op("CONDITIONAL_BRANCH", "required == 0", "Lskip"),
+        op("THROW", "failure"),
+        op("LABEL", "Lskip"),
+        op("JUMP", "Lloop"),
+        op("LABEL", "Lend"),
+        op("LABEL", "Ljoin"),
+        op("RETURN")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while"), result.source());
+    assertTrue(result.source().contains("throw failure;"), result.source());
+    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
   void preservesStringsWhenLoweringJavaSyntax() {
     String source = """
         void sample() {

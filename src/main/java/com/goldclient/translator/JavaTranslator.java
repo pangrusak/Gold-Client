@@ -54,6 +54,9 @@ public final class JavaTranslator {
       IrOperationModel operation = operations.get(i);
 
       if ("TRY_BEGIN".equals(operation.kind())) {
+        // A merged split-region try renders its body flat; the individual
+        // protected ranges are markers for the same handler, not nested tries.
+        if (context.suppressesNestedTryRegions()) continue;
         // A region whose handler is a sibling clause of the enclosing catch
         // block repeats that handler over this block (try-with-resources and
         // catch-all plumbing); the handler is rendered once, after it.
@@ -524,6 +527,15 @@ public final class JavaTranslator {
     }
     int lastCatchBegin = handlerBegins[handlerBegins.length - 1];
 
+    // A string switch compiles to one protected range per case, so the switch
+    // targets lie past this first range's TRY_END even though they share the
+    // same handler. Let the split-region renderer merge them instead of
+    // producing a clipped try body with unresolved switch targets.
+    if (isSplitSwitchRegion(
+        operations, begin, end, tryEnd, handlerLabel, exceptionType, labels)) {
+      return null;
+    }
+
     String normalJoinLabel = null;
     for (int i = tryEnd + 1; i < handlerBegins[0]; i++) {
       IrOperationModel operation = operations.get(i);
@@ -586,8 +598,11 @@ public final class JavaTranslator {
           break;
         }
       }
-      if ("RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())
-          || "TERMINATE".equals(operation.kind())) {
+      if (isTerminal(operation)
+          && !hasForwardBranchPast(operations, lastCatchBegin + 1, i, end, labels)) {
+        // A return/throw inside a loop or switch arm is not the handler tail
+        // when an earlier branch still jumps to code after it. In that case the
+        // handler continues and the real end is its join label.
         handlerEnd = i + 1;
         break;
       }
@@ -957,6 +972,13 @@ public final class JavaTranslator {
     if (!"LOCAL_WRITE".equals(typedStore.kind()) || typedStore.operands().size() < 2
         || !"<exception>".equals(typedStore.operands().get(1))) return null;
     String typedVariable = typedStore.operands().get(0);
+    if (!isSimpleRethrowHandler(operations, typedStart, finallyBegin, typedVariable)) {
+      return renderUserCatchFinally(
+          operations, end, indent, context, labels, startLabel, endLabel,
+          typedHandlers.get(0), typedTypes.iterator().next(), typedVariable,
+          finallyLabel, labels.get(labelKey(startLabel)), tryEnd,
+          typedStart, finallyBegin);
+    }
     int typedThrow = -1;
     for (int i = typedStart + 1; i < finallyBegin; i++) {
       IrOperationModel operation = operations.get(i);
@@ -1076,6 +1098,148 @@ public final class JavaTranslator {
     return new ConditionalRender(source.toString(), complete, finallyThrow);
   }
 
+  /**
+   * Returns true when a typed handler only captures the primary exception and
+   * rethrows it, which is the synthetic half of javac's try-with-resources
+   * shape. A user catch clause (report/recover, return, etc.) is not this
+   * shape and is rendered by {@link #renderUserCatchFinally}.
+   */
+  private static boolean isSimpleRethrowHandler(
+      List<IrOperationModel> operations, int typedStart, int finallyBegin,
+      String typedVariable) {
+    int typedThrow = -1;
+    for (int i = typedStart + 1; i < finallyBegin; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("THROW".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(typedVariable).equals(labelKey(operation.operands().get(0)))) {
+        typedThrow = i;
+        break;
+      }
+      if (!isSimpleRethrowOperation(operation)) return false;
+    }
+    if (typedThrow < 0) return false;
+    for (int i = typedStart + 1; i < typedThrow; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("LOCAL_WRITE".equals(operation.kind()) && operation.operands().size() >= 2
+          && labelKey(typedVariable).equals(labelKey(operation.operands().get(1)))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Renders a hand-written {@code try { ... } catch (T e) { ... } finally { ... }}
+   * where javac duplicated the finally cleanup into the normal path and the
+   * catch path. The cleanup is emitted once in the finally clause; the copies
+   * are excluded by ending the try body at the normal end label and the catch
+   * body at the start of the protected catch range's end label.
+   */
+  private static ConditionalRender renderUserCatchFinally(
+      List<IrOperationModel> operations, int end, int indent,
+      TranslationContext context, Map<String, Integer> labels,
+      String startLabel, String endLabel, String typedHandlerLabel,
+      String typedType, String typedVariable, String finallyLabel,
+      Integer thisStart, int tryEnd, int typedStart, int finallyBegin) {
+    if (thisStart == null) return null;
+
+    // A nested protected region that starts at the outer end label is javac's
+    // try-with-resources close region. That shape has its own synthetic cleanup
+    // and is handled by the general renderer; claiming it here would clip the
+    // close region at the outer end label.
+    for (int i = 0; i < operations.size(); i++) {
+      IrOperationModel candidate = operations.get(i);
+      if (!"TRY_BEGIN".equals(candidate.kind()) || candidate.operands().size() < 4) continue;
+      if (labelKey(endLabel).equals(labelKey(candidate.operands().get(0)))) return null;
+    }
+
+    String catchEndLabel = null;
+    for (IrOperationModel candidate : operations) {
+      if (!"TRY_BEGIN".equals(candidate.kind()) || candidate.operands().size() < 5) continue;
+      List<String> metadata = candidate.operands();
+      if (labelKey(typedHandlerLabel).equals(labelKey(metadata.get(0)))
+          && finallyLabel.equals(labelKey(metadata.get(2)))
+          && "true".equals(metadata.get(4))) {
+        catchEndLabel = metadata.get(1);
+        break;
+      }
+    }
+    if (catchEndLabel == null) return null;
+    Integer catchEnd = labels.get(labelKey(catchEndLabel));
+    Integer normalEnd = labels.get(labelKey(endLabel));
+    if (catchEnd == null || normalEnd == null
+        || catchEnd <= typedStart || catchEnd > finallyBegin
+        || normalEnd <= tryEnd || normalEnd > catchEnd) {
+      return null;
+    }
+
+    int bodyStart = thisStart + 1;
+    while (bodyStart < tryEnd && isExceptionBoundary(operations.get(bodyStart))) bodyStart++;
+    if (isBackwardBranchTarget(operations, thisStart, tryEnd, startLabel, labels)) {
+      bodyStart = thisStart;
+    }
+    if (bodyStart >= normalEnd) return null;
+
+    int finallyStart = finallyBegin + 1;
+    while (finallyStart < end && isExceptionBoundary(operations.get(finallyStart))) {
+      finallyStart++;
+    }
+    if (finallyStart >= end) return null;
+    IrOperationModel finallyStore = operations.get(finallyStart);
+    if (!"LOCAL_WRITE".equals(finallyStore.kind()) || finallyStore.operands().size() < 2
+        || !"<exception>".equals(finallyStore.operands().get(1))) return null;
+    String finallyVariable = finallyStore.operands().get(0);
+    int finallyThrow = -1;
+    for (int i = finallyStart + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("CATCH_BEGIN".equals(operation.kind()) && operation.operands().size() >= 3) {
+        Integer nestedStart = labels.get(labelKey(operation.operands().get(0)));
+        if (nestedStart == null || nestedStart < thisStart) break;
+      }
+      if ("THROW".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(finallyVariable).equals(labelKey(operation.operands().get(0)))) {
+        finallyThrow = i;
+      }
+    }
+    if (finallyThrow < 0) return null;
+    int finallyBodyEnd = finallyThrow;
+    if (finallyBodyEnd - 1 >= finallyStart + 1) {
+      IrOperationModel beforeThrow = operations.get(finallyBodyEnd - 1);
+      if ("LOCAL_READ".equals(beforeThrow.kind()) && !beforeThrow.operands().isEmpty()
+          && labelKey(finallyVariable).equals(labelKey(beforeThrow.operands().get(0)))) {
+        finallyBodyEnd--;
+      }
+    }
+
+    context.enterSuppressedTryHandlers(Set.of(finallyLabel));
+    RenderResult tryBody;
+    RenderResult catchBody;
+    RenderResult finallyBody;
+    try {
+      // The normal path may jump to the region's end label, where javac placed
+      // a duplicate finally cleanup. Rendering through that label drops the
+      // jump; the cleanup is rendered once below.
+      tryBody = renderRange(
+          operations, bodyStart, normalEnd, indent + 1, context, labels);
+      catchBody = renderRange(
+          operations, typedStart + 1, catchEnd, indent + 1, context, labels);
+      finallyBody = renderRange(
+          operations, finallyStart + 1, finallyBodyEnd, indent + 1, context, labels);
+    } finally {
+      context.exitSuppressedTryHandlers();
+    }
+
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("try {\n").append(tryBody.source());
+    source.append(indent(indent)).append("} catch (")
+        .append(typedType).append(" ").append(typedVariable)
+        .append(") {\n").append(catchBody.source());
+    source.append(indent(indent)).append("} finally {\n").append(finallyBody.source());
+    source.append(indent(indent)).append("}\n");
+    boolean complete = tryBody.complete() && catchBody.complete() && finallyBody.complete();
+    return new ConditionalRender(source.toString(), complete, finallyThrow);
+  }
+
   private static boolean allExceptionMarkers(
       List<IrOperationModel> operations, int from, int to) {
     if (from < 0 || to > operations.size() || from > to) return false;
@@ -1131,7 +1295,131 @@ public final class JavaTranslator {
     ConditionalRender grouped = renderGroupedTryCatch(
         operations, begin, end, indent, context, labels);
     if (grouped != null) return grouped;
+    ConditionalRender split = renderSplitExceptionRegions(
+        operations, begin, end, indent, context, labels);
+    if (split != null) return split;
     return renderMergedTryCatch(operations, begin, end, indent, context, labels);
+  }
+
+  private static boolean isSplitSwitchRegion(
+      List<IrOperationModel> operations, int begin, int end, int tryEnd,
+      String handlerLabel, String exceptionType, Map<String, Integer> labels) {
+    Integer handlerIndex = labels.get(labelKey(handlerLabel));
+    if (handlerIndex == null) return false;
+    int matchingRanges = 0;
+    boolean hasSwitch = false;
+    for (int i = begin; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("TRY_BEGIN".equals(operation.kind())) {
+        if (operation.operands().size() < 4
+            || !labelKey(handlerLabel).equals(labelKey(operation.operands().get(2)))
+            || !exceptionType.equals(operation.operands().get(3))) return false;
+        matchingRanges++;
+      }
+      if ("TABLE_SWITCH".equals(operation.kind())
+          || "LOOKUP_SWITCH".equals(operation.kind())) hasSwitch = true;
+    }
+    if (matchingRanges < 2 || !hasSwitch) return false;
+    for (int i = begin + 1; i < tryEnd; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (!"TABLE_SWITCH".equals(operation.kind())
+          && !"LOOKUP_SWITCH".equals(operation.kind())) continue;
+      for (int operand = 1; operand < operation.operands().size(); operand++) {
+        Integer target = labels.get(labelKey(operation.operands().get(operand)));
+        if (target != null && target > tryEnd && target < handlerIndex) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * javac's string switch emits a separate protected range around each case's
+   * {@code GETSTATIC}, all sharing one handler. The switch therefore appears
+   * to jump outside the first protected range. When every protected range in
+   * the method shares one handler/type, merge them into a single try/catch and
+   * render the body flat. This is deliberately narrow: it only claims a
+   * method-tail handler with a switch in the body and no jumps past the
+   * handler.
+   */
+  private static ConditionalRender renderSplitExceptionRegions(
+      List<IrOperationModel> operations, int begin, int end, int indent,
+      TranslationContext context, Map<String, Integer> labels) {
+    List<String> metadata = operations.get(begin).operands();
+    if (metadata.size() < 4) return null;
+    String startLabel = metadata.get(0);
+    String handlerLabel = labelKey(metadata.get(2));
+    String exceptionType = metadata.get(3);
+
+    int tryBegins = 0;
+    boolean hasSwitch = false;
+    for (int i = begin; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("TRY_BEGIN".equals(operation.kind())) {
+        if (operation.operands().size() < 4
+            || !handlerLabel.equals(labelKey(operation.operands().get(2)))
+            || !exceptionType.equals(operation.operands().get(3))) return null;
+        tryBegins++;
+      }
+      if ("CATCH_BEGIN".equals(operation.kind()) && operation.operands().size() >= 4
+          && !handlerLabel.equals(labelKey(operation.operands().get(2)))) return null;
+      if ("TABLE_SWITCH".equals(operation.kind())
+          || "LOOKUP_SWITCH".equals(operation.kind())) hasSwitch = true;
+    }
+    if (tryBegins < 2 || !hasSwitch) return null;
+
+    Integer handlerIndex = labels.get(handlerLabel);
+    Integer thisStart = labels.get(labelKey(startLabel));
+    if (handlerIndex == null || thisStart == null
+        || handlerIndex <= begin || handlerIndex >= end) return null;
+
+    int bodyStart = thisStart + 1;
+    while (bodyStart < handlerIndex && isExceptionBoundary(operations.get(bodyStart))) {
+      bodyStart++;
+    }
+    if (bodyStart >= handlerIndex) return null;
+
+    for (int i = bodyStart; i < handlerIndex; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (!"JUMP".equals(operation.kind())
+          && !"CONDITIONAL_BRANCH".equals(operation.kind())) continue;
+      for (int operand = 1; operand < operation.operands().size(); operand++) {
+        Integer target = labels.get(labelKey(operation.operands().get(operand)));
+        if (target != null && target > handlerIndex && target < end) return null;
+      }
+    }
+
+    if (!isTerminal(operations.get(end - 1))) return null;
+    int catchStart = handlerIndex + 1;
+    while (catchStart < end && isExceptionBoundary(operations.get(catchStart))) {
+      catchStart++;
+    }
+    if (catchStart >= end) return null;
+    IrOperationModel store = operations.get(catchStart);
+    if (!"LOCAL_WRITE".equals(store.kind()) || store.operands().size() < 2
+        || !"<exception>".equals(store.operands().get(1))) return null;
+    String exceptionVariable = store.operands().get(0);
+
+    boolean previous = context.suppressesNestedTryRegions();
+    context.setSuppressNestedTryRegions(true);
+    RenderResult body;
+    RenderResult catchBody;
+    try {
+      body = renderRange(
+          operations, bodyStart, handlerIndex, indent + 1, context, labels);
+      catchBody = renderRange(
+          operations, catchStart + 1, end, indent + 1, context, labels);
+    } finally {
+      context.setSuppressNestedTryRegions(previous);
+    }
+
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("try {\n").append(body.source());
+    source.append(indent(indent)).append("} catch (")
+        .append(exceptionType).append(" ").append(exceptionVariable)
+        .append(") {\n").append(catchBody.source());
+    source.append(indent(indent)).append("}\n");
+    return new ConditionalRender(
+        source.toString(), body.complete() && catchBody.complete(), end - 1);
   }
 
   private static ConditionalRender renderMergedTryCatch(
@@ -1638,6 +1926,26 @@ public final class JavaTranslator {
   private static boolean isTerminal(IrOperationModel operation) {
     return "RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())
         || "TERMINATE".equals(operation.kind());
+  }
+
+  /** True when a branch before {@code index} targets executable code after it. */
+  private static boolean hasForwardBranchPast(
+      List<IrOperationModel> operations, int start, int index, int end,
+      Map<String, Integer> labels) {
+    for (int i = start; i < index; i++) {
+      IrOperationModel operation = operations.get(i);
+      String target = null;
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        target = operation.operands().get(0);
+      } else if ("CONDITIONAL_BRANCH".equals(operation.kind())
+          && operation.operands().size() >= 2) {
+        target = operation.operands().get(1);
+      }
+      if (target == null) continue;
+      Integer targetIndex = labels.get(labelKey(target));
+      if (targetIndex != null && targetIndex > index && targetIndex < end) return true;
+    }
+    return false;
   }
 
   /**
