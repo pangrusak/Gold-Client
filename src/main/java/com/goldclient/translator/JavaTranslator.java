@@ -560,6 +560,16 @@ public final class JavaTranslator {
         }
         if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
             && labelKey(normalJoinLabel).equals(labelKey(operation.operands().get(0)))) {
+          // A switch arm or nested block can jump to the shared join before the
+          // handler's final instruction. That is an inner edge, not the end of
+          // the handler: keep scanning for the actual join label so the whole
+          // handler (including the switch) stays in the catch clause.
+          Integer joinTarget = labels.get(labelKey(normalJoinLabel));
+          if (joinTarget != null && joinTarget > i && joinTarget < end
+              && joinTarget < operations.size()
+              && "LABEL".equals(operations.get(joinTarget).kind())) {
+            continue;
+          }
           handlerEnd = i;
           joinLabel = normalJoinLabel;
           break;
@@ -1220,6 +1230,16 @@ public final class JavaTranslator {
         }
         if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
             && labelKey(normalJoinLabel).equals(labelKey(operation.operands().get(0)))) {
+          // A switch arm or nested block can jump to the shared join before the
+          // handler's final instruction. That is an inner edge, not the end of
+          // the handler: keep scanning for the actual join label so the whole
+          // handler (including the switch) stays in the catch clause.
+          Integer joinTarget = labels.get(labelKey(normalJoinLabel));
+          if (joinTarget != null && joinTarget > i && joinTarget < end
+              && joinTarget < operations.size()
+              && "LABEL".equals(operations.get(joinTarget).kind())) {
+            continue;
+          }
           handlerEnd = i;
           joinLabel = normalJoinLabel;
           break;
@@ -3224,8 +3244,27 @@ public final class JavaTranslator {
               operations, branchIndex + 1, targetIndex, target, labels);
           int targetBodyStart = tryBeginBeforeTarget >= 0
               ? tryBeginBeforeTarget : targetIndex + 1;
+          // A try in the fall-through arm emits its catch handler after the
+          // normal-path jump. Keep that handler in the arm instead of clipping
+          // the try at the jump; the handler ends at the other branch target.
+          boolean hasTryInFallthrough = false;
+          for (int i = branchIndex + 1; i < jumpIndex; i++) {
+            if ("TRY_BEGIN".equals(operations.get(i).kind())) {
+              hasTryInFallthrough = true;
+              break;
+            }
+          }
+          boolean hasCatchBeforeTarget = false;
+          for (int i = jumpIndex; i < targetIndex; i++) {
+            if ("CATCH_BEGIN".equals(operations.get(i).kind())) {
+              hasCatchBeforeTarget = true;
+              break;
+            }
+          }
+          int fallthroughEnd = hasTryInFallthrough && hasCatchBeforeTarget
+              ? Math.min(targetIndex, structuredEnd) : jumpIndex;
           RenderResult fallthroughBody = renderRange(
-              operations, branchIndex + 1, jumpIndex, indent + 1, context, labels);
+              operations, branchIndex + 1, fallthroughEnd, indent + 1, context, labels);
           RenderResult targetBody = renderRange(
               operations, targetBodyStart, structuredEnd, indent + 1, context, labels);
 

@@ -185,6 +185,71 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void keepsACatchHandlerInsideTheFallthroughArmOfAnIfElse() {
+    var method = new IrMethodModel("ifElseTry", "()V", List.of(
+        op("LOCAL_READ", "local0"),
+        op("CONDITIONAL_BRANCH", "local0 == 0", "Linvalid"),
+        op("TRY_BEGIN", "Ltry", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Ltry"),
+        op("METHOD_CALL", "risky()"),
+        op("TRY_END", "Ltry", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Lend"),
+        op("JUMP", "Ljoin"),
+        op("CATCH_BEGIN", "Ltry", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Lhandler"),
+        op("LOCAL_WRITE", "local1", "<exception>"),
+        op("THROW", "local1"),
+        op("LABEL", "Linvalid"),
+        op("METHOD_CALL", "invalid()"),
+        op("THROW", "invalid"),
+        op("LABEL", "Ljoin"),
+        op("RETURN")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains("catch (local1)"), result.source());
+    assertFalse(result.source().contains("unsupported(\"try-catch-region\""), result.source());
+  }
+
+  @Test
+  void keepsSwitchArmsInsideACatchClauseUntilTheSharedJoin() {
+    var method = new IrMethodModel("catchSwitch", "()V", List.of(
+        op("TRY_BEGIN", "Ltry", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Ltry"),
+        op("METHOD_CALL", "risky()"),
+        op("TRY_END", "Ltry", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Lend"),
+        op("JUMP", "Ljoin"),
+        op("CATCH_BEGIN", "Ltry", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Lhandler"),
+        op("LOCAL_WRITE", "local1", "<exception>"),
+        op("TABLE_SWITCH", "local1", "0", "1", "Ldefault", "Lcase0", "Lcase1"),
+        op("LABEL", "Lcase0"),
+        op("CONSTANT", "\"a\""),
+        op("LOCAL_WRITE", "local1", "\"a\""),
+        op("JUMP", "Ljoin"),
+        op("LABEL", "Lcase1"),
+        op("CONSTANT", "\"b\""),
+        op("LOCAL_WRITE", "local1", "\"b\""),
+        op("JUMP", "Ljoin"),
+        op("LABEL", "Ldefault"),
+        op("CONSTANT", "\"c\""),
+        op("LOCAL_WRITE", "local1", "\"c\""),
+        op("LABEL", "Ljoin"),
+        op("RETURN")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("catch (local1)"), result.source());
+    assertTrue(result.source().contains("switch (local1)"), result.source());
+    assertTrue(result.source().contains("case 0:"), result.source());
+    assertFalse(result.source().contains("unsupported(\"TABLE_SWITCH\""), result.source());
+  }
+
+  @Test
   void preservesStringsWhenLoweringJavaSyntax() {
     String source = """
         void sample() {
