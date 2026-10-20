@@ -2409,8 +2409,15 @@ public final class JavaTranslator {
       // both arms leave the switch statement and its trailing break handles
       // the jump.
       if (target >= end) {
-        if (!context.isInnermostSwitchJoin(labelKey(jumpTarget))) return null;
-        joinBeyondRange = true;
+        if (target == end) {
+          // The join is the label just past this render range, so leaving to
+          // it is the range's normal completion. Nested if/else chains whose
+          // arms share the enclosing range's end label rely on this.
+          joinBeyondRange = true;
+        } else {
+          if (!context.isInnermostSwitchJoin(labelKey(jumpTarget))) return null;
+          joinBeyondRange = true;
+        }
       }
       thenJumpIndex = thenTailIndex;
       joinIndex = target;
@@ -2797,10 +2804,19 @@ public final class JavaTranslator {
         + targetValue + " : " + fallthroughValue + ")";
     StringBuilder source = new StringBuilder();
     if ("LOCAL_WRITE".equals(sink.kind()) && sink.operands().size() >= 2
-        && "<unknown>".equals(sink.operands().get(1))) {
-      String local = sink.operands().get(0);
-      String assignment = context.declareLocal(local) ? "var " + local : local;
-      source.append(indent(indent)).append(assignment).append(" = ").append(ternary).append(";\n");
+        && sink.operands().get(1).contains("<unknown>")) {
+      // The merged value can be nested inside a larger expression, such as a
+      // constructor call whose last argument is the conditional result.
+      // Substitute the ternary and lower the write normally so object
+      // creation goes through the same runtime path as any other write.
+      java.util.List<String> replacedOperands =
+          new java.util.ArrayList<>(sink.operands());
+      replacedOperands.set(1, replacedOperands.get(1).replace("<unknown>", ternary));
+      IrOperationModel replaced = new IrOperationModel(
+          sink.kind(), replacedOperands, sink.sourceInstruction());
+      String lowered = translateOperation(replaced, context);
+      if (lowered == null || lowered.isBlank()) return null;
+      source.append(indent(indent)).append(lowered).append("\n");
       return new ConditionalRender(source.toString(), true, sinkIndex);
     }
     if ("CONDITIONAL_BRANCH".equals(sink.kind()) && !sink.operands().isEmpty()) {
@@ -2921,10 +2937,16 @@ public final class JavaTranslator {
     }
     StringBuilder source = new StringBuilder();
     if ("LOCAL_WRITE".equals(sink.kind()) && sink.operands().size() >= 2
-        && "<unknown>".equals(sink.operands().get(1))) {
-      String local = sink.operands().get(0);
-      String assignment = context.declareLocal(local) ? "var " + local : local;
-      source.append(indent(indent)).append(assignment).append(" = ").append(folded).append(";\n");
+        && sink.operands().get(1).contains("<unknown>")) {
+      // A constructor or other compound expression can hold the merged value.
+      java.util.List<String> replacedOperands =
+          new java.util.ArrayList<>(sink.operands());
+      replacedOperands.set(1, replacedOperands.get(1).replace("<unknown>", folded));
+      IrOperationModel replaced = new IrOperationModel(
+          sink.kind(), replacedOperands, sink.sourceInstruction());
+      String lowered = translateOperation(replaced, context);
+      if (lowered == null || lowered.isBlank()) return null;
+      source.append(indent(indent)).append(lowered).append("\n");
       return new ConditionalRender(source.toString(), true, sinkIndex);
     }
     if (!List.of("FIELD_WRITE", "METHOD_CALL", "RETURN").contains(sink.kind())) return null;
