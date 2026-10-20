@@ -896,6 +896,76 @@ class JavaScriptTranslatorTest {
     assertFalse(result.source().contains("<unknown>"), result.source());
   }
 
+  @Test
+  void keepsTryRegionMarkersWithTheirStartLabelInsideGuardChains() {
+    var method = new IrMethodModel("overlay", "(I)V", List.of(
+        op("LOCAL_READ", "local1"),
+        op("CONSTANT", "0"),
+        op("CONDITIONAL_BRANCH", "local1 != 0", "L0"),
+        op("LOCAL_READ", "local2"),
+        op("CONDITIONAL_BRANCH", "local2 == 0", "L1"),
+        op("LABEL", "L0"),
+        op("LOCAL_READ", "local2"),
+        op("CONDITIONAL_BRANCH", "local2 != 0", "L2"),
+        op("TRY_BEGIN", "L1", "L3", "L4", "java.lang.Exception", "false"),
+        op("LABEL", "L1"),
+        op("CALL_VALUE", "example.Helper.render()"),
+        op("TRY_END", "L1", "L3", "L4", "java.lang.Exception", "false"),
+        op("LABEL", "L3"),
+        op("JUMP", "L2"),
+        op("CATCH_BEGIN", "L1", "L3", "L4", "java.lang.Exception", "false"),
+        op("LABEL", "L4"),
+        op("LOCAL_WRITE", "local5", "<exception>"),
+        op("LABEL", "L2"),
+        op("RETURN")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method, false);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains("} catch ("), result.source());
+    assertFalse(result.source().contains("unsupported(\"try-catch-region\""), result.source());
+    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void foldsBooleanReturnChainsWithInterleavedConditionValues() {
+    var method = new IrMethodModel("needsRename", "(I)Z", List.of(
+        op("LOCAL_READ", "local1"),
+        op("CONSTANT", "1000"),
+        op("CONDITIONAL_BRANCH", "local1 < 1000", "L0"),
+        op("LOCAL_READ", "local1"),
+        op("CONDITIONAL_BRANCH", "local1 == 0", "L1"),
+        op("CONSTANT", "1"),
+        op("JUMP", "L2"),
+        op("LABEL", "L1"),
+        op("CONSTANT", "0"),
+        op("LABEL", "L2"),
+        op("LOCAL_READ", "local1"),
+        op("CALL_VALUE", "example.Helper.check(<unknown>)"),
+        op("CONDITIONAL_BRANCH", "example.Helper.check(<unknown>) == 0", "L0"),
+        op("LOCAL_READ", "local1"),
+        op("CONSTANT", "5"),
+        op("CONDITIONAL_BRANCH", "local1 >= 5", "L3"),
+        op("LABEL", "L0"),
+        op("CONSTANT", "1"),
+        op("JUMP", "L4"),
+        op("LABEL", "L3"),
+        op("CONSTANT", "0"),
+        op("LABEL", "L4"),
+        op("RETURN", "<unknown>")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method, false);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "check\", (local1 == 0 ? 0 : 1)) == 0"), result.source());
+    assertTrue(result.source().contains("return 1;"), result.source());
+    assertTrue(result.source().contains("return 0;"), result.source());
+    assertFalse(result.source().contains("<unknown>"), result.source());
+    assertFalse(result.source().contains("unsupported"), result.source());
+  }
+
   private static IrOperationModel op(String kind, String... operands) {
     return new IrOperationModel(kind, List.of(operands), 0);
   }

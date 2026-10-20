@@ -1091,6 +1091,90 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void breaksOutOfATryWhenTheBodyJumpsToItsProtectedEnd() {
+    IrMethodModel method = new IrMethodModel("pick", "(Z)I", List.of(
+        new IrOperationModel("TRY_BEGIN",
+            List.of("Ltry", "Lend", "Lcatch", "java.lang.Exception", "false"), 0),
+        new IrOperationModel("LABEL", List.of("Ltry"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("flag == 0", "Lskip"), 2),
+        new IrOperationModel("CONSTANT", List.of("1"), 3),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "1"), 4),
+        new IrOperationModel("JUMP", List.of("Lend"), 5),
+        new IrOperationModel("LABEL", List.of("Lskip"), 6),
+        new IrOperationModel("CONSTANT", List.of("2"), 7),
+        new IrOperationModel("LOCAL_WRITE", List.of("local1", "2"), 8),
+        new IrOperationModel("TRY_END",
+            List.of("Ltry", "Lend", "Lcatch", "java.lang.Exception", "false"), 9),
+        new IrOperationModel("LABEL", List.of("Lend"), 10),
+        new IrOperationModel("LOCAL_READ", List.of("local1"), 11),
+        new IrOperationModel("RETURN", List.of("local1"), 12),
+        new IrOperationModel("CATCH_BEGIN",
+            List.of("Ltry", "Lend", "Lcatch", "java.lang.Exception", "false"), 13),
+        new IrOperationModel("LABEL", List.of("Lcatch"), 14),
+        new IrOperationModel("LOCAL_WRITE", List.of("local2", "<exception>"), 15),
+        new IrOperationModel("CONSTANT", List.of("-1"), 16),
+        new IrOperationModel("RETURN", List.of("-1"), 17)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("_try0: {"), result.source());
+    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void keepsDoWhileHeaderWhenExplicitContinuesAlsoTargetIt() {
+    IrMethodModel method = new IrMethodModel("scan", "()I", List.of(
+        new IrOperationModel("LABEL", List.of("L0"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("terminator == 0", "Lbreak"), 1),
+        new IrOperationModel("JUMP", List.of("L0"), 2),
+        new IrOperationModel("LABEL", List.of("Lmid"), 3),
+        new IrOperationModel("CONSTANT", List.of("1"), 4),
+        new IrOperationModel("LOCAL_WRITE", List.of("local2", "1"), 5),
+        new IrOperationModel("JUMP", List.of("L0"), 6),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local2 != 0", "L0"), 7),
+        new IrOperationModel("LABEL", List.of("Lbreak"), 8),
+        new IrOperationModel("LOCAL_READ", List.of("local2"), 9),
+        new IrOperationModel("RETURN", List.of("local2"), 10)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("do {"), result.source());
+    assertTrue(result.source().contains("if (terminator == 0) break;"), result.source());
+    assertTrue(result.source().contains("} while (local2 != 0);"), result.source());
+    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void foldsConstructorDuplicateIntoConditionalValueMerge() {
+    IrMethodModel method = new IrMethodModel("read", "()Ljava/lang/String;", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local1 != null", "Lthen"), 0),
+        new IrOperationModel("OBJECT_CREATE", List.of("new java.lang.String"), 1),
+        new IrOperationModel("DUP", List.of("new java.lang.String"), 2),
+        new IrOperationModel("LOCAL_READ", List.of("local2"), 3),
+        new IrOperationModel("CALL_VALUE", List.of("new java.lang.String(local2)"), 4),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 5),
+        new IrOperationModel("LABEL", List.of("Lthen"), 6),
+        new IrOperationModel("LOCAL_READ", List.of("local1"), 7),
+        new IrOperationModel(
+            "CALL_VALUE", List.of("local1.append(local2).toString()"), 8),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 9),
+        new IrOperationModel("LOCAL_WRITE", List.of("local3", "<unknown>"), 10),
+        new IrOperationModel("LOCAL_READ", List.of("local3"), 11),
+        new IrOperationModel("RETURN", List.of("local3"), 12)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "var local3 = (local1 != null ? local1.append(local2).toString() "
+            + ": new java.lang.String(local2));"),
+        result.source());
+    assertFalse(result.source().contains("<unknown>"), result.source());
+  }
+
+  @Test
   void structuresShortCircuitChainWithTwoExpressionBlocksIntoLocalTernary() {
     IrMethodModel method = new IrMethodModel("isVisible", "()V", List.of(
         new IrOperationModel("CONDITIONAL_BRANCH", List.of("a == 0", "Ltrue"), 0),

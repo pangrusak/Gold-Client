@@ -562,6 +562,38 @@ public final class JavaTranslator {
     return ordered;
   }
 
+  /**
+   * True when the protected body jumps to its own end label before the normal
+   * completion path. A jump immediately followed by the handler marker is the
+   * normal path the try renderer already handles; only an earlier jump needs a
+   * labeled block so it can leave the try body.
+   */
+  private static boolean bodyJumpsPastProtectedEnd(
+      List<IrOperationModel> operations,
+      int start,
+      int end,
+      String label,
+      Map<String, Integer> labels) {
+    for (int i = start; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if (!"JUMP".equals(operation.kind()) || operation.operands().isEmpty()) continue;
+      if (!labelKey(label).equals(labelKey(operation.operands().get(0)))) continue;
+      int cursor = i + 1;
+      while (cursor < end) {
+        IrOperationModel next = operations.get(cursor);
+        if ("LABEL".equals(next.kind()) || "TRY_BEGIN".equals(next.kind())
+            || "TRY_END".equals(next.kind())) {
+          cursor++;
+          continue;
+        }
+        break;
+      }
+      if (cursor >= end || "CATCH_BEGIN".equals(operations.get(cursor).kind())) continue;
+      return true;
+    }
+    return false;
+  }
+
   private static int protectedEndIndex(
       IrOperationModel operation, Map<String, Integer> labels) {
     if (operation.operands().size() < 2) return -1;
@@ -791,7 +823,14 @@ public final class JavaTranslator {
         && !fallsThroughTo(normalTarget, resumeIndex, operations);
     boolean inlineTailBlock = escapingNormalPath && normalTarget < end
         && canInlineJumpBlock(operations, end);
-    String breakLabel = escapingNormalPath && !inlineTailBlock ? "_try" + begin : null;
+    // A jump from inside the protected body to its end label also leaves the
+    // try normally. Wrap the region in a block so that edge can break out
+    // instead of being lowered as an unsupported jump to a label the body
+    // renderer cannot reach.
+    boolean bodyExitsAtEnd = bodyJumpsPastProtectedEnd(
+        operations, begin + 1, tryEnd, endLabel, labels);
+    String breakLabel = (escapingNormalPath && !inlineTailBlock) || bodyExitsAtEnd
+        ? "_try" + begin : null;
 
     int[] handlerEnds = new int[handlerBegins.length];
     int[] handlerTailBlocks = new int[handlerBegins.length];
@@ -914,8 +953,14 @@ public final class JavaTranslator {
         && normalTarget >= handlerEnd) {
       bodyLimit = normalCompletionJump;
     }
-    RenderResult tryBodyCore = renderRange(
-        operations, bodyStart, bodyLimit, indent + 1, context, labels);
+    if (bodyExitsAtEnd) context.enterSkipExit(endLabel, breakLabel);
+    RenderResult tryBodyCore;
+    try {
+      tryBodyCore = renderRange(
+          operations, bodyStart, bodyLimit, indent + 1, context, labels);
+    } finally {
+      if (bodyExitsAtEnd) context.exitSkipExit();
+    }
     StringBuilder tryBodySource = new StringBuilder(tryBodyCore.source());
     boolean tryBodyComplete = tryBodyCore.complete();
     boolean renderedNormalPath = extendedBody;
@@ -1051,7 +1096,7 @@ public final class JavaTranslator {
     int lastHandlerEnd = handlerEnds[handlerEnds.length - 1];
     if (!handlerEndsAtJoinRegion && joinLabel == null && lastHandlerEnd < end
         && !isTerminal(operations.get(lastHandlerEnd - 1))) complete = false;
-    int last = breakLabel != null
+    int last = breakLabel != null && normalBlockStart >= 0
         ? normalBlockStart - 1
         : (joinLabel == null || handlerEndsAtJoinRegion
             ? lastHandlerEnd - 1 : lastHandlerEnd);
@@ -2140,23 +2185,6 @@ public final class JavaTranslator {
     Integer trueLabelIndex = labels.get(labelKey(firstBranch.operands().get(1)));
     if (trueLabelIndex == null || trueLabelIndex <= branchIndex || trueLabelIndex >= end) return null;
 
-    List<Integer> falseBranches = new java.util.ArrayList<>();
-    Integer falseLabelIndex = null;
-    for (int i = branchIndex + 1; i < trueLabelIndex; i++) {
-      IrOperationModel candidate = operations.get(i);
-      if ("JUMP".equals(candidate.kind())) return null;
-      if ("CONDITIONAL_BRANCH".equals(candidate.kind())) {
-        if (candidate.operands().size() < 2) return null;
-        Integer candidateFalseLabel = labels.get(labelKey(candidate.operands().get(1)));
-        if (candidateFalseLabel == null) return null;
-        if (falseLabelIndex == null) falseLabelIndex = candidateFalseLabel;
-        else if (!falseLabelIndex.equals(candidateFalseLabel)) return null;
-        falseBranches.add(i);
-      }
-    }
-    if (falseBranches.isEmpty() || falseLabelIndex == null
-        || falseLabelIndex <= trueLabelIndex || falseLabelIndex >= end) return null;
-
     int trueConstantIndex = nextExecutableIndex(operations, trueLabelIndex + 1, end);
     if (trueConstantIndex < 0 || !"CONSTANT".equals(operations.get(trueConstantIndex).kind())
         || !isTrueLikeConstant(operations.get(trueConstantIndex))) return null;
@@ -2165,7 +2193,37 @@ public final class JavaTranslator {
         || operations.get(trueJumpIndex).operands().isEmpty()) return null;
     String joinLabel = operations.get(trueJumpIndex).operands().get(0);
     Integer joinIndex = labels.get(labelKey(joinLabel));
-    if (joinIndex == null || joinIndex <= falseLabelIndex || joinIndex >= end) return null;
+    if (joinIndex == null || joinIndex <= trueLabelIndex || joinIndex >= end) return null;
+
+    // Conditionals between the first test and the join either return the
+    // true/false constant, or feed a later condition (a nested ternary in an
+    // argument). Only the constant-returning ones are guards; the rest stay in
+    // the rendered prefix so their value merges keep working.
+    List<Integer> trueBranches = new java.util.ArrayList<>();
+    List<Integer> falseBranches = new java.util.ArrayList<>();
+    List<Integer> valueBranches = new java.util.ArrayList<>();
+    Integer falseLabelIndex = null;
+    for (int i = branchIndex; i < joinIndex; i++) {
+      IrOperationModel candidate = operations.get(i);
+      if (!"CONDITIONAL_BRANCH".equals(candidate.kind())) continue;
+      if (candidate.operands().size() < 2) return null;
+      Integer target = labels.get(labelKey(candidate.operands().get(1)));
+      if (target == null) return null;
+      if (target.equals(trueLabelIndex)) {
+        trueBranches.add(i);
+      } else if (target < trueLabelIndex) {
+        // Interleaved value-producing branch used by a later condition.
+        valueBranches.add(i);
+      } else if (target < joinIndex) {
+        if (falseLabelIndex == null) falseLabelIndex = target;
+        else if (!falseLabelIndex.equals(target)) return null;
+        falseBranches.add(i);
+      } else {
+        return null;
+      }
+    }
+    if (trueBranches.isEmpty() || !trueBranches.get(0).equals(branchIndex)
+        || falseLabelIndex == null) return null;
 
     int falseConstantIndex = nextExecutableIndex(operations, falseLabelIndex + 1, end);
     if (falseConstantIndex < 0 || !"CONSTANT".equals(operations.get(falseConstantIndex).kind())
@@ -2176,35 +2234,69 @@ public final class JavaTranslator {
     int sinkIndex = nextExecutableIndex(operations, joinIndex + 1, end);
     if (sinkIndex < 0 || operations.get(sinkIndex).operands().isEmpty()
         || !"<unknown>".equals(operations.get(sinkIndex).operands().get(
-            operations.get(sinkIndex).operands().size() - 1))) return null;
+            operations.get(sinkIndex).operands().size() - 1))) {
+      return null;
+    }
 
     String trueValue = operations.get(trueConstantIndex).operands().get(0);
     String falseValue = operations.get(falseConstantIndex).operands().get(0);
     StringBuilder source = new StringBuilder();
     boolean complete = true;
     if ("RETURN".equals(operations.get(sinkIndex).kind())) {
-      source.append(indent(indent)).append("if (")
-          .append(normalizeCondition(firstBranch.operands().get(0))).append(") {\n")
-          .append(indent(indent + 1)).append("return ").append(trueValue).append(";\n")
-          .append(indent(indent)).append("}\n");
+      List<Integer> guards = new java.util.ArrayList<>();
+      guards.addAll(trueBranches);
+      guards.addAll(falseBranches);
+      guards.sort(Integer::compareTo);
       int previous = branchIndex;
-      for (int falseBranch : falseBranches) {
-        RenderResult prefix = renderRange(
-            operations, previous + 1, falseBranch, indent, context, labels);
-        source.append(prefix.source());
-        complete &= prefix.complete();
+      for (int guard : guards) {
+        String guardCondition = operations.get(guard).operands().get(0);
+        int prefixEnd = guard;
+        List<Integer> pendingValues = new java.util.ArrayList<>();
+        for (int valueBranch : valueBranches) {
+          if (valueBranch > previous && valueBranch < guard) pendingValues.add(valueBranch);
+        }
+        if (!pendingValues.isEmpty()) {
+          // Fold each interleaved value branch into the condition that consumes
+          // its <unknown> marker instead of evaluating the same condition once
+          // in an empty if/else and again in the guard expression.
+          for (int valueBranch : pendingValues) {
+            String merged = conditionalMergeExpression(
+                operations, valueBranch, guard + 1, labels);
+            if (merged == null) return null;
+            int marker = guardCondition.indexOf("<unknown>");
+            if (marker < 0) return null;
+            guardCondition = guardCondition.substring(0, marker) + merged
+                + guardCondition.substring(marker + "<unknown>".length());
+          }
+          prefixEnd = pendingValues.get(0);
+          for (int j = prefixEnd; j < guard; j++) {
+            IrOperationModel skipped = operations.get(j);
+            if (!isExpressionOnly(skipped) && !isBranchValueMetadata(skipped)
+                && !"JUMP".equals(skipped.kind())
+                && !pendingValues.contains(j)) {
+              return null;
+            }
+          }
+        }
+        if (guard != branchIndex) {
+          RenderResult prefix = renderRange(
+              operations, previous + 1, prefixEnd, indent, context, labels);
+          source.append(prefix.source());
+          complete &= prefix.complete();
+        }
+        boolean returnsTrue = trueBranches.contains(guard);
         source.append(indent(indent)).append("if (")
-            .append(normalizeCondition(operations.get(falseBranch).operands().get(0)))
-            .append(") {\n")
-            .append(indent(indent + 1)).append("return ").append(falseValue).append(";\n")
-            .append(indent(indent)).append("}\n");
-        previous = falseBranch;
+            .append(normalizeCondition(guardCondition))
+            .append(") return ")
+            .append(returnsTrue ? trueValue : falseValue).append(";\n");
+        previous = guard;
       }
       source.append(indent(indent)).append("return ").append(trueValue).append(";\n");
       return new ConditionalRender(source.toString(), complete, sinkIndex);
     }
     if (!"LOCAL_WRITE".equals(operations.get(sinkIndex).kind())
-        || operations.get(sinkIndex).operands().size() < 2 || falseBranches.size() != 1) return null;
+        || operations.get(sinkIndex).operands().size() < 2
+        || trueBranches.size() != 1 || falseBranches.size() != 1) return null;
 
     int falseBranch = falseBranches.get(0);
     RenderResult prefix = renderRange(
@@ -2226,6 +2318,31 @@ public final class JavaTranslator {
         .append(indent(indent + 1)).append("}\n")
         .append(indent(indent)).append("}\n");
     return new ConditionalRender(source.toString(), prefix.complete(), sinkIndex);
+  }
+
+  private static String conditionalMergeExpression(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      Map<String, Integer> labels) {
+    IrOperationModel branch = operations.get(branchIndex);
+    if (branch.operands().size() < 2) return null;
+    Integer targetIndex = labels.get(labelKey(branch.operands().get(1)));
+    if (targetIndex == null || targetIndex <= branchIndex || targetIndex >= end) return null;
+    int jumpIndex = findForwardJoinJump(
+        operations, branchIndex + 1, targetIndex, end, labels);
+    if (jumpIndex < 0 || jumpIndex >= targetIndex) return null;
+    IrOperationModel jump = operations.get(jumpIndex);
+    if (jump.operands().isEmpty()) return null;
+    Integer joinIndex = labels.get(labelKey(jump.operands().get(0)));
+    if (joinIndex == null || joinIndex <= targetIndex || joinIndex >= end) return null;
+    String fallthroughValue = lastExpressionFromRange(
+        operations, branchIndex + 1, jumpIndex);
+    String targetValue = lastExpressionFromRange(
+        operations, targetIndex + 1, joinIndex);
+    if (fallthroughValue == null || targetValue == null) return null;
+    return "(" + normalizeCondition(branch.operands().get(0)) + " ? "
+        + targetValue + " : " + fallthroughValue + ")";
   }
 
   private static int nextExecutableIndex(
@@ -2969,42 +3086,30 @@ public final class JavaTranslator {
    * shared sink becomes a single return or assignment instead of an unresolved
    * jump to an unknown value.
    */
-  private static ConditionalRender renderDecisionTreeValue(
+  private record DecisionTreeResult(
+      String expression, int sinkLabel, Set<Integer> owned) {}
+
+  private static DecisionTreeResult computeDecisionTree(
       List<IrOperationModel> operations,
       int branchIndex,
       int end,
-      int indent,
-      TranslationContext context,
       Map<String, Integer> labels) {
     if (!"CONDITIONAL_BRANCH".equals(operations.get(branchIndex).kind())) return null;
     int blockEnd = nextLabelIndex(operations, branchIndex + 1, end);
-    java.util.Set<Integer> owned = new java.util.HashSet<>();
-    java.util.Set<Integer> active = new java.util.HashSet<>();
-    java.util.Map<Integer, String> memo = new java.util.HashMap<>();
+    Set<Integer> owned = new HashSet<>();
+    Set<Integer> active = new HashSet<>();
+    Map<Integer, String> memo = new HashMap<>();
     int[] sink = {-1};
     String expression = decisionTreeValue(
         operations, branchIndex, blockEnd, end, labels, owned, active, memo, sink, 0);
     if (expression == null || sink[0] < 0 || sink[0] >= end) return null;
     if (!"LABEL".equals(operations.get(sink[0]).kind())) return null;
-    int sinkIndex = nextExecutableIndex(operations, sink[0] + 1, end);
-    if (sinkIndex < 0 || sinkIndex >= end) return null;
-    IrOperationModel sinkOperation = operations.get(sinkIndex);
-    boolean returnsValue = "RETURN".equals(sinkOperation.kind());
-    boolean assignsValue = "LOCAL_WRITE".equals(sinkOperation.kind())
-        && sinkOperation.operands().size() >= 2;
-    // A boolean decision tree frequently feeds a field write, such as a
-    // widget's enabled flag. The value is still a pure expression, so the
-    // same nested ternary can be substituted for the stack phi.
-    boolean writesValue = "FIELD_WRITE".equals(sinkOperation.kind())
-        && sinkOperation.operands().size() >= 3;
-    if (!returnsValue && !assignsValue && !writesValue) return null;
-    if (!"<unknown>".equals(
-        sinkOperation.operands().get(sinkOperation.operands().size() - 1))) return null;
 
     // The tree owns every block it evaluated. A branch into one of those labels
     // from outside the consumed range would mean the blocks are shared, and
     // consuming them here would hide that path.
     owned.add(sink[0]);
+    int sinkIndex = nextExecutableIndex(operations, sink[0] + 1, end);
     for (int i = 0; i < operations.size(); i++) {
       if (i >= branchIndex && i <= sinkIndex) continue;
       IrOperationModel operation = operations.get(i);
@@ -3015,8 +3120,41 @@ public final class JavaTranslator {
           labelKey(operation.operands().get(operation.operands().size() - 1)));
       if (targetIndex != null && owned.contains(targetIndex)) return null;
     }
+    return new DecisionTreeResult(expression, sink[0], owned);
+  }
+
+  private static ConditionalRender renderDecisionTreeValue(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    DecisionTreeResult tree = computeDecisionTree(operations, branchIndex, end, labels);
+    if (tree == null) return null;
+    int sinkIndex = nextExecutableIndex(operations, tree.sinkLabel() + 1, end);
+    if (sinkIndex < 0 || sinkIndex >= end) return null;
+    IrOperationModel sinkOperation = operations.get(sinkIndex);
+    boolean returnsValue = "RETURN".equals(sinkOperation.kind());
+    boolean assignsValue = "LOCAL_WRITE".equals(sinkOperation.kind())
+        && sinkOperation.operands().size() >= 2;
+    // A boolean decision tree frequently feeds a field write, such as a
+    // widget's enabled flag. The value is still a pure expression, so the
+    // same nested ternary can be substituted for the stack phi.
+    boolean writesValue = "FIELD_WRITE".equals(sinkOperation.kind())
+        && sinkOperation.operands().size() >= 3;
+    if ((!returnsValue && !assignsValue && !writesValue)
+        || !"<unknown>".equals(
+            sinkOperation.operands().get(sinkOperation.operands().size() - 1))) {
+      // The merged value can sit below more expression operands and be
+      // consumed later, for example two boolean arguments of one call. Keep
+      // each merged value in a local so later substitutions preserve order.
+      return renderStackValueMerge(
+          operations, tree, end, indent, context, labels);
+    }
 
     StringBuilder source = new StringBuilder();
+    String expression = tree.expression();
     if (returnsValue) {
       source.append(indent(indent)).append("return ").append(expression).append(";\n");
     } else if (assignsValue) {
@@ -3025,7 +3163,7 @@ public final class JavaTranslator {
       source.append(indent(indent)).append(assignment).append(" = ")
           .append(expression).append(";\n");
     } else {
-      List<String> operands = new java.util.ArrayList<>(sinkOperation.operands());
+      List<String> operands = new ArrayList<>(sinkOperation.operands());
       operands.set(operands.size() - 1, expression);
       String lowered = translateOperation(new IrOperationModel(
           sinkOperation.kind(), operands, sinkOperation.sourceInstruction()), context);
@@ -3033,6 +3171,126 @@ public final class JavaTranslator {
       source.append(indent(indent)).append(lowered).append("\n");
     }
     return new ConditionalRender(source.toString(), true, sinkIndex);
+  }
+
+  /**
+   * Materializes one or more acyclic decision-tree values that are consumed
+   * later, such as the two boolean arguments of a single call. Each merged
+   * value becomes a local at its merge point; the consumer receives those
+   * locals in stack order. Intermediate expression-only reads are folded into
+   * the existing consumer operands, so anything with an observable side effect
+   * is rejected rather than reordered.
+   */
+  private static ConditionalRender renderStackValueMerge(
+      List<IrOperationModel> operations,
+      DecisionTreeResult first,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    StringBuilder source = new StringBuilder();
+    List<String> values = new ArrayList<>();
+    String firstVariable = context.newMergeVariable();
+    values.add(firstVariable);
+    source.append(indent(indent)).append("var ").append(firstVariable)
+        .append(" = ").append(first.expression()).append(";\n");
+
+    int index = first.sinkLabel() + 1;
+    while (index < end) {
+      IrOperationModel operation = operations.get(index);
+      if ("LABEL".equals(operation.kind())) {
+        index++;
+        continue;
+      }
+      if ("CONDITIONAL_BRANCH".equals(operation.kind())) {
+        DecisionTreeResult tree = computeDecisionTree(operations, index, end, labels);
+        if (tree == null) return null;
+        String variable = context.newMergeVariable();
+        values.add(variable);
+        source.append(indent(indent)).append("var ").append(variable)
+            .append(" = ").append(tree.expression()).append(";\n");
+        index = tree.sinkLabel() + 1;
+        continue;
+      }
+      long unknownCount = operation.operands().stream()
+          .mapToLong(value -> occurrences(value, "<unknown>")).sum();
+      if (unknownCount > 0) {
+        if (unknownCount != values.size()) return null;
+        List<String> substituted = substituteUnknowns(operation.operands(), values);
+        if (substituted == null) return null;
+        String lowered = translateOperation(new IrOperationModel(
+            operation.kind(), substituted, operation.sourceInstruction()), context);
+        if (lowered == null || lowered.isBlank()) return null;
+        source.append(indent(indent)).append(lowered).append("\n");
+        return new ConditionalRender(source.toString(), true, index);
+      }
+      if (!isPureStackValue(operation)) return null;
+      index++;
+    }
+    return null;
+  }
+
+  private static boolean isPureStackValue(IrOperationModel operation) {
+    return switch (operation.kind()) {
+      case "CONSTANT", "LOCAL_READ", "FIELD_READ", "ARRAY_READ", "ARRAY_LENGTH",
+          "ARITHMETIC", "TYPE_CONVERSION", "TYPE_CHECK" -> true;
+      default -> false;
+    };
+  }
+
+  private static List<String> substituteUnknowns(
+      List<String> operands, List<String> values) {
+    List<String> result = new ArrayList<>();
+    int next = 0;
+    for (String operand : operands) {
+      String value = operand;
+      int marker;
+      while (next < values.size() && (marker = value.indexOf("<unknown>")) >= 0) {
+        value = value.substring(0, marker) + values.get(next)
+            + value.substring(marker + "<unknown>".length());
+        next++;
+      }
+      result.add(value);
+    }
+    return next == values.size() ? result : null;
+  }
+
+  /**
+   * Conservative check for expressions with observable evaluation effects.
+   * Known runtime helpers and arithmetic are pure; any other invocation keeps
+   * its evaluation with the comma operator instead of being dropped.
+   */
+  private static boolean conditionMayHaveSideEffects(String condition) {
+    for (int i = 0; i < condition.length(); i++) {
+      if (condition.charAt(i) != '(') continue;
+      int end = i;
+      int start = i;
+      while (start > 0) {
+        char c = condition.charAt(start - 1);
+        if (Character.isJavaIdentifierPart(c) || c == '.' || c == '$') start--;
+        else break;
+      }
+      String callee = condition.substring(start, end);
+      if (callee.isEmpty()) continue;
+      String simple = callee.substring(callee.lastIndexOf('.') + 1);
+      if (callee.startsWith("GoldClientRuntime.")
+          || callee.startsWith("Math.")
+          || callee.startsWith("new ")
+          || simple.equals("instanceOf")
+          || simple.equals("checkCast")
+          || simple.equals("arrayGet")
+          || simple.equals("arraySet")
+          || simple.equals("arrayLength")
+          || simple.equals("newArray")
+          || simple.equals("newMultiArray")
+          || simple.equals("toInt32")
+          || simple.equals("toNumber")
+          || simple.equals("fround")) {
+        continue;
+      }
+      return true;
+    }
+    return false;
   }
 
   private static String decisionTreeValue(
@@ -3046,21 +3304,21 @@ public final class JavaTranslator {
       java.util.Map<Integer, String> memo,
       int[] sink,
       int depth) {
-    if (depth > 24) return null;
+    if (depth > 24) { return null; }
     List<String> conditions = new java.util.ArrayList<>();
     List<Integer> targets = new java.util.ArrayList<>();
     int lastValueIndex = -1;
     for (int i = blockStart; i < blockEnd; i++) {
       IrOperationModel operation = operations.get(i);
-      if ("LABEL".equals(operation.kind())) return null;
+      if ("LABEL".equals(operation.kind())) { return null; }
       if ("TRY_BEGIN".equals(operation.kind()) || "TRY_END".equals(operation.kind())
-          || "CATCH_BEGIN".equals(operation.kind())) return null;
+          || "CATCH_BEGIN".equals(operation.kind())) { return null; }
       if ("CONDITIONAL_BRANCH".equals(operation.kind())) {
-        if (operation.operands().size() < 2) return null;
+        if (operation.operands().size() < 2) { return null; }
         String condition = operation.operands().get(0);
-        if (condition.contains("<unknown>") || condition.contains("<exception>")) return null;
+        if (condition.contains("<unknown>") || condition.contains("<exception>")) { return null; }
         Integer target = labels.get(labelKey(operation.operands().get(1)));
-        if (target == null || target <= blockStart || target >= end) return null;
+        if (target == null || target <= blockStart || target >= end) { return null; }
         conditions.add(condition);
         targets.add(target);
         continue;
@@ -3069,44 +3327,77 @@ public final class JavaTranslator {
         // A jump only ends a pure value block; condition blocks fall through to
         // the next label so every path stays inside the tree.
         if (!conditions.isEmpty() || lastValueIndex < 0
-            || operation.operands().isEmpty()) return null;
+            || operation.operands().isEmpty()) { return null; }
         Integer target = labels.get(labelKey(operation.operands().get(0)));
-        if (target == null || target <= blockStart || target >= end) return null;
+        if (target == null || target <= blockStart || target >= end) { return null; }
         String value = expressionFromOperation(operations.get(lastValueIndex));
-        if (value == null) return null;
+        if (value == null) { return null; }
         if (sink[0] < 0) sink[0] = target;
-        else if (sink[0] != target) return null;
+        else if (sink[0] != target) { return null; }
         return value;
       }
-      if ("RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())) return null;
+      if ("RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())) { return null; }
       if (!isExpressionOnly(operation) || "DROP".equals(operation.kind())
           || "DUP".equals(operation.kind()) || "SWAP".equals(operation.kind())
-          || "STACK_OPERATION".equals(operation.kind())) return null;
+          || "STACK_OPERATION".equals(operation.kind())) { return null; }
       String value = expressionFromOperation(operation);
-      if (value == null) return null;
-      if (value.contains("<unknown>") || value.contains("<exception>")) return null;
+      if (value == null) { return null; }
+      if (value.contains("<unknown>") || value.contains("<exception>")) { return null; }
       lastValueIndex = i;
     }
     if (conditions.isEmpty()) {
       // A leaf without a jump falls straight into the sink label.
-      if (lastValueIndex < 0) return null;
+      if (lastValueIndex < 0) { return null; }
       String value = expressionFromOperation(operations.get(lastValueIndex));
-      if (value == null) return null;
+      if (value == null) { return null; }
       if (sink[0] < 0) sink[0] = blockEnd;
-      else if (sink[0] != blockEnd) return null;
+      else if (sink[0] != blockEnd) { return null; }
       return value;
     }
     String fallthrough = decisionTreeValueAt(
         operations, blockEnd, end, labels, owned, active, memo, sink, depth + 1);
-    if (fallthrough == null) return null;
-    String expression = fallthrough;
-    for (int k = conditions.size() - 1; k >= 0; k--) {
-      String targetValue = decisionTreeValueAt(
-          operations, targets.get(k), end, labels, owned, active, memo, sink, depth + 1);
-      if (targetValue == null) return null;
-      expression = "(" + normalizeCondition(conditions.get(k)) + " ? " + targetValue
-          + " : " + expression + ")";
-      if (expression.length() > 8192) return null;
+    if (fallthrough == null) { return null; }
+    boolean effectFree = true;
+    for (String condition : conditions) {
+      if (conditionMayHaveSideEffects(normalizeCondition(condition))) {
+        effectFree = false;
+        break;
+      }
+    }
+
+    String expression;
+    if (effectFree) {
+      // A branch to the fall-through label skips the remaining conditions and
+      // takes the block's eventual value. Build guards in condition order so
+      // the shared fall-through value appears once instead of once per skip.
+      expression = fallthrough;
+      for (int k = conditions.size() - 1; k >= 0; k--) {
+        if (targets.get(k) == blockEnd) continue;
+        String targetValue = decisionTreeValueAt(
+            operations, targets.get(k), end, labels, owned, active, memo, sink, depth + 1);
+        if (targetValue == null) return null;
+        StringBuilder guard = new StringBuilder();
+        for (int j = 0; j <= k; j++) {
+          String condition = normalizeCondition(conditions.get(j));
+          if (guard.length() > 0) guard.append(" && ");
+          guard.append(j == k ? "(" + condition + ")" : "!(" + condition + ")");
+        }
+        expression = "(" + guard + " ? " + targetValue + " : " + expression + ")";
+        if (expression.length() > 8192) return null;
+      }
+    } else {
+      expression = fallthrough;
+      for (int k = conditions.size() - 1; k >= 0; k--) {
+        String condition = normalizeCondition(conditions.get(k));
+        String targetValue = targets.get(k) == blockEnd
+            ? fallthrough
+            : decisionTreeValueAt(
+                operations, targets.get(k), end, labels, owned, active, memo, sink, depth + 1);
+        if (targetValue == null) return null;
+        expression = "(" + condition + " ? " + targetValue
+            + " : " + expression + ")";
+        if (expression.length() > 8192) return null;
+      }
     }
     return expression;
   }
@@ -3201,8 +3492,12 @@ public final class JavaTranslator {
       IrOperationModel operation = operations.get(i);
       if (isBranchValueMetadata(operation)) continue;
       if (!isExpressionOnly(operation) || "DROP".equals(operation.kind())
-          || "STACK_OPERATION".equals(operation.kind()) || "DUP".equals(operation.kind())
+          || "STACK_OPERATION".equals(operation.kind())
           || "SWAP".equals(operation.kind())) return null;
+      // A constructor duplicate is stack plumbing for the value expression
+      // that follows (OBJECT_CREATE, DUP, arguments, CALL_VALUE); it does not
+      // contribute a value of its own.
+      if ("DUP".equals(operation.kind())) continue;
       if (operation.operands().stream().anyMatch(value ->
           value.contains("<unknown>") || value.contains("<exception>"))) return null;
       String candidate = expressionFromOperation(operation);
@@ -3412,9 +3707,13 @@ public final class JavaTranslator {
         } else if (target > blockIndex && target <= end) {
           // A target exactly at the exclusive range end is this range's join:
           // the arm falls out after the shared block and the enclosing renderer
-          // continues there.
-          if (joinIndex == null) joinIndex = target;
-          else if (!joinIndex.equals(target)) return null;
+          // continues there. If that join label starts a protected region, use
+          // its TRY_BEGIN marker as the boundary so the range never splits the
+          // marker from the label it annotates; the enclosing renderer then
+          // structures the whole try/catch once.
+          int join = inlinedBlockStart(operations, target, labels);
+          if (joinIndex == null) joinIndex = join;
+          else if (!joinIndex.equals(join)) return null;
           entersBlock.add(false);
         } else {
           return null;
@@ -3931,14 +4230,20 @@ public final class JavaTranslator {
       Map<String, Integer> labels,
       String condition) {
     String loopLabel = labelKey(operations.get(targetIndex).operands().get(0));
+    String exitLabel = findDoWhileExitLabel(
+        operations, targetIndex, branchIndex, end, labels);
     boolean labeled = needsLoopLabel(
-        operations, targetIndex + 1, branchIndex, loopLabel);
+        operations, targetIndex + 1, branchIndex, loopLabel)
+        || needsExitBreakLabel(
+            operations, targetIndex + 1, branchIndex, exitLabel);
     context.enterLoop(loopLabel, labeled);
+    if (exitLabel != null) context.enterLoopExit(exitLabel);
     RenderResult body;
     try {
       body = renderRange(
           operations, targetIndex + 1, branchIndex, indent + 1, context, labels);
     } finally {
+      if (exitLabel != null) context.exitLoopExit();
       context.exitLoop();
     }
 
@@ -3953,6 +4258,50 @@ public final class JavaTranslator {
         .append(");\n");
 
     return new ConditionalRender(source.toString(), body.complete(), branchIndex);
+  }
+
+  /**
+   * Finds the continuation label a do-while leaves through when the body also
+   * jumps there early. The label is accepted only when the body actually uses
+   * it, so unrelated labels after the condition are not treated as exits.
+   */
+  private static String findDoWhileExitLabel(
+      List<IrOperationModel> operations,
+      int headerIndex,
+      int branchIndex,
+      int end,
+      Map<String, Integer> labels) {
+    int exitIndex = -1;
+    for (int i = branchIndex + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("LABEL".equals(operation.kind())) {
+        exitIndex = i;
+        break;
+      }
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        Integer target = labels.get(labelKey(operation.operands().get(0)));
+        if (target != null && target > branchIndex && target < end
+            && "LABEL".equals(operations.get(target).kind())) {
+          exitIndex = target;
+        }
+        break;
+      }
+      if (!isLoopExitMetadata(operation)) break;
+    }
+    if (exitIndex < 0 || operations.get(exitIndex).operands().isEmpty()) return null;
+    String exitLabel = labelKey(operations.get(exitIndex).operands().get(0));
+    for (int i = headerIndex + 1; i < branchIndex; i++) {
+      IrOperationModel operation = operations.get(i);
+      String target = null;
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        target = operation.operands().get(0);
+      } else if ("CONDITIONAL_BRANCH".equals(operation.kind())
+          && operation.operands().size() >= 2) {
+        target = operation.operands().get(1);
+      }
+      if (target != null && exitLabel.equals(labelKey(target))) return exitLabel;
+    }
+    return null;
   }
 
   /**
@@ -4616,15 +4965,42 @@ public final class JavaTranslator {
       }
       if (target != null && labelKey(label).equals(labelKey(target))) references++;
     }
-    if (references != 1) return -1;
+    if (references == 1) {
+      for (int i = labelIndex + 1; i < end; i++) {
+        IrOperationModel operation = operations.get(i);
+        if ("CONDITIONAL_BRANCH".equals(operation.kind())
+            && operation.operands().size() >= 2
+            && labelKey(label).equals(labelKey(operation.operands().get(1))))
+          return i;
+      }
+      return -1;
+    }
+    // A do-while can also contain explicit continue edges back to the header.
+    // Only a single conditional reference is accepted, and it has to be the
+    // final reference: otherwise the conditional is an early continue guard,
+    // not the loop's bottom condition.
+    int lastConditional = -1;
+    int conditionalReferences = 0;
+    int lastReference = -1;
     for (int i = labelIndex + 1; i < end; i++) {
       IrOperationModel operation = operations.get(i);
-      if ("CONDITIONAL_BRANCH".equals(operation.kind())
-          && operation.operands().size() >= 2
-          && labelKey(label).equals(labelKey(operation.operands().get(1))))
-        return i;
+      String target = null;
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        target = operation.operands().get(0);
+      } else if ("CONDITIONAL_BRANCH".equals(operation.kind())
+          && operation.operands().size() >= 2) {
+        target = operation.operands().get(1);
+      }
+      if (target != null && labelKey(label).equals(labelKey(target))) {
+        lastReference = i;
+        if ("CONDITIONAL_BRANCH".equals(operation.kind())) {
+          conditionalReferences++;
+          lastConditional = i;
+        }
+      }
     }
-    return -1;
+    return conditionalReferences == 1 && lastReference == lastConditional
+        ? lastConditional : -1;
   }
 
   /**

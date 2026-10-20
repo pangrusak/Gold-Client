@@ -98,18 +98,17 @@ The profile injector prefers this file when present and emits a classic
   (3 classes, 0 incomplete, ready), ConfigAnytime (3 classes, 0 incomplete;
   coremod blocker), FancyMenu (498 classes, 0 incomplete; Mixin/coremod and a
   missing required `konkrete` dependency blocker), Konkrete (403 classes,
-  2 incomplete; Mixin/coremod blockers), Biomes O' Plenty (551 classes,
-  2 incomplete; ready lifecycle), Universal Tweaks (1191 classes, 2 incomplete;
+  0 incomplete; Mixin/coremod blockers), Biomes O' Plenty (551 classes,
+  0 incomplete; ready lifecycle), Universal Tweaks (1191 classes, 0 incomplete;
   Mixin/coremod and missing dependency blockers), Xaero's Minimap
   (1280 classes, 1 incomplete; coremod and missing `xaerolib` blockers), and
-  MixinBooter (1305 classes, 8 incomplete; no `@Mod` entry plus Mixin/coremod
+  MixinBooter (1305 classes, 2 incomplete; no `@Mod` entry plus Mixin/coremod
   blockers). Each single-file bundle passed `node --check` and loaded in a Node
   `vm` sandbox exposing `GoldClientForge` with the expected mod IDs and class
   counts (for example Biomes O' Plenty: 551 classes, 0 blockers). FancyMenu and
   Konkrete loaded together (901 classes) clear the missing-dependency blocker;
-  only Konkrete's two methods and the Mixin/coremod blockers remain. These are
-  structural translation results, not proof that the mods run without real
-  Minecraft/Forge bindings.
+  only the Mixin/coremod blockers remain. These are structural translation
+  results, not proof that the mods run without real Minecraft/Forge bindings.
 - [x] Loop/exception structuring now keeps a protected region outside a loop
   that exits onto the region's start, keeps a loop header that is also the
   start of a protected range, keeps a try's catch handler inside the
@@ -128,30 +127,37 @@ The profile injector prefers this file when present and emits a classic
     of truncating the handler at that instruction.
 
   These changes removed five of Xaero's six and nine of MixinBooter's thirteen
-  incomplete methods. The remaining incompletes are explicit rather than
-  guessed:
-  - MixinBooter (8): `Locals.getLocalsAt`, `Locals.getLocalsAt092`,
-    `ClassWrapper.init`, `LazyLoader.loadBytecode`, `JsonReader.nextUnquotedValue`,
-    `ConverterHelper.toBeRenamed`, `IfStatement.<init>`, and
-    `ComparisonExpression$Operator.matches`. They combine stack merges,
-    exception-stack values, and shared-return decision trees that the current
-    structured renderer refuses to approximate.
+  incomplete methods. Later guard-chain, boolean-return, and loop-structure
+  fixes removed the remaining Biomes O' Plenty, Konkrete, and Universal Tweaks
+  methods plus MixinBooter's `ConverterHelper.toBeRenamed`,
+  `JsonReader.nextUnquotedValue`, and `ClassWrapper.init`. A try body that
+  jumps to its own protected end label now breaks out of a labeled try block
+  instead of lowering an unsupported jump, which also covers
+  `MainAttributes.getNioAttributes`. A
+  do-while whose body contains explicit `continue` edges keeps the final
+  conditional back-edge as its loop condition, and its shared continuation
+  label is registered as a break target; this fixed
+  `JsonReader.nextUnquotedValue`. A constructor's `DUP` stack plumbing is now
+  ignored when folding a conditional into a value expression, so the method
+  materializes one ternary instead of empty branches. The remaining
+  incompletes are explicit rather than guessed:
+  - MixinBooter (2): `Locals.getLocalsAt` and `LazyLoader.loadBytecode`. They
+    combine stack merges, exception-stack values, and a loop continue tail or
+    protected-region cleanup that the current structured renderer cannot own.
   - Xaero's Minimap (1): `MinimapWriter.writeChunk`, a loop/switch value
     merge that also carries an exception-stack value. A decision tree that
     feeds a field write is now materialized as one nested ternary, which
     removed `GuiAddWaypoint.updateMutual`, `GuiWorldTpCommand.func_73876_c`,
     `RadarRenderer.setupRenderForList`, and
     `RadarRenderProvider.setupContextForList`.
-  - Universal Tweaks (2): `ConcurrentHashMapV8.fullAddCount` (jump into a
-    shared tail with an exception-stack merge) and
-    `UTBlockOverlayMixin.utRenderBlockOverlay` (a try/catch region with six
-    conditionals that cannot be structured without a guess).
-  - Konkrete (2): `ValueNode.isJson` (a guard chain that enters a shared try
-    region) and `PathCompiler.parseFunctionParameters` (a shared switch join
-    reached from an inner `if` arm).
-  - Biomes O' Plenty (2): `EntityBOPBoat.controlBoat` and
-    `GeneratorLakes.isCavityEdge` (short-circuit boolean expressions
-    materialized as 0/1 stack merges).
+  - Biomes O' Plenty, Konkrete, and Universal Tweaks: no incomplete methods.
+    A guard chain whose join is a protected region's start label now keeps the
+    `TRY_BEGIN` marker with that label, so `ValueNode.isJson` and
+    `UTBlockOverlayMixin.utRenderBlockOverlay` render their try/catch instead
+    of splitting the marker from the region. Boolean return chains with
+    interleaved value branches now fold those branches into the consuming
+    condition, covering `controlBoat`, `isCavityEdge`, and
+    `ConverterHelper.toBeRenamed`.
 
   A switch whose join is reached from a nested switch or loop now emits a
   unique labeled block and a labeled `break`, so nested `break` targets no

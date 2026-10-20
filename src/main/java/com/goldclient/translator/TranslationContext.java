@@ -16,6 +16,7 @@ public final class TranslationContext {
   private final Deque<java.util.Map<String, String>> skipExitLabels = new ArrayDeque<>();
   private boolean suppressNestedTryRegions;
   private int switchLabelCounter;
+  private int mergeVariableCounter;
 
   private enum BreakKind { LOOP, LOOP_EXIT, SWITCH_JOIN }
 
@@ -97,6 +98,14 @@ public final class TranslationContext {
    */
   public String newSwitchLabel(String joinLabel) {
     return "__goldSwitch" + (++switchLabelCounter) + "_" + joinLabel;
+  }
+
+  /**
+   * Unique local name for a decision-tree value materialized because more
+   * stack values are consumed after its merge point.
+   */
+  public String newMergeVariable() {
+    return "__goldMerge" + (++mergeVariableCounter);
   }
 
   /** The JS label of the enclosing switch whose join is this bytecode label. */
