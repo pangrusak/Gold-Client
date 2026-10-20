@@ -15,10 +15,13 @@ public final class TranslationContext {
   private final Deque<Set<String>> suppressedTryHandlers = new ArrayDeque<>();
   private final Deque<java.util.Map<String, String>> skipExitLabels = new ArrayDeque<>();
   private boolean suppressNestedTryRegions;
+  private int switchLabelCounter;
 
   private enum BreakKind { LOOP, LOOP_EXIT, SWITCH_JOIN }
 
-  private record BreakScope(String label, BreakKind kind) {}
+  private record BreakScope(String label, BreakKind kind, String jsLabel) {
+    BreakScope(String label, BreakKind kind) { this(label, kind, null); }
+  }
 
   public boolean declareLocal(String name) {
     return declaredLocals.add(name);
@@ -76,12 +79,35 @@ public final class TranslationContext {
    */
   public String loopExitLabel(String label) { return loopExitOwners.get(label); }
 
-  /** A join label of the switch statement currently being rendered. */
-  public void enterSwitchJoin(String label) {
-    breakScopes.push(new BreakScope(label, BreakKind.SWITCH_JOIN));
+  /**
+   * A join label of the switch statement currently being rendered. The switch
+   * is wrapped in a labeled block when it has a join, so code nested in another
+   * switch or loop can leave this one with a single labeled break.
+   */
+  public void enterSwitchJoin(String label, String jsLabel) {
+    breakScopes.push(new BreakScope(label, BreakKind.SWITCH_JOIN, jsLabel));
   }
 
   public void exitSwitchJoin() { breakScopes.pop(); }
+
+  /**
+   * Builds a JS label for a switch. Sibling switches can share one bytecode
+   * join label, and JavaScript rejects duplicate labels in one function, so a
+   * translation-wide counter keeps every generated label unique.
+   */
+  public String newSwitchLabel(String joinLabel) {
+    return "__goldSwitch" + (++switchLabelCounter) + "_" + joinLabel;
+  }
+
+  /** The JS label of the enclosing switch whose join is this bytecode label. */
+  public String switchJoinLabel(String label) {
+    for (BreakScope scope : breakScopes) {
+      if (scope.kind() == BreakKind.SWITCH_JOIN && scope.label().equals(label)) {
+        return scope.jsLabel();
+      }
+    }
+    return null;
+  }
 
   /**
    * Registers a forward label that is outside the loop's own continuation and

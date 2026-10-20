@@ -840,6 +840,50 @@ class IntermediateRepresentationAnalyzerTest {
         "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
   }
 
+  @Test
+  void keepsDoubleConstantsCategoryTwoAcrossDup2X1() {
+    MethodModel method = method("motion", "()V", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(25, "ALOAD", "0"),
+        instruction(25, "ALOAD", "0"),
+        instruction(14, "DCONST_0"),
+        instruction(93, "DUP2_X1"),
+        instruction(181, "PUTFIELD", "sample/Entity", "a", "D"),
+        instruction(93, "DUP2_X1"),
+        instruction(181, "PUTFIELD", "sample/Entity", "b", "D"),
+        instruction(181, "PUTFIELD", "sample/Entity", "c", "D"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    var writes = ir.operations().stream()
+        .filter(operation -> "FIELD_WRITE".equals(operation.kind())).toList();
+    assertEquals(3, writes.size(), ir.operations().toString());
+    for (var write : writes) {
+      // A double constant is category 2, so DUP2_X1 must keep `this` below
+      // the copied value instead of reordering it into the receiver slot.
+      assertEquals("local0", write.operands().get(0), write.toString());
+      assertEquals("0.0", write.operands().get(2), write.toString());
+    }
+  }
+
+  @Test
+  void mapsNewArrayPrimitiveTypeCodesToNames() {
+    MethodModel method = method("values", "()V", List.of(
+        instruction(16, "BIPUSH", "3"),
+        instruction(188, "NEWARRAY", "10"),
+        instruction(87, "POP"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "ARRAY_CREATE".equals(operation.kind())
+            && operation.operands().equals(List.of("new int[3]"))),
+        ir.operations().toString());
+  }
+
+
   private static int indexOfKind(IrMethodModel method, String kind) {
     for (int i = 0; i < method.operations().size(); i++) {
       if (kind.equals(method.operations().get(i).kind())) return i;

@@ -73,7 +73,11 @@ public final class JavaTranslator {
           if (!context.isActiveLoop(labelKey(regionStartLabel))
               && tryRegionStartsLoop(operations, i, end, regionStartLabel, labels)) {
             String loopLabel = labelKey(regionStartLabel);
-            boolean labeled = needsLoopLabel(operations, i + 1, end, loopLabel);
+            // The same bytecode header is rendered again as the loop itself
+            // inside the protected range. A second JS label would collide;
+            // a plain continue/break inside either wrapper reaches the same
+            // bytecode header, so the wrapper does not need a label.
+            boolean labeled = false;
             context.enterLoop(loopLabel, labeled);
             RenderResult body;
             try {
@@ -236,8 +240,13 @@ public final class JavaTranslator {
           if (context.isInnermostBreakTarget(labelKey(operation.operands().get(1)))) {
             breakStatement = "break;";
           } else {
-            String loopLabel = context.loopExitLabel(labelKey(operation.operands().get(1)));
-            if (loopLabel != null) breakStatement = "break " + jsLabel(loopLabel) + ";";
+            String switchLabel = context.switchJoinLabel(labelKey(operation.operands().get(1)));
+            if (switchLabel != null) {
+              breakStatement = "break " + switchLabel + ";";
+            } else {
+              String loopLabel = context.loopExitLabel(labelKey(operation.operands().get(1)));
+              if (loopLabel != null) breakStatement = "break " + jsLabel(loopLabel) + ";";
+            }
           }
           if (breakStatement != null) {
             source.append(indent(indent)).append("if (")
@@ -396,9 +405,14 @@ public final class JavaTranslator {
           } else {
             // A nested loop or switch sits between this jump and the scope it
             // leaves, so a plain break would leave the wrong scope. A labeled
-            // loop break still reaches the intended exit.
-            String loopLabel = context.loopExitLabel(labelKey(target));
-            if (loopLabel != null) {
+            // break still reaches the intended switch join or loop exit.
+            String switchLabel = context.switchJoinLabel(labelKey(target));
+            String loopLabel = switchLabel != null
+                ? null : context.loopExitLabel(labelKey(target));
+            if (switchLabel != null) {
+              source.append(indent(indent)).append("break ")
+                  .append(switchLabel).append(";\n");
+            } else if (loopLabel != null) {
               source.append(indent(indent)).append("break ")
                   .append(jsLabel(loopLabel)).append(";\n");
             } else {
@@ -443,15 +457,6 @@ public final class JavaTranslator {
           // compiler-generated labels, so don't report it as unsupported.
           continue;
         }
-        if (targetIndex != null
-            && jumpChainEndsInVoidReturn(operations, targetIndex, labels)) {
-          // Several arms can share one exit block whose only content is another
-          // jump to the method's final return. Following that chain keeps the
-          // exit visible as a return instead of running code laid out between
-          // the shared labels.
-          source.append(indent(indent)).append("return;\n");
-          continue;
-        }
         if (targetIndex != null && targetIndex > i && targetIndex < end
             && isIsolatedForwardJump(operations, i, targetIndex)) {
           // A forward goto can skip a dead bytecode block. Drop that block only
@@ -460,6 +465,30 @@ public final class JavaTranslator {
           // alternate branch or guessing at the meaning of a live jump.
           i = targetIndex - 1;
           continue;
+        }
+        if (targetIndex != null
+            && jumpChainEndsInVoidReturn(operations, targetIndex, labels)) {
+          // Several arms can share one exit block whose only content is a jump
+          // to the method's final return, or the jump may target a label placed
+          // immediately before the return. Following that chain keeps the exit
+          // visible as a return instead of running code laid out between the
+          // shared labels.
+          source.append(indent(indent)).append("return;\n");
+          continue;
+        }
+        if (targetIndex != null && targetIndex > i) {
+          // A jump can leave a nested arm for a shared tail that computes and
+          // returns a value. The tail is straight-line, so rendering it here
+          // duplicates it instead of falling into unrelated code laid out
+          // between the arm and its label.
+          int inlineReturnEnd = straightLineReturnEnd(operations, targetIndex);
+          if (inlineReturnEnd >= 0) {
+            RenderResult tail = renderRange(
+                operations, targetIndex, inlineReturnEnd + 1, indent, context, labels);
+            source.append(tail.source());
+            complete &= tail.complete();
+            continue;
+          }
         }
 
         source.append(indent(indent))
@@ -1905,11 +1934,21 @@ public final class JavaTranslator {
     List<Integer> orderedTargets = new java.util.ArrayList<>(labelsAtTarget.keySet());
     orderedTargets.sort(Integer::compareTo);
     StringBuilder source = new StringBuilder();
-    source.append(indent(indent)).append("switch (")
+    // A switch whose join can be reached from a nested switch or loop needs a
+    // JS label: a plain break would leave the wrong scope. The labeled block is
+    // only emitted when a join was found, so ordinary switches stay unchanged.
+    String switchLabel = joinLabel == null
+        ? null : context.newSwitchLabel(jsLabel(joinLabel));
+    int base = indent;
+    if (switchLabel != null) {
+      source.append(indent(indent)).append(switchLabel).append(": {\n");
+      base = indent + 1;
+    }
+    source.append(indent(base)).append("switch (")
         .append(normalizeExpression(value)).append(") {\n");
     boolean complete = true;
 
-    if (joinLabel != null) context.enterSwitchJoin(labelKey(joinLabel));
+    if (joinLabel != null) context.enterSwitchJoin(labelKey(joinLabel), switchLabel);
     try {
       for (int block = 0; block < orderedTargets.size(); block++) {
         int targetIndex = orderedTargets.get(block);
@@ -1921,7 +1960,7 @@ public final class JavaTranslator {
         }
 
         for (String label : labelsAtTarget.get(targetIndex)) {
-          source.append(indent(indent + 1)).append(label).append("\n");
+          source.append(indent(base + 1)).append(label).append("\n");
         }
 
         int bodyEnd = segmentEnd;
@@ -1937,7 +1976,7 @@ public final class JavaTranslator {
         }
 
         RenderResult body = renderRange(
-            operations, targetIndex + 1, bodyEnd, indent + 2, context, labels);
+            operations, targetIndex + 1, bodyEnd, base + 2, context, labels);
         source.append(body.source());
         complete &= body.complete();
 
@@ -1947,14 +1986,15 @@ public final class JavaTranslator {
             && segmentEnd == orderedTargets.get(block + 1)
             && !endsAbruptly;
         if (jumpsToJoin || (!fallsThroughToNextCase && !endsAbruptly)) {
-          source.append(indent(indent + 2)).append("break;\n");
+          source.append(indent(base + 2)).append("break;\n");
         }
       }
     } finally {
       if (joinLabel != null) context.exitSwitchJoin();
     }
 
-    source.append(indent(indent)).append("}\n");
+    source.append(indent(base)).append("}\n");
+    if (switchLabel != null) source.append(indent(indent)).append("}\n");
     int lastIndex = joinIndex < end ? joinIndex - 1 : end - 1;
     return new ConditionalRender(source.toString(), complete, lastIndex);
   }
@@ -3204,11 +3244,36 @@ public final class JavaTranslator {
   }
 
   /**
-   * Returns the index of the jump that closes a shared loop-tail block starting
-   * at {@code targetIndex}, or -1. javac routes early exits of a for loop
-   * through the increment block, so a jump to that tail has to run those
-   * statements before continuing.
+   * Returns the index of the return that ends a straight-line block starting
+   * at {@code targetIndex}, or -1 when the block branches, throws, or carries
+   * an unresolved stack/exception value. Such a block can be rendered wherever
+   * a jump reaches it without changing the order of observable effects.
    */
+  private static int straightLineReturnEnd(
+      List<IrOperationModel> operations, int targetIndex) {
+    if (targetIndex < 0 || targetIndex >= operations.size()) return -1;
+    for (int i = targetIndex; i < operations.size(); i++) {
+      IrOperationModel operation = operations.get(i);
+      if (operation.operands().stream().anyMatch(value ->
+          value.contains("<unknown>") || value.contains("<exception>"))) return -1;
+      switch (operation.kind()) {
+        case "LABEL" -> {
+          continue;
+        }
+        case "RETURN" -> {
+          return i;
+        }
+        case "JUMP", "CONDITIONAL_BRANCH", "TABLE_SWITCH", "LOOKUP_SWITCH",
+            "THROW", "TRY_BEGIN", "TRY_END", "CATCH_BEGIN" -> {
+          return -1;
+        }
+        default -> {
+        }
+      }
+    }
+    return -1;
+  }
+
   /**
    * Follows a chain of labels whose block is only another jump, and reports
    * whether it ends at a void return. Only a bare {@code return;} is emitted,
@@ -3231,11 +3296,7 @@ public final class JavaTranslator {
       }
       if (cursor >= operations.size()) return false;
       IrOperationModel operation = operations.get(cursor);
-      // The direct target block is a normal return block, not a shared exit;
-      // leave it to the ordinary fall-through/dead-block handling.
-      if ("RETURN".equals(operation.kind())) {
-        return hop > 0 && operation.operands().isEmpty();
-      }
+      if ("RETURN".equals(operation.kind())) return operation.operands().isEmpty();
       if (!"JUMP".equals(operation.kind()) || operation.operands().isEmpty()) return false;
       Integer next = labels.get(labelKey(operation.operands().get(0)));
       if (next == null || next <= index) return false;

@@ -817,6 +817,21 @@
         event.getAsmData = () => {
             fail("unsupported-asm-data", "FMLPreInitializationEvent.getAsmData is not available through EaglerForge");
         };
+        // FMLConstructionEvent exposes the discovery/loader state. The browser
+        // host has no Forge discovery table or loader-state list, so these fail
+        // explicitly instead of returning invented containers.
+        event.getModContainers = () => {
+            fail("unsupported-construction-context",
+                "FMLConstructionEvent.getModContainers is not available through EaglerForge");
+        };
+        event.getDiscoveredMods = () => {
+            fail("unsupported-construction-context",
+                "FMLConstructionEvent.getDiscoveredMods is not available through EaglerForge");
+        };
+        event.getLoaderState = () => {
+            fail("unsupported-construction-context",
+                "FMLConstructionEvent.getLoaderState is not available through EaglerForge");
+        };
         if (phase.name.startsWith("server")) {
             event.getServer = () => global.ModAPI?.server ?? null;
         }

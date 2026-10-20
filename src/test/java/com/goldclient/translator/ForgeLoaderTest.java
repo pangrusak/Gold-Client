@@ -237,6 +237,8 @@ class ForgeLoaderTest {
     ClassModel modA = new ClassModel("sample/AMod", "java/lang/Object", List.of(),
         Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(
             constructor(),
+            handler("construction",
+                "(Lnet/minecraftforge/fml/common/event/FMLConstructionEvent;)V"),
             handler("preInit",
                 "(Lnet/minecraftforge/fml/common/event/FMLPreInitializationEvent;)V"),
             annotatedMethod("onTick",
@@ -274,6 +276,7 @@ class ForgeLoaderTest {
         }
         export class AMod {
           constructor() { seen.push("construct:a"); }
+          construction() { seen.push("construction:a"); }
           preInit() {
             seen.push("preInit:a");
             GoldClientRuntime.getStaticField(
@@ -357,6 +360,7 @@ class ForgeLoaderTest {
         host.postEvent("sample.ChildEvent", new ChildEvent(9));
         const expectedPrefix = [
           "construct:a", "construct:b",
+          "event:construction:a", "construction:a", "event:construction:b",
           "event:preInit:a", "preInit:a", "event:preInit:b",
           "event:init:a", "event:init:b", "init:b",
           "event:postInit:a", "event:postInit:b",
@@ -471,6 +475,7 @@ class ForgeLoaderTest {
           host.postEvent("sample.ChildEvent", new ChildEvent(9));
           const expectedPrefix = [
             "construct:a", "construct:b",
+            "event:construction:a", "construction:a", "event:construction:b",
             "event:preInit:a", "preInit:a", "event:preInit:b",
             "event:init:a", "event:init:b", "init:b",
             "event:postInit:a", "event:postInit:b",

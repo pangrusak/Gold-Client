@@ -293,7 +293,37 @@ public final class IntermediateRepresentationAnalyzer {
     if ("NEWARRAY".equals(opcode) || "ANEWARRAY".equals(opcode)) {
       String count = pop(stack);
       String type = instruction.operands().isEmpty() ? "unknown" : instruction.operands().get(0);
-      String array = "new " + type.replace('/', '.') + "[" + count + "]";
+      if ("NEWARRAY".equals(opcode) && type.matches("\\d+")) {
+        // NEWARRAY carries a JVM primitive type code rather than a name.
+        type = switch (Integer.parseInt(type)) {
+          case 4 -> "boolean";
+          case 5 -> "char";
+          case 6 -> "float";
+          case 7 -> "double";
+          case 8 -> "byte";
+          case 9 -> "short";
+          case 11 -> "long";
+          default -> "int";
+        };
+      }
+      String array;
+      if (type.startsWith("[")) {
+        // ANEWARRAY can allocate an array of arrays. Its operand is then a JVM
+        // descriptor such as "[Ljava/lang/String;". Only this dimension is
+        // allocated here; deeper dimensions stay null, as in the JVM.
+        int componentDimensions = 0;
+        while (componentDimensions < type.length() && type.charAt(componentDimensions) == '[') {
+          componentDimensions++;
+        }
+        array = "GoldClientRuntime.newMultiArray(\"" + multiArrayElementKind(type)
+            + "\", [" + count + "], " + (componentDimensions + 1) + ")";
+      } else {
+        String element = type;
+        if (element.startsWith("L") && element.endsWith(";")) {
+          element = element.substring(1, element.length() - 1);
+        }
+        array = "new " + element.replace('/', '.') + "[" + count + "]";
+      }
       stack.push(array);
       operations.add(op("ARRAY_CREATE", List.of(array), sourceInstruction));
       return;
@@ -1002,7 +1032,7 @@ public final class IntermediateRepresentationAnalyzer {
   private static boolean isCategory2(String value) {
     if (value == null) return false;
     String expression = value.trim();
-    return expression.matches(".*(?:[0-9]+[lL]|[0-9]+(?:\\.[0-9]+)?[dD])$")
+    return expression.matches(".*(?:[0-9]+[lL]|[0-9]+\\.[0-9]+[dD]?|[0-9]+[dD])$")
         || expression.startsWith("long ") || expression.startsWith("double ")
         || expression.contains("Long.valueOf(") || expression.contains("Double.valueOf(");
   }
@@ -1029,8 +1059,10 @@ public final class IntermediateRepresentationAnalyzer {
       return opcode.substring("LCONST_".length()) + "L";
     if (opcode.startsWith("FCONST_"))
       return opcode.substring("FCONST_".length()) + "F";
+    // DCONST_0/DCONST_1 are category-2 doubles. Keep the decimal point so
+    // stack operations such as DUP2_X1 can tell them apart from int constants.
     if (opcode.startsWith("DCONST_"))
-      return opcode.substring("DCONST_".length());
+      return opcode.substring("DCONST_".length()) + ".0";
     if (!instruction.operands().isEmpty()) {
       String value = instruction.operands().get(0);
       if ("LDC".equals(opcode) && value.startsWith(ModAnalyzer.STRING_CONSTANT_MARKER)) {

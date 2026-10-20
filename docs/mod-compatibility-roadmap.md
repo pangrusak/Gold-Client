@@ -93,13 +93,21 @@ The profile injector prefers this file when present and emits a classic
   methods still use the JVM catch-all handler rendered as `finally`.
 - [x] General mod smoke survey with `loader --single-file --compact` on the
   tracked inputs: AppleSkin (22 classes, 0 incomplete, ready), Waystones
-  (85 classes, 0 incomplete, ready), JEI (371 classes, 0 incomplete), Xaero's
-  Minimap (1280 classes, 1 incomplete; coremod and missing `xaerolib`
-  blockers), Universal Tweaks (1191 classes, 0 incomplete; Mixin/coremod and
-  missing dependency blockers), ConfigAnytime (3 classes, 0 incomplete;
-  coremod blocker), and MixinBooter (1305 classes, 4 incomplete; no `@Mod`
-  entry plus Mixin/coremod blockers). These are structural translation
-  results, not proof that the mods run without real Minecraft/Forge bindings.
+  (85 classes, 0 incomplete, ready), JEI (371 classes, 0 incomplete, ready),
+  Clumps (8 classes, 0 incomplete, ready), EnchantmentDescriptions
+  (3 classes, 0 incomplete, ready), ConfigAnytime (3 classes, 0 incomplete;
+  coremod blocker), FancyMenu (498 classes, 0 incomplete; Mixin/coremod and a
+  missing required `konkrete` dependency blocker), Konkrete (403 classes,
+  2 incomplete; Mixin/coremod blockers), Biomes O' Plenty (551 classes,
+  2 incomplete; ready lifecycle), Universal Tweaks (1191 classes, 2 incomplete;
+  Mixin/coremod and missing dependency blockers), Xaero's Minimap
+  (1280 classes, 5 incomplete; coremod and missing `xaerolib` blockers), and
+  MixinBooter (1305 classes, 8 incomplete; no `@Mod` entry plus Mixin/coremod
+  blockers). Each single-file bundle passed `node --check` and loaded in a Node
+  `vm` sandbox exposing `GoldClientForge` with the expected mod IDs and class
+  counts (for example Biomes O' Plenty: 551 classes, 0 blockers). These are
+  structural translation results, not proof that the mods run without real
+  Minecraft/Forge bindings.
 - [x] Loop/exception structuring now keeps a protected region outside a loop
   that exits onto the region's start, keeps a loop header that is also the
   start of a protected range, keeps a try's catch handler inside the
@@ -118,14 +126,34 @@ The profile injector prefers this file when present and emits a classic
     of truncating the handler at that instruction.
 
   These changes removed five of Xaero's six and nine of MixinBooter's thirteen
-  incomplete methods. MixinBooter's four remaining methods are
-  `JsonReader.nextUnquotedValue` (loop/switch with an unresolved
-  compiler-generated edge and a stack merge), `ClassWrapper.init` (conditional
-  early exit inside a try body plus a stack merge), `ConverterHelper.toBeRenamed`
-  (a decision-tree return whose shared boolean sink is still a stack merge; its
-  ternary call argument is now materialized), and `LazyLoader.loadBytecode`
-  (nested try-with-resources with a return). They remain explicit rather than
-  being guessed.
+  incomplete methods. The remaining incompletes are explicit rather than
+  guessed:
+  - MixinBooter (8): `Locals.getLocalsAt`, `Locals.getLocalsAt092`,
+    `ClassWrapper.init`, `LazyLoader.loadBytecode`, `JsonReader.nextUnquotedValue`,
+    `ConverterHelper.toBeRenamed`, `IfStatement.<init>`, and
+    `ComparisonExpression$Operator.matches`. They combine stack merges,
+    exception-stack values, and shared-return decision trees that the current
+    structured renderer refuses to approximate.
+  - Xaero's Minimap (5): `GuiAddWaypoint.updateMutual`,
+    `GuiWorldTpCommand.func_73876_c`, `RadarRenderer.setupRenderForList`,
+    `RadarRenderProvider.setupContextForList`, and
+    `MinimapWriter.writeChunk`. They are boolean/stack value merges inside
+    loops and switches; `writeChunk` also has an exception-stack value.
+  - Universal Tweaks (2): `ConcurrentHashMapV8.fullAddCount` (jump into a
+    shared tail with an exception-stack merge) and
+    `UTBlockOverlayMixin.utRenderBlockOverlay` (a try/catch region with six
+    conditionals that cannot be structured without a guess).
+  - Konkrete (2): `ValueNode.isJson` (a guard chain that enters a shared try
+    region) and `PathCompiler.parseFunctionParameters` (a shared switch join
+    reached from an inner `if` arm).
+  - Biomes O' Plenty (2): `EntityBOPBoat.controlBoat` and
+    `GeneratorLakes.isCavityEdge` (short-circuit boolean expressions
+    materialized as 0/1 stack merges).
+
+  A switch whose join is reached from a nested switch or loop now emits a
+  unique labeled block and a labeled `break`, so nested `break` targets no
+  longer leave the wrong scope. A jump to a straight-line block ending in a
+  value return is inlined rather than reported as unresolved.
 - [x] The transformation inspector parses Mixin configs (`package`, `mixins`,
   `client`, `server`, plugin, refmap), access-transformer rules, and
   coremod/tweak manifest keys, writes `forge-transformations.json`, and feeds
@@ -152,6 +180,16 @@ The profile injector prefers this file when present and emits a classic
   full stop does not leave those listeners behind.
 - [x] The lifecycle dispatcher is phase-major: all mods are constructed before
   preInit, and every preInit handler runs before any init handler.
+- [x] `FMLConstructionEvent` handlers run as a `construction` phase between mod
+  construction and `preInit`, matching Forge's order. Biomes O' Plenty uses it
+  for `FluidRegistry.enableUniversalBucket()`. The browser event object exposes
+  the construction API names but fails with
+  `unsupported-construction-context` for discovery/loader-state queries instead
+  of inventing containers or ASM data.
+- [x] Plain `required:`/`optional:` dependency clauses parse, including
+  `required:forge@[14.23.5.2855,]`. Presence-only clauses do not create
+  load-order edges; only the `before`/`after` variants do, so a required mod
+  that is merely installed is not silently treated as an ordering constraint.
 - [x] `@SidedProxy` client implementations, `@Mod.Instance`,
   `@Mod.Metadata`, and `@Mod.InstanceFactory` are discovered and validated.
 - [x] A `@Mod(useMetadata = true)` entry with no literal `modid` resolves its

@@ -724,6 +724,19 @@ class JavaScriptTranslatorTest {
         lowered);
   }
   @Test
+  void keepsSemicolonsInsideArrayDescriptorStringsWhenRewritingFieldWrites() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          new GoldClientRuntime.getStaticField("example.Mod", "values") =
+              GoldClientRuntime.checkCast(value, "[Lexample.Mod$Entry;");
+        }
+        """);
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.setStaticField(\"example.Mod\", \"values\", GoldClientRuntime.checkCast(value, \"[Lexample.Mod$Entry;\"));"),
+        lowered);
+  }
+
+  @Test
   void lowersGetterCallUsedAsStaticFieldAssignmentTarget() {
     String lowered = new JavaScriptTranslator().lowerJavaSyntax(
         "void sample() { new GoldClientRuntime.getStaticField(\"mezz.jei.collect.Table\", \"wrapperMaps\") = value; }");

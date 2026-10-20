@@ -18,7 +18,9 @@ Gold Client is an experimental Java-bytecode-to-JavaScript translation pipeline 
 
 The latest recorded AppleSkin + JEI loader build translates 393 classes and 2,287 methods with zero adapter-required declarations and **zero incomplete methods**; `translationComplete` is true for that pair. That is a structural translation result, not a runtime claim: zero incomplete methods does not mean zero platform bindings, and an adapter declaration is not a runtime implementation. The remaining platform work is listed in `loader-plan.json`, `forge-transformations.json`, and the diagnostics files.
 
-**Build/CI status:** the current checkpoint passed `mvn --batch-mode test` (277 tests, 0 failures, 0 errors, 3 optional skips), `mvn --batch-mode verify`, and the standalone Node suites. The older `5e7ef56` failure note is historical.
+The current `loader --single-file --compact` smoke matrix covers 12 tracked JARs, including Biomes O' Plenty, Clumps, EnchantmentDescriptions, FancyMenu, Konkrete, MixinBooter, Universal Tweaks, and Xaero's Minimap. Every generated `gold-client-forge.js` passes `node --check`; per-input class counts, incomplete methods, and explicit blockers are recorded in `docs/mod-compatibility-roadmap.md`.
+
+**Build/CI status:** the current checkpoint passed `mvn --batch-mode test` (285 tests, 0 failures, 0 errors, 3 optional skips), `mvn --batch-mode verify`, and the standalone Node suites. The older `5e7ef56` failure note is historical.
 
 ## Usage
 
@@ -68,11 +70,14 @@ java -jar target/gold-client-1.jar loader \
 
 `--input` may be repeated. Duplicate class definitions across inputs are
 rejected. The bundle contains one class registry, merged resources, a
-phase-major FML lifecycle dispatcher, dependency-ordered mod construction,
-static `@Mod.EventBusSubscriber` registration, and runtime interception for
-`MinecraftForge.EVENT_BUS.register(...)` calls made by translated code. The
-generated `loader-plan.json` records inputs, hashes, counts, load order,
-blockers, and whether the lifecycle plan is ready for a real host.
+phase-major FML lifecycle dispatcher (including `FMLConstructionEvent` before
+`preInit`), dependency-ordered mod construction, static
+`@Mod.EventBusSubscriber` registration, and runtime interception for
+`MinecraftForge.EVENT_BUS.register(...)` calls made by translated code. Plain
+`required:`/`optional:` dependency clauses are parsed for presence; only
+`before`/`after` clauses constrain load order. The generated
+`loader-plan.json` records inputs, hashes, counts, load order, blockers, and
+whether the lifecycle plan is ready for a real host.
 
 `--single-file` additionally writes `gold-client-forge.js`, a classic-script
 bundle that inlines every generated module and exposes

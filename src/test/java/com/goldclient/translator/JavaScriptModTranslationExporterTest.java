@@ -1349,6 +1349,23 @@ class JavaScriptModTranslationExporterTest {
         new IrMethodModel(name, descriptor, operations));
   }
 
+  @Test
+  void escapesLineBreaksInStaticStringConstants() throws Exception {
+    ClassModel clazz = new ClassModel("example/Constants", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(),
+        List.of(new FieldModel("LINE_SEPARATOR", "Ljava/lang/String;", null,
+            Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, List.of(), "\n")),
+        List.of(), List.of());
+
+    Path output = tempDir.resolve("constant-js");
+    new JavaScriptModTranslationExporter().export(List.of(clazz), output);
+
+    String module = Files.readString(output.resolve("example/Constants.translated.js"));
+    assertTrue(module.contains(
+        "defineStaticField(Translated_example_Constants, \"LINE_SEPARATOR\", \"\\n\");"), module);
+    assertFalse(module.contains("LINE_SEPARATOR\", \"\n\""), module);
+  }
+
   private static IrOperationModel op(String kind, String... operands) {
     return new IrOperationModel(kind, List.of(operands), 0);
   }

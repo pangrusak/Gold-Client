@@ -348,16 +348,74 @@ public final class JavaScriptTranslator {
   /** Repairs reconstructed static-field writes before lexical rewriting splits quoted arguments. */
   private static String rewriteStaticGetterAssignments(String source) {
     Pattern assignment = Pattern.compile(
-        "(?s)\\b(?:new\\s+)?GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*(?<![=!<>+\\-*/%&|^])=(?!=)\\s*(.*?);");
+        "(?:new\\s+)?GoldClientRuntime\\.getStaticField\\(\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*(?<![=!<>+\\-*/%&|^])=(?!=)");
     Matcher matcher = assignment.matcher(source);
-    StringBuffer rewritten = new StringBuffer();
+    StringBuilder rewritten = new StringBuilder(source.length() + 32);
+    int copied = 0;
     while (matcher.find()) {
-      String replacement = "GoldClientRuntime.setStaticField(" + quote(matcher.group(1))
-          + ", " + quote(matcher.group(2)) + ", " + matcher.group(3) + ");";
-      matcher.appendReplacement(rewritten, Matcher.quoteReplacement(replacement));
+      if (matcher.start() < copied) continue;
+      // A regex for the right-hand side would stop at a semicolon inside a
+      // string literal, such as the array descriptor "[Lnet/minecraft/...;".
+      // Scan instead so the whole field write is converted exactly once.
+      int end = assignmentEnd(source, matcher.end());
+      if (end < 0) continue;
+      int rhsStart = matcher.end();
+      while (rhsStart < end && Character.isWhitespace(source.charAt(rhsStart))) rhsStart++;
+      rewritten.append(source, copied, matcher.start());
+      rewritten.append("GoldClientRuntime.setStaticField(")
+          .append(quote(matcher.group(1))).append(", ")
+          .append(quote(matcher.group(2))).append(", ")
+          .append(source, rhsStart, end).append(");");
+      copied = end + 1;
     }
-    matcher.appendTail(rewritten);
+    rewritten.append(source.substring(copied));
     return rewritten.toString();
+  }
+
+  /** Index of the semicolon ending an assignment, ignoring strings and comments. */
+  private static int assignmentEnd(String source, int start) {
+    int parens = 0;
+    int brackets = 0;
+    int braces = 0;
+    char quote = 0;
+    boolean escaped = false;
+    boolean lineComment = false;
+    boolean blockComment = false;
+    for (int i = start; i < source.length(); i++) {
+      char c = source.charAt(i);
+      char next = i + 1 < source.length() ? source.charAt(i + 1) : '\0';
+      if (lineComment) {
+        if (c == '\n') lineComment = false;
+        continue;
+      }
+      if (blockComment) {
+        if (c == '*' && next == '/') { blockComment = false; i++; }
+        continue;
+      }
+      if (quote != 0) {
+        if (escaped) escaped = false;
+        else if (c == '\\') escaped = true;
+        else if (c == quote) quote = 0;
+        continue;
+      }
+      if (c == '/' && next == '/') { lineComment = true; i++; continue; }
+      if (c == '/' && next == '*') { blockComment = true; i++; continue; }
+      if (c == '"' || c == '\'') { quote = c; continue; }
+      switch (c) {
+        case '(' -> parens++;
+        case ')' -> parens--;
+        case '[' -> brackets++;
+        case ']' -> brackets--;
+        case '{' -> braces++;
+        case '}' -> braces--;
+        case ';' -> {
+          if (parens == 0 && brackets == 0 && braces == 0) return i;
+        }
+        default -> {
+        }
+      }
+    }
+    return -1;
   }
 
   /** Lowers the source-like output while preserving quoted strings and comments. */
