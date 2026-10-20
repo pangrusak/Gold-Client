@@ -368,6 +368,31 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void materializesATernaryIntoACallThatFeedsACondition() {
+    var method = new IrMethodModel("ternaryCondition", "(Z)Z", List.of(
+        op("CONDITIONAL_BRANCH", "flag != 0", "Lelse"),
+        op("CONSTANT", "1"),
+        op("JUMP", "Ljoin"),
+        op("LABEL", "Lelse"),
+        op("CONSTANT", "0"),
+        op("LABEL", "Ljoin"),
+        op("CALL_VALUE", "check(<unknown>, name)"),
+        op("CONDITIONAL_BRANCH", "check(<unknown>, name) == 0", "Lfail"),
+        op("CONSTANT", "1"),
+        op("RETURN", "1"),
+        op("LABEL", "Lfail"),
+        op("CONSTANT", "0"),
+        op("RETURN", "0")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("check((flag != 0 ? 0 : 1), name)"),
+        result.source());
+    assertFalse(result.source().contains("<unknown>"), result.source());
+  }
+
+  @Test
   void preservesStringsWhenLoweringJavaSyntax() {
     String source = """
         void sample() {

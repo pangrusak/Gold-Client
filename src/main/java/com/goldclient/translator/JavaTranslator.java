@@ -2629,7 +2629,13 @@ public final class JavaTranslator {
       source.append(indent(indent)).append(assignment).append(" = ").append(ternary).append(";\n");
       return new ConditionalRender(source.toString(), true, sinkIndex);
     }
-    if (!List.of("FIELD_WRITE", "METHOD_CALL", "RETURN").contains(sink.kind())) return null;
+    if ("CONDITIONAL_BRANCH".equals(sink.kind()) && !sink.operands().isEmpty()) {
+      String replacedCondition = sink.operands().get(0).replace("<unknown>", ternary);
+      return renderConditional(
+          operations, sinkIndex, end, indent, context, labels, replacedCondition);
+    }
+    if (!List.of("FIELD_WRITE", "METHOD_CALL", "CALL_VALUE", "RETURN")
+        .contains(sink.kind())) return null;
     List<String> replacedOperands = sink.operands().stream()
         .map(value -> value.replace("<unknown>", ternary)).toList();
     IrOperationModel replaced = new IrOperationModel(
@@ -3385,8 +3391,21 @@ public final class JavaTranslator {
       int indent,
       TranslationContext context,
       Map<String, Integer> labels) {
+    return renderConditional(
+        operations, branchIndex, end, indent, context, labels, null);
+  }
+
+  private static ConditionalRender renderConditional(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels,
+      String conditionOverride) {
     IrOperationModel branch = operations.get(branchIndex);
-    String condition = branch.operands().get(0);
+    String condition = conditionOverride != null
+        ? conditionOverride : branch.operands().get(0);
     String target = branch.operands().get(1);
     Integer targetIndex = labels.get(labelKey(target));
 

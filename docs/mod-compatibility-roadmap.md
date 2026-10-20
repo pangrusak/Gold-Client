@@ -122,7 +122,8 @@ The profile injector prefers this file when present and emits a classic
   `JsonReader.nextUnquotedValue` (loop/switch with an unresolved
   compiler-generated edge and a stack merge), `ClassWrapper.init` (conditional
   early exit inside a try body plus a stack merge), `ConverterHelper.toBeRenamed`
-  (stack-merged ternary argument and final return), and `LazyLoader.loadBytecode`
+  (a decision-tree return whose shared boolean sink is still a stack merge; its
+  ternary call argument is now materialized), and `LazyLoader.loadBytecode`
   (nested try-with-resources with a return). They remain explicit rather than
   being guessed.
 - [x] The transformation inspector parses Mixin configs (`package`, `mixins`,

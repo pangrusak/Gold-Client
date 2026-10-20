@@ -18,7 +18,7 @@ Gold Client is an experimental Java-bytecode-to-JavaScript translation pipeline 
 
 The latest recorded AppleSkin + JEI loader build translates 393 classes and 2,287 methods with zero adapter-required declarations and **zero incomplete methods**; `translationComplete` is true for that pair. That is a structural translation result, not a runtime claim: zero incomplete methods does not mean zero platform bindings, and an adapter declaration is not a runtime implementation. The remaining platform work is listed in `loader-plan.json`, `forge-transformations.json`, and the diagnostics files.
 
-**Build/CI status:** the current checkpoint passed `mvn --batch-mode test` (276 tests, 0 failures, 0 errors, 3 optional skips), `mvn --batch-mode verify`, and the standalone Node suites. The older `5e7ef56` failure note is historical.
+**Build/CI status:** the current checkpoint passed `mvn --batch-mode test` (277 tests, 0 failures, 0 errors, 3 optional skips), `mvn --batch-mode verify`, and the standalone Node suites. The older `5e7ef56` failure note is historical.
 
 ## Usage
 
