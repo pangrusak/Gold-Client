@@ -4,6 +4,8 @@
 
 Gold Client is a Java 17 / Maven CLI that analyzes Minecraft mod JARs, exports per-class JavaScript, and can compile an explicitly selected class with TeaVM. It is not itself a Minecraft mod: the root `fabric.mod.json` is a tracked Lithium test fixture, and `target/gold-client-0.1.0-SNAPSHOT.jar` is the actual tool.
 
+The product goal is a generic Minecraft 1.12.2 Forge → Eaglercraft translator: any arbitrary 1.12.2 Forge JAR in, one JavaScript mod file out for EaglerForgeInjector's Mod Manager ("Upload Mod (.js)"). Treat arbitrary-mod support as the target and every incomplete/stubbed/blocked method as a gap to close, never as silently-faked support.
+
 A successful export only means the represented bytecode was emitted. It does not prove semantic equivalence or that a mod runs. Preserve the repo's evidence discipline: never report stubbed, adapter-required, guessed, or unsupported behavior as complete or working, and do not replace missing platform APIs with silent no-ops.
 
 ## Build and verification

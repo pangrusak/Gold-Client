@@ -5,6 +5,11 @@ and the current supplied client profile. A translated algorithm slice does not
 mean that the whole mod, its loader integration, or its transformations work.
 Inputs and generated outputs remain outside tracked repository contents.
 
+The goal is generic: any arbitrary Minecraft 1.12.2 Forge JAR should translate
+to one Eaglercraft/EaglerForge-loadable JavaScript mod file. The table and
+checklists below record how far the current implementation is from that goal for
+each input, and what remains explicitly unsupported.
+
 ## Current target and backend status
 
 | Target/backend | Evidence | Status |

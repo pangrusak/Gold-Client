@@ -1,6 +1,14 @@
 # Gold Client
 
-Gold Client is an experimental tool for analyzing Minecraft Modrinth JARs and preparing them for translation to Eaglercraft-compatible code.
+Gold Client's target product is a generic Minecraft 1.12.2 Forge → Eaglercraft translator: point it at an arbitrary 1.12.2 Forge mod JAR and get one JavaScript mod file to upload to the EaglerForge mod loader (the injected Eaglercraft 1.12.2 client's "Upload Mod (.js)" button). It also analyzes mod JARs and exports per-class JavaScript for inspection.
+
+## Goal
+
+- **Target input:** any arbitrary Minecraft 1.12.2 Forge mod, plus the Forge 1.12.2 artifacts it needs.
+- **Target output:** one JavaScript mod file that loads through EaglerForgeInjector's `ModAPI`/Mod Manager without hand-editing the translated code.
+- **Not the goal:** per-mod hand porting, support limited to the tracked test mods, or shipping stubbed/no-op platform APIs so a mod only appears to load.
+
+"Arbitrary" is the requirement, not a current achievement. This document is deliberately stricter than the goal: each checkpoint reports what is complete, incomplete, stubbed, declaration-only, adapter-required, or blocked instead of claiming the goal is met. `docs/mod-compatibility-roadmap.md` holds the per-input evidence.
 
 ## Current status (October 2026)
 
