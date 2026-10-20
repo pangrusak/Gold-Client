@@ -335,7 +335,8 @@ public final class ForgeHostRuntimeExporter {
         const TRANSITIONS = Object.freeze({
           discovered: ["constructing", "failed"],
           constructing: ["constructed", "failed"],
-          constructed: ["preInit", "failed"],
+          constructed: ["construction", "preInit", "failed"],
+          construction: ["preInit", "failed"],
           preInit: ["init", "failed"],
           init: ["postInit", "failed"],
           postInit: ["loadComplete", "failed"],
@@ -615,10 +616,11 @@ public final class ForgeHostRuntimeExporter {
             async createEvent(mod, phase) {
               const state = stateFor(mod);
               const expected = {
-                preInit: "constructed", init: "preInit", postInit: "init",
-                loadComplete: "postInit", serverAboutToStart: "started",
-                serverStarting: "serverAboutToStart", serverStarted: "serverStarting",
-                serverStopping: "serverStarted", serverStopped: "serverStopping"
+                construction: "constructed", preInit: "construction", init: "preInit",
+                postInit: "init", loadComplete: "postInit",
+                serverAboutToStart: "started", serverStarting: "serverAboutToStart",
+                serverStarted: "serverStarting", serverStopping: "serverStarted",
+                serverStopped: "serverStopping"
               }[phase.name];
               if (state.state !== expected) {
                 throw new ForgeLifecycleStateError(mod.modId, state.state, phase.name);
@@ -639,10 +641,11 @@ public final class ForgeHostRuntimeExporter {
             async afterPhase(mod, phase, instance) {
               const state = stateFor(mod);
               const expected = {
-                preInit: "constructed", init: "preInit", postInit: "init",
-                loadComplete: "postInit", serverAboutToStart: "started",
-                serverStarting: "serverAboutToStart", serverStarted: "serverStarting",
-                serverStopping: "serverStarted", serverStopped: "serverStopping"
+                construction: "constructed", preInit: "construction", init: "preInit",
+                postInit: "init", loadComplete: "postInit",
+                serverAboutToStart: "started", serverStarting: "serverAboutToStart",
+                serverStarted: "serverStarting", serverStopping: "serverStarted",
+                serverStopped: "serverStopping"
               }[phase.name];
               if (state.state !== expected) {
                 throw new ForgeLifecycleStateError(mod.modId, state.state, phase.name);

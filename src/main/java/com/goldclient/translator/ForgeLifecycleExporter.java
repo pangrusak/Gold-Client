@@ -46,6 +46,10 @@ public final class ForgeLifecycleExporter {
       "net.minecraftforge.fml.common.eventhandler.SubscribeEvent";
 
   private static final List<Phase> PHASES = List.of(
+      // FML fires construction after every mod instance exists and before any
+      // preInit handler. Mods use it for work that must precede registration,
+      // such as FluidRegistry.enableUniversalBucket().
+      new Phase("construction", "net.minecraftforge.fml.common.event.FMLConstructionEvent", true),
       new Phase("preInit", "net.minecraftforge.fml.common.event.FMLPreInitializationEvent", true),
       new Phase("init", "net.minecraftforge.fml.common.event.FMLInitializationEvent", true),
       new Phase("postInit", "net.minecraftforge.fml.common.event.FMLPostInitializationEvent", true),

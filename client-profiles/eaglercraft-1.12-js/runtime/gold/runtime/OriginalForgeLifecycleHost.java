@@ -8,6 +8,7 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.FMLModContainer;
 import net.minecraftforge.fml.common.Loader;
+import net.minecraftforge.fml.common.LoaderState;
 import net.minecraftforge.fml.common.discovery.ASMDataTable;
 import net.minecraftforge.fml.common.event.*;
 import net.minecraftforge.fml.relauncher.Side;
@@ -46,6 +47,14 @@ public final class OriginalForgeLifecycleHost implements ForgeModBootstrap.Host 
         if(instance==null)throw new IllegalStateException("Original mod instance has not been bound");
         services.enterPhase(modId,phase);enteredPhase=phase;
         FMLModContainer container=active(modId);
+        if(phase.equals("construction")) {
+            ASMDataTable data=services.harvestedData();
+            if(data==null)throw new IllegalStateException("Original ASM discovery context is missing");
+            FMLConstructionEvent event=new FMLConstructionEvent(data,LoaderState.ModState.CONSTRUCTED,Loader.instance().getActiveModList());
+            event.applyModContainer(container);
+            if(event.getASMData()!=data)throw new IllegalStateException("Original construction context was not preserved");
+            return event;
+        }
         if(phase.equals("preInit")) {
             ASMDataTable data=services.harvestedData();File directory=services.configurationDirectory();
             if(data==null||directory==null)throw new IllegalStateException("Original ASM discovery/configuration context is missing");

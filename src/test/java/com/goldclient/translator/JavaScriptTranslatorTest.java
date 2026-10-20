@@ -185,6 +185,110 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void wrapsALoopWhoseHeaderStartsInsideAProtectedRegion() {
+    var method = new IrMethodModel("loopOverTries", "()V", List.of(
+        op("TRY_BEGIN", "L0", "L1", "L2", "java.lang.Exception", "false"),
+        op("LABEL", "L0"),
+        op("CONDITIONAL_BRANCH", "local0 == 0", "L1"),
+        op("METHOD_CALL", "innerWork()"),
+        op("TRY_END", "L0", "L1", "L2", "java.lang.Exception", "false"),
+        op("LABEL", "L1"),
+        op("JUMP", "L3"),
+        op("CATCH_BEGIN", "L0", "L1", "L2", "java.lang.Exception", "false"),
+        op("LABEL", "L2"),
+        op("LOCAL_WRITE", "local1", "<exception>"),
+        op("TRY_BEGIN", "L3", "L4", "L5", "java.lang.Exception", "false"),
+        op("LABEL", "L3"),
+        op("METHOD_CALL", "pause()"),
+        op("TRY_END", "L3", "L4", "L5", "java.lang.Exception", "false"),
+        op("LABEL", "L4"),
+        op("JUMP", "L0"),
+        op("CATCH_BEGIN", "L3", "L4", "L5", "java.lang.Exception", "false"),
+        op("LABEL", "L5"),
+        op("LOCAL_WRITE", "local2", "<exception>"),
+        op("METHOD_CALL", "recover(local2)"),
+        op("JUMP", "L0")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("innerWork();"), result.source());
+    assertTrue(result.source().contains("pause();"), result.source());
+    assertTrue(result.source().contains("recover(local2);"), result.source());
+    assertEquals(2, countOccurrences(result.source(), "try {"), result.source());
+    // The first catch must stay empty; the second try is not part of it.
+    assertFalse(result.source().contains("catch (local1) { if (!GoldClientRuntime.instanceOf(local1, \"java.lang.Exception\")) throw local1;\n    try"),
+        result.source());
+    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void wrapsASwitchLoopWhoseBackEdgeIsNotTheLastInstruction() {
+    var method = new IrMethodModel("switchLoop", "()V", List.of(
+        op("LABEL", "L0"),
+        op("LOCAL_READ", "local0"),
+        op("TABLE_SWITCH", "local0", "0", "1", "Lcase0", "Lcase1", "Lcase2"),
+        op("LABEL", "Lcase1"),
+        op("METHOD_CALL", "step()"),
+        op("JUMP", "L0"),
+        op("LABEL", "Lskip"),
+        op("LABEL", "Lcase0"),
+        op("RETURN"),
+        op("LABEL", "Lcase2"),
+        op("RETURN")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("step();"), result.source());
+    assertTrue(result.source().contains("continue"), result.source());
+    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void nestsTriesThatShareOneProtectedStartLabel() {
+    // A nested try compiles both exception entries with the same start label,
+    // and the analyzer emits both TRY_BEGIN markers before that label. The
+    // inner marker can come first, so the renderer must still recognize the
+    // wider outer region instead of dropping its catch clause.
+    var method = new IrMethodModel("sharedStart", "()V", List.of(
+        op("TRY_BEGIN", "L0", "L1", "L2", "java.lang.Exception", "false"),
+        op("TRY_BEGIN", "L0", "L3", "L4", "java.lang.Exception", "false"),
+        op("LABEL", "L0"),
+        op("METHOD_CALL", "innerWork()"),
+        op("TRY_END", "L0", "L1", "L2", "java.lang.Exception", "false"),
+        op("LABEL", "L1"),
+        op("JUMP", "L5"),
+        op("CATCH_BEGIN", "L0", "L1", "L2", "java.lang.Exception", "false"),
+        op("LABEL", "L2"),
+        op("LOCAL_WRITE", "local1", "<exception>"),
+        op("METHOD_CALL", "innerRecover(local1)"),
+        op("LABEL", "L5"),
+        op("METHOD_CALL", "outerWork()"),
+        op("TRY_END", "L0", "L3", "L4", "java.lang.Exception", "false"),
+        op("LABEL", "L3"),
+        op("JUMP", "L6"),
+        op("CATCH_BEGIN", "L0", "L3", "L4", "java.lang.Exception", "false"),
+        op("LABEL", "L4"),
+        op("LOCAL_WRITE", "local2", "<exception>"),
+        op("METHOD_CALL", "outerRecover(local2)"),
+        op("LABEL", "L6"),
+        op("RETURN")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("innerWork();"), result.source());
+    assertTrue(result.source().contains("outerWork();"), result.source());
+    assertTrue(result.source().contains("innerRecover(local1);"), result.source());
+    assertTrue(result.source().contains("outerRecover(local2);"), result.source());
+    assertEquals(2, countOccurrences(result.source(), "try {"), result.source());
+    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
   void keepsACatchHandlerInsideTheFallthroughArmOfAnIfElse() {
     var method = new IrMethodModel("ifElseTry", "()V", List.of(
         op("LOCAL_READ", "local0"),
@@ -846,6 +950,16 @@ class JavaScriptTranslatorTest {
     assertTrue(lowered.contains("throw __goldCaught"), lowered);
     assertFalse(lowered.contains("Gold Client approximation: merged multiple catch clauses"),
         lowered);
+  }
+
+  private static int countOccurrences(String text, String needle) {
+    int count = 0;
+    int index = 0;
+    while ((index = text.indexOf(needle, index)) >= 0) {
+      count++;
+      index += needle.length();
+    }
+    return count;
   }
 
 }

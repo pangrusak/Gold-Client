@@ -8,8 +8,11 @@ import java.util.*;
  * pretends to validate a version without the original loader's version API.
  */
 public final class ForgeDependencyGraph {
+    // Forge 1.12 accepts plain required/optional clauses as well as the
+    // before/after ordering variants. A plain clause declares presence only.
     private static final java.util.regex.Pattern CLAUSE = java.util.regex.Pattern.compile(
-            "^(required-after|required-before|after|before):([A-Za-z0-9_.-]+)(?:@(.+))?$");
+            "^(required-after|required-before|required|optional|after|before):"
+            + "([A-Za-z0-9_.-]+)(?:@(.+))?$");
     /**
      * Supplied by the Forge-compatible host, not by a mod JAR in the graph.
      * Forge 1.12 mods commonly declare these as required dependencies.
@@ -19,7 +22,9 @@ public final class ForgeDependencyGraph {
     private ForgeDependencyGraph() {}
 
     public record Dependency(String kind, String modId, String versionRange) {
-        public boolean required() { return kind.startsWith("required-"); }
+        public boolean required() { return kind.startsWith("required"); }
+        /** True for the before/after variants, which constrain load order. */
+        public boolean orders() { return kind.endsWith("after") || kind.endsWith("before"); }
     }
     public record Mod(String id, String version, String declarations) {
         public Mod {
@@ -84,6 +89,9 @@ public final class ForgeDependencyGraph {
                     continue;
                 }
                 if (!present) continue; // optional ordering constraints apply only when installed
+                // Plain required/optional clauses declare presence only; they do
+                // not constrain load order.
+                if (!dependency.orders()) continue;
                 String from = dependency.kind().endsWith("after") ? target : mod.id();
                 String to = dependency.kind().endsWith("after") ? mod.id() : target;
                 if (outgoing.get(from).add(to)) indegree.put(to, indegree.get(to) + 1);

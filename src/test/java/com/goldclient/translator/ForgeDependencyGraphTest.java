@@ -48,6 +48,30 @@ class ForgeDependencyGraphTest {
         assertTrue(duplicate.blockers().get(0).contains("Duplicate"));
     }
 
+    @Test void parsesPresenceOnlyForgeClausesWithoutOrdering() {
+        var dependencies = ForgeDependencyGraph.parse(
+                "required:forge@[14.23.5.2855,);optional:jei@[4.6.0,);required:core");
+        assertEquals(3, dependencies.size());
+        assertEquals("required", dependencies.get(0).kind());
+        assertTrue(dependencies.get(0).required());
+        assertFalse(dependencies.get(0).orders());
+        assertEquals("[14.23.5.2855,)", dependencies.get(0).versionRange());
+        assertFalse(dependencies.get(1).required());
+
+        // A presence-only clause must not invent a load-order edge.
+        var plan = ForgeDependencyGraph.plan(List.of(
+                new ForgeDependencyGraph.Mod("addon", "1", "required:core"),
+                new ForgeDependencyGraph.Mod("core", "1", "")));
+        assertTrue(plan.ready(), plan.blockers().toString());
+        assertEquals(List.of("addon", "core"),
+                plan.ordered().stream().map(ForgeDependencyGraph.Mod::id).toList());
+
+        // Forge/Minecraft are host-provided, so the 1.12 bootstrap clause is valid.
+        var bootstrap = ForgeDependencyGraph.plan(List.of(
+                new ForgeDependencyGraph.Mod("addon", "1", "required:forge@[14.23.5.2855,)")));
+        assertTrue(bootstrap.ready(), bootstrap.blockers().toString());
+    }
+
     @Test void rejectsUnknownDependencySyntax() {
         assertThrows(IllegalArgumentException.class,
                 () -> ForgeDependencyGraph.parse("mystery:othermod"));

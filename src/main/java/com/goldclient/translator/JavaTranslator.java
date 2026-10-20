@@ -2,6 +2,8 @@ package com.goldclient.translator;
 
 import com.goldclient.model.IrMethodModel;
 import com.goldclient.model.IrOperationModel;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -19,9 +21,13 @@ public final class JavaTranslator {
     source.append(returnType(method.descriptor())).append(" ").append(method.name()).append("(")
         .append(parameterList(method.descriptor())).append(") {\n");
 
-    Map<String, Integer> labels = findLabels(operations, 0, operations.size());
+    // Nested try statements can share one protected start label, so their
+    // TRY_BEGIN markers are adjacent metadata for different region widths.
+    // Order them widest-first before rendering; see orderSharedStartTryRegions.
+    List<IrOperationModel> ordered = orderSharedStartTryRegions(operations);
+    Map<String, Integer> labels = findLabels(ordered, 0, ordered.size());
     RenderResult rendered = renderRange(
-        operations, 0, operations.size(), 1, context, labels);
+        ordered, 0, ordered.size(), 1, context, labels);
     source.append(rendered.source());
     complete &= rendered.complete();
 
@@ -57,6 +63,34 @@ public final class JavaTranslator {
         // A merged split-region try renders its body flat; the individual
         // protected ranges are markers for the same handler, not nested tries.
         if (context.suppressesNestedTryRegions()) continue;
+        // A loop can start at the first instruction of a protected region
+        // (its header label sits after the region's TRY_BEGIN marker) while
+        // its back edges are inside later protected regions or handlers.
+        // Wrapping the whole range keeps those jumps as continue/break
+        // instead of leaving them unresolved outside the loop.
+        if (operation.operands().size() >= 2) {
+          String regionStartLabel = operation.operands().get(0);
+          if (!context.isActiveLoop(labelKey(regionStartLabel))
+              && tryRegionStartsLoop(operations, i, end, regionStartLabel, labels)) {
+            String loopLabel = labelKey(regionStartLabel);
+            boolean labeled = needsLoopLabel(operations, i + 1, end, loopLabel);
+            context.enterLoop(loopLabel, labeled);
+            RenderResult body;
+            try {
+              body = renderRange(operations, i, end, indent + 1, context, labels);
+            } finally {
+              context.exitLoop();
+            }
+            source.append(indent(indent));
+            if (labeled) source.append(jsLabel(loopLabel)).append(": ");
+            source.append("while (true) {\n")
+                .append(body.source())
+                .append(indent(indent)).append("}\n");
+            complete &= body.complete();
+            i = end - 1;
+            continue;
+          }
+        }
         // A region whose handler is a sibling clause of the enclosing catch
         // block repeats that handler over this block (try-with-resources and
         // catch-all plumbing); the handler is rendered once, after it.
@@ -152,6 +186,19 @@ public final class JavaTranslator {
           if (breakLoop != null) {
             ConditionalRender loop = renderBreakLoop(
                 operations, i, end, breakLoop, indent, context, labels);
+            source.append(loop.source());
+            complete &= loop.complete();
+            i = loop.lastIndex();
+            continue;
+          }
+          // A switch or try can place a jump back to the header before later
+          // switch arms, so the back edge is not the last instruction of the
+          // range. When the range ends in return/throw there is no fall-out
+          // path, and the whole remaining range is this loop's body.
+          if (hasOpenInfiniteLoopBackEdge(
+              operations, i, end, operation.operands().get(0))) {
+            ConditionalRender loop = renderOpenInfiniteLoop(
+                operations, i, end, indent, context, labels);
             source.append(loop.source());
             complete &= loop.complete();
             i = loop.lastIndex();
@@ -396,6 +443,15 @@ public final class JavaTranslator {
           // compiler-generated labels, so don't report it as unsupported.
           continue;
         }
+        if (targetIndex != null
+            && jumpChainEndsInVoidReturn(operations, targetIndex, labels)) {
+          // Several arms can share one exit block whose only content is another
+          // jump to the method's final return. Following that chain keeps the
+          // exit visible as a return instead of running code laid out between
+          // the shared labels.
+          source.append(indent(indent)).append("return;\n");
+          continue;
+        }
         if (targetIndex != null && targetIndex > i && targetIndex < end
             && isIsolatedForwardJump(operations, i, targetIndex)) {
           // A forward goto can skip a dead bytecode block. Drop that block only
@@ -435,6 +491,53 @@ public final class JavaTranslator {
     }
 
     return new RenderResult(source.toString(), complete);
+  }
+
+  /**
+   * Orders exception-table markers that share one protected start label so the
+   * widest region comes first. A nested {@code try} can begin at exactly the
+   * same bytecode label as its enclosing {@code try}; both markers are emitted
+   * before that shared label, in no guaranteed order. Rendering the inner
+   * region first would consume the marker position and leave the outer
+   * protected range and handler looking like ordinary statements.
+   */
+  private static List<IrOperationModel> orderSharedStartTryRegions(
+      List<IrOperationModel> operations) {
+    List<IrOperationModel> ordered = new ArrayList<>(operations);
+    Map<String, Integer> labels = findLabels(ordered, 0, ordered.size());
+    int i = 0;
+    while (i < ordered.size()) {
+      IrOperationModel first = ordered.get(i);
+      if (!"TRY_BEGIN".equals(first.kind()) || first.operands().size() < 2) {
+        i++;
+        continue;
+      }
+      String start = labelKey(first.operands().get(0));
+      int groupEnd = i + 1;
+      while (groupEnd < ordered.size()) {
+        IrOperationModel candidate = ordered.get(groupEnd);
+        if (!"TRY_BEGIN".equals(candidate.kind()) || candidate.operands().size() < 2
+            || !start.equals(labelKey(candidate.operands().get(0)))) break;
+        groupEnd++;
+      }
+      if (groupEnd - i > 1) {
+        List<IrOperationModel> group = new ArrayList<>(ordered.subList(i, groupEnd));
+        // Same start label, so the larger protected end is the outer region.
+        // A stable descending sort keeps equal-width multi-catch entries together.
+        group.sort(Comparator.comparingInt(
+            operation -> -protectedEndIndex(operation, labels)));
+        for (int slot = 0; slot < group.size(); slot++) ordered.set(i + slot, group.get(slot));
+      }
+      i = groupEnd;
+    }
+    return ordered;
+  }
+
+  private static int protectedEndIndex(
+      IrOperationModel operation, Map<String, Integer> labels) {
+    if (operation.operands().size() < 2) return -1;
+    Integer index = labels.get(labelKey(operation.operands().get(1)));
+    return index == null ? -1 : index;
   }
 
   /**
@@ -549,8 +652,20 @@ public final class JavaTranslator {
 
     int handlerEnd = end;
     String joinLabel = null;
+    // A handler can end where the normal continuation block begins, and that
+    // block may itself be protected. Its TRY_BEGIN marker is emitted before the
+    // join label, so stop at the marker and let the following region render it.
+    boolean handlerEndsAtJoinRegion = false;
     for (int i = lastCatchBegin + 1; i < end; i++) {
       IrOperationModel operation = operations.get(i);
+
+      if (normalJoinLabel != null && "TRY_BEGIN".equals(operation.kind())
+          && !operation.operands().isEmpty()
+          && labelKey(normalJoinLabel).equals(labelKey(operation.operands().get(0)))) {
+        handlerEnd = i;
+        handlerEndsAtJoinRegion = true;
+        break;
+      }
 
       // Nested close()/cleanup regions may have their own joins; structure them
       // first and don't mistake their internal branches for the outer handler exit.
@@ -686,16 +801,34 @@ public final class JavaTranslator {
     // TRY_BEGIN metadata records are never mistaken for executable nested regions.
     Integer startIndex = labels.get(labelKey(startLabel));
     int bodyStart = startIndex == null ? begin + 1 : startIndex + 1;
-    while (bodyStart < tryEnd
-        && ("LABEL".equals(operations.get(bodyStart).kind())
-            || "TRY_BEGIN".equals(operations.get(bodyStart).kind()))) bodyStart++;
-    // A protected range can start exactly at a loop header (try inside the
-    // loop body, or a try-with-resources body that is itself a loop). Keep the
-    // header label so the body renderer can structure the back edge instead of
-    // leaving it as an unresolved jump.
-    if (startIndex != null && isBackwardBranchTarget(
-        operations, startIndex, tryEnd, startLabel, labels)) {
-      bodyStart = startIndex;
+    // A nested try statement can share this region's protected start label;
+    // its marker is adjacent to this region's markers, before the shared
+    // label. Start at that marker so the inner region is rendered inside this
+    // try block instead of being skipped as surrounding metadata.
+    int sharedStartNested = -1;
+    int sharedStartLimit = startIndex == null ? tryEnd : startIndex;
+    for (int i = begin + 1; i < sharedStartLimit; i++) {
+      IrOperationModel candidate = operations.get(i);
+      if (!"TRY_BEGIN".equals(candidate.kind()) || candidate.operands().size() < 2) continue;
+      if (!labelKey(startLabel).equals(labelKey(candidate.operands().get(0)))) continue;
+      if (labelKey(endLabel).equals(labelKey(candidate.operands().get(1)))) continue;
+      sharedStartNested = i;
+      break;
+    }
+    if (sharedStartNested >= 0) {
+      bodyStart = sharedStartNested;
+    } else {
+      while (bodyStart < tryEnd
+          && ("LABEL".equals(operations.get(bodyStart).kind())
+              || "TRY_BEGIN".equals(operations.get(bodyStart).kind()))) bodyStart++;
+      // A protected range can start exactly at a loop header (try inside the
+      // loop body, or a try-with-resources body that is itself a loop). Keep the
+      // header label so the body renderer can structure the back edge instead of
+      // leaving it as an unresolved jump.
+      if (startIndex != null && isBackwardBranchTarget(
+          operations, startIndex, tryEnd, startLabel, labels)) {
+        bodyStart = startIndex;
+      }
     }
     // A region that starts exactly at this region's end label emits its
     // TRY_BEGIN marker before this region's TRY_END. The body has to stop at
@@ -887,11 +1020,12 @@ public final class JavaTranslator {
     // jumping to a shared continuation. That is structured control flow, not
     // evidence that the exception region was only partially rendered.
     int lastHandlerEnd = handlerEnds[handlerEnds.length - 1];
-    if (joinLabel == null && lastHandlerEnd < end
+    if (!handlerEndsAtJoinRegion && joinLabel == null && lastHandlerEnd < end
         && !isTerminal(operations.get(lastHandlerEnd - 1))) complete = false;
     int last = breakLabel != null
         ? normalBlockStart - 1
-        : (joinLabel == null ? lastHandlerEnd - 1 : lastHandlerEnd);
+        : (joinLabel == null || handlerEndsAtJoinRegion
+            ? lastHandlerEnd - 1 : lastHandlerEnd);
     return new ConditionalRender(source.toString(), complete, last);
   }
 
@@ -3075,6 +3209,41 @@ public final class JavaTranslator {
    * through the increment block, so a jump to that tail has to run those
    * statements before continuing.
    */
+  /**
+   * Follows a chain of labels whose block is only another jump, and reports
+   * whether it ends at a void return. Only a bare {@code return;} is emitted,
+   * so a value-returning method is never truncated by this shortcut.
+   */
+  private static boolean jumpChainEndsInVoidReturn(
+      List<IrOperationModel> operations,
+      int targetIndex,
+      Map<String, Integer> labels) {
+    if (targetIndex < 0 || targetIndex >= operations.size()) return false;
+    int index = targetIndex;
+    for (int hop = 0; hop < 8; hop++) {
+      int cursor = index + 1;
+      while (cursor < operations.size()) {
+        if ("LABEL".equals(operations.get(cursor).kind())) {
+          cursor++;
+          continue;
+        }
+        break;
+      }
+      if (cursor >= operations.size()) return false;
+      IrOperationModel operation = operations.get(cursor);
+      // The direct target block is a normal return block, not a shared exit;
+      // leave it to the ordinary fall-through/dead-block handling.
+      if ("RETURN".equals(operation.kind())) {
+        return hop > 0 && operation.operands().isEmpty();
+      }
+      if (!"JUMP".equals(operation.kind()) || operation.operands().isEmpty()) return false;
+      Integer next = labels.get(labelKey(operation.operands().get(0)));
+      if (next == null || next <= index) return false;
+      index = next;
+    }
+    return false;
+  }
+
   private static int loopTailJumpIndex(
       List<IrOperationModel> operations,
       int targetIndex,
@@ -3113,13 +3282,15 @@ public final class JavaTranslator {
   }
 
   /**
-   * Structures a condition chain that guards one shared block which ends by
-   * leaving the enclosing loop. javac lowers loop tests such as
-   * {@code if (a || (b = ...)) { ...; continue; }} by letting each condition
-   * either enter a block placed right before the join or skip it. The block is
-   * rendered once per arm, which keeps every path faithful even though a plain
-   * nested if/else cannot express the sharing (a skip condition sends only its
-   * taken edge to the join, while its fall-through still enters the block).
+   * Structures a condition chain that guards one shared block. javac lowers
+   * {@code if (a || (b = ...)) { ...; continue; }} and similar short-circuit
+   * guards by letting each condition either enter a block placed right before
+   * the join or skip it. The block is rendered once per arm, which keeps every
+   * path faithful even though a plain nested if/else cannot express the sharing
+   * (a skip condition sends only its taken edge to the join, while its
+   * fall-through still enters the block). The shared block may either leave the
+   * enclosing loop or fall through to the join; a join at the exclusive range
+   * end is treated the same way.
    */
   private static ConditionalRender renderGuardBlockChain(
       List<IrOperationModel> operations,
@@ -3143,7 +3314,10 @@ public final class JavaTranslator {
         if (target == null) return null;
         if (target.equals(blockIndex)) {
           entersBlock.add(true);
-        } else if (target > blockIndex && target < end) {
+        } else if (target > blockIndex && target <= end) {
+          // A target exactly at the exclusive range end is this range's join:
+          // the arm falls out after the shared block and the enclosing renderer
+          // continues there.
           if (joinIndex == null) joinIndex = target;
           else if (!joinIndex.equals(target)) return null;
           entersBlock.add(false);
@@ -3164,16 +3338,15 @@ public final class JavaTranslator {
     }
     if (conditionals.isEmpty() || joinIndex == null) return null;
 
-    // The shared block has to end by leaving the enclosing loop: the duplicated
-    // arms then never need to fall into the join.
+    // The shared block needs a tail instruction, but it does not have to leave
+    // the enclosing loop: a block that simply falls through to the join is the
+    // common javac shape for `if (a || b) { block }`. Both duplicated arms end
+    // at the join, so falling into it is the intended path.
     int blockTail = -1;
     for (int i = blockIndex; i < joinIndex; i++) {
       if (!isLoopExitMetadata(operations.get(i))) blockTail = i;
     }
     if (blockTail < 0) return null;
-    IrOperationModel tail = operations.get(blockTail);
-    if (!"JUMP".equals(tail.kind()) || tail.operands().isEmpty()) return null;
-    if (loopEdgeAction(operations, tail.operands().get(0), context, labels) == null) return null;
 
     // No path outside the chain may enter it, and the block may not jump back
     // into the condition work: the arms are independent copies.
@@ -3812,6 +3985,74 @@ public final class JavaTranslator {
   private static boolean isLoopExitMetadata(IrOperationModel operation) {    return "LABEL".equals(operation.kind()) || "TRY_BEGIN".equals(operation.kind())
         || "TRY_END".equals(operation.kind()) || "CATCH_BEGIN".equals(operation.kind())
         || "STACK_OPERATION".equals(operation.kind());
+  }
+
+  /**
+   * Accepts a {@code while (true)} whose back edge is not the range's last
+   * instruction because a switch or catch handler continues after it. Only
+   * applies when the range ends in return/throw, so wrapping the whole range
+   * cannot swallow a fall-out path.
+   */
+  private static boolean hasOpenInfiniteLoopBackEdge(
+      List<IrOperationModel> operations, int loopHeaderIndex, int end, String loopLabel) {
+    if (loopHeaderIndex + 2 >= end) return false;
+    if (!isTerminal(operations.get(end - 1))) return false;
+    for (int i = loopHeaderIndex + 1; i < end - 1; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(loopLabel).equals(labelKey(operation.operands().get(0)))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * True when a protected region's start label is also a loop header: some
+   * later instruction in this range jumps back to it.
+   */
+  private static boolean tryRegionStartsLoop(
+      List<IrOperationModel> operations,
+      int begin,
+      int end,
+      String startLabel,
+      Map<String, Integer> labels) {
+    Integer header = labels.get(labelKey(startLabel));
+    if (header == null || header < begin || header >= end) return false;
+    for (int i = header + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()
+          && labelKey(startLabel).equals(labelKey(operation.operands().get(0)))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static ConditionalRender renderOpenInfiniteLoop(
+      List<IrOperationModel> operations,
+      int loopHeaderIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
+    boolean labeled = needsLoopLabel(operations, loopHeaderIndex + 1, end, loopLabel);
+    context.enterLoop(loopLabel, labeled);
+    RenderResult body;
+    try {
+      body = renderRange(
+          operations, loopHeaderIndex + 1, end, indent + 1, context, labels);
+    } finally {
+      context.exitLoop();
+    }
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent));
+    if (labeled) source.append(jsLabel(loopLabel)).append(": ");
+    source.append("while (true) {\n")
+        .append(body.source())
+        .append(indent(indent)).append("}\n");
+    return new ConditionalRender(source.toString(), body.complete(), end - 1);
   }
 
   private static LoopShape findInfiniteLoopBackEdge(
@@ -4746,29 +4987,46 @@ public final class JavaTranslator {
     };
   }
 
+  // These are compiled once: normalizeExpression runs for every expression of
+  // every method, and Pattern.compile dominated whole-JAR translation time.
+  private static final java.util.regex.Pattern LOCAL_NAME =
+      java.util.regex.Pattern.compile("local\\d+");
+  private static final java.util.regex.Pattern QUALIFIED_NAME =
+      java.util.regex.Pattern.compile("[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)+");
+  private static final java.util.regex.Pattern CALL_EXPRESSION =
+      java.util.regex.Pattern.compile(
+          "[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*\\s*\\([^)]*\\)");
+  private static final java.util.regex.Pattern BINARY_EXPRESSION =
+      java.util.regex.Pattern.compile(
+          ".*\\s(?:\\+|-|\\*|/|%|<|>|==|!=|<=|>=|&&|\\|\\||\\?|:)\\s.*");
+  private static final java.util.regex.Pattern INTEGER_LITERAL =
+      java.util.regex.Pattern.compile("-?(?:0|[1-9]\\d*)(?:[lLfFdD])?");
+  private static final java.util.regex.Pattern DECIMAL_LITERAL =
+      java.util.regex.Pattern.compile("-?(?:0|[1-9]\\d*)\\.\\d+(?:[fFdD])?");
+
   private static boolean looksLikeExpression(String value) {
     String trimmed = value == null ? "" : value.trim();
     if (trimmed.isEmpty())
       return false;
 
-    return trimmed.matches("local\\d+")
+    return LOCAL_NAME.matcher(trimmed).matches()
         || trimmed.contains("->")
         // Some IR producers already express lambdas in JavaScript arrow syntax.
         // Treat those as expressions, not as bare constructor text to quote.
         || trimmed.contains("=>")
-        || trimmed.matches("[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)+")
-        || trimmed.matches("[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*\\s*\\([^)]*\\)")
+        || QUALIFIED_NAME.matcher(trimmed).matches()
+        || CALL_EXPRESSION.matcher(trimmed).matches()
         || trimmed.startsWith("new ")
         || (trimmed.startsWith("(") && trimmed.endsWith(")"))
-        || trimmed.matches(".*\\s(?:\\+|-|\\*|/|%|<|>|==|!=|<=|>=|&&|\\|\\||\\?|:)\\s.*");
+        || BINARY_EXPRESSION.matcher(trimmed).matches();
   }
 
   private static boolean isJavaLiteral(String value) {
     if ("null".equals(value) || "true".equals(value) || "false".equals(value))
       return true;
 
-    return value.matches("-?(?:0|[1-9]\\d*)(?:[lLfFdD])?")
-        || value.matches("-?(?:0|[1-9]\\d*)\\.\\d+(?:[fFdD])?");
+    return INTEGER_LITERAL.matcher(value).matches()
+        || DECIMAL_LITERAL.matcher(value).matches();
   }
 
   private static boolean isQuoted(String value) {
