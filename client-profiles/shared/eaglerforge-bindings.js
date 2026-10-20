@@ -276,16 +276,13 @@
     }
 
     function constructNative(owner, args, receiver = null) {
-        if (receiver) {
-            fail("unsupported-platform-superclass", "cannot initialize translated subclass of "
-                + owner + " from a native constructor");
-        }
         const entry = reflection(owner);
+        const encoded = Array.from(args, unwrapArgument);
+        if (receiver) return initializeNativeSuperclass(owner, entry, encoded, receiver);
         const constructors = entry.constructors ?? [];
         if (!constructors.length) {
             fail("missing-constructor", owner + " has no constructors in ModAPI reflection");
         }
-        const encoded = Array.from(args, unwrapArgument);
         const exact = constructors.filter(fn => typeof fn === "function" && fn.length === encoded.length);
         let constructor;
         if (exact.length === 1) constructor = exact[0];
@@ -298,8 +295,105 @@
         }
         const result = Reflect.apply(constructor, receiver ?? entry.class, encoded);
         if (result === null || result === undefined) fail("null-constructor", owner);
-        return receiver ? receiver : adaptNative(result);
+        return adaptNative(result);
     }
+
+    /**
+     * Initializes the native part of a translated subclass. Translated classes
+     * have no JavaScript `extends` chain, so this attaches the native prototype
+     * to the translated prototype chain and then runs the platform's real super
+     * initializer against the receiver.
+     *
+     * <p>EaglerForge exposes `internalConstructors` (the `Class__init_N($this,
+     * ...)` functions) precisely for calling super() on custom classes. Those
+     * are preferred because they initialize an existing object instead of
+     * allocating a replacement. Hosts that only expose regular constructors
+     * fall back to invoking the real constructor with the receiver as `this`;
+     * if that constructor allocates a different object we fail instead of
+     * copying or guessing its state.</p>
+     */
+    function initializeNativeSuperclass(owner, entry, args, receiver) {
+        const nativeClass = entry.class;
+        if (typeof nativeClass !== "function" || !nativeClass.prototype) {
+            fail("missing-platform-superclass-binding", owner
+                + " has no native class in ModAPI reflection");
+        }
+        if (!nativeClass.prototype.isPrototypeOf(receiver)) {
+            const receiverPrototype = Object.getPrototypeOf(receiver);
+            const translatedPrototype = receiverPrototype != null
+                && receiverPrototype !== Object.prototype
+                && typeof receiverPrototype.constructor === "function"
+                && (receiverPrototype.constructor.__goldClassName != null
+                    || String(receiverPrototype.constructor.name ?? "")
+                        .startsWith("Translated_"));
+            if (translatedPrototype) {
+                // Translated classes do not use JavaScript `extends`, so their
+                // prototype is the place to attach the native chain. Replacing
+                // the receiver's prototype would hide every translated method.
+                Object.setPrototypeOf(receiverPrototype, nativeClass.prototype);
+            } else if (receiverPrototype == null || receiverPrototype === Object.prototype) {
+                // Plain host object: this instance can adopt the native
+                // prototype directly without affecting a shared prototype.
+                Object.setPrototypeOf(receiver, nativeClass.prototype);
+            } else {
+                fail("unsupported-platform-superclass", "cannot attach the native prototype of "
+                    + owner + " to an unexpected receiver prototype");
+            }
+        }
+
+        const internal = (entry.internalConstructors ?? []).filter(fn => typeof fn === "function");
+        const exact = internal.filter(fn => fn.length === args.length + 1);
+        let initializer = null;
+        if (exact.length === 1) initializer = exact[0];
+        else if (exact.length > 1) {
+            fail("ambiguous-super-constructor", owner + "/" + args.length
+                + " has multiple native super initializers");
+        } else if (internal.length === 1) {
+            initializer = internal[0];
+        }
+
+        if (initializer) {
+            try {
+                if (typeof nativeClass === "function") nativeClass.call(receiver);
+                initializer(receiver, ...args);
+            } catch (error) {
+                if (error && error.name === "GoldClientForgeBindingError") throw error;
+                fail("unsupported-platform-superclass", "native super initializer for " + owner
+                    + " failed on a translated receiver: " + describe(error));
+            }
+            return receiver;
+        }
+
+        const constructors = entry.constructors ?? [];
+        const matching = constructors.filter(
+            fn => typeof fn === "function" && fn.length === args.length);
+        const constructor = matching.length === 1
+            ? matching[0]
+            : (constructors.length === 1 && typeof constructors[0] === "function"
+                ? constructors[0] : null);
+        if (!constructor) {
+            fail("missing-platform-super-constructor-binding", "cannot initialize translated "
+                + "subclass of " + owner + "/" + args.length
+                + ": the host exposes no internal constructor");
+        }
+        try {
+            const result = Reflect.apply(constructor, receiver, args);
+            if (result !== null && result !== undefined && result !== receiver) {
+                fail("unsupported-platform-superclass", "native constructor for " + owner
+                    + " allocated a replacement object instead of initializing the translated receiver");
+            }
+        } catch (error) {
+            if (error && error.name === "GoldClientForgeBindingError") throw error;
+            fail("unsupported-platform-superclass", "native constructor for " + owner
+                + " could not initialize a translated receiver: " + describe(error));
+        }
+        return receiver;
+    }
+
+    function describe(error) {
+        return error && error.message ? error.message : String(error);
+    }
+
 
     function getStaticField(owner, field) {
         const entry = reflection(owner);

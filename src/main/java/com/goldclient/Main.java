@@ -155,8 +155,10 @@ public final class Main {
         System.out.println("Class metadata: " + Path.of(translateJsDir).resolve("mod-manifest.json"));
         System.out.println("Resources preserved: " + report.resourceCount());
         System.out.println("Resource index: " + Path.of(translateJsDir).resolve("resource-index.json"));
+        System.out.println("Transformation evidence: " + Path.of(translateJsDir).resolve("forge-transformations.json"));
         System.out.println("Report: " + Path.of(translateJsDir).resolve("javascript-report.txt"));
         System.out.println("Note: Minecraft/Forge APIs and loader behavior still require adapters.");
+        System.out.println("Note: Mixin, access-transformer, and coremod execution is not implemented by this exporter.");
       }
 
       if (toJsDir != null) {

@@ -134,4 +134,158 @@ class JavaScriptRuntimeHostAdaptersTest {
     assertEquals(0, node.exitValue(), outputText);
     assertEquals("runtime-host-adapters-ok", outputText.substring(outputText.lastIndexOf('\n') + 1));
   }
+
+  @Test
+  void builtinNbtValueAndEnumAdaptersKeepRealSemantics() throws Exception {
+    Path output = tempDir.resolve("runtime-nbt-adapters");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("runtime-nbt-adapters.mjs");
+    Files.writeString(runner, """
+        globalThis.goldClientForgeMemberMap = {
+          func_74778_a: "setString",
+          func_74779_i: "getString",
+          func_176766_a: "byMetadata",
+          field_test_x: "x"
+        };
+        const { GoldClientRuntime: r } = await import("./gold-client-runtime.js");
+
+        const srgCompound = r.create("net.minecraft.nbt.NBTTagCompound");
+        srgCompound.func_74778_a("key", "value");
+        if (srgCompound.func_74779_i("key") !== "value") {
+          throw new Error("SRG alias on a built-in adapter value");
+        }
+        const lightBlueBySrg = r.invokePlatformStatic(
+            "net.minecraft.item.EnumDyeColor", "func_176766_a", 3);
+        if (lightBlueBySrg !== r.getStaticField("net.minecraft.item.EnumDyeColor", "LIGHT_BLUE")) {
+          throw new Error("SRG alias on a built-in adapter static method");
+        }
+
+        const compound = r.create("net.minecraft.nbt.NBTTagCompound");
+        compound.setString("name", "waystone");
+        compound.setInteger("count", 4);
+        compound.setBoolean("enabled", true);
+        if (compound.getString("name") !== "waystone") throw new Error("NBT string get/set");
+        if (compound.getInteger("count") !== 4) throw new Error("NBT int get/set");
+        if (!compound.getBoolean("enabled")) throw new Error("NBT boolean get/set");
+        if (compound.getInteger("missing") !== 0) throw new Error("NBT missing int default");
+        if (!compound.hasKey("name") || !compound.hasKeyOfType("count", 3)) {
+          throw new Error("NBT hasKey");
+        }
+        if (!compound.hasKey("count", 3) || compound.hasKey("count", 8)) {
+          throw new Error("NBT hasKey(key, type)");
+        }
+        const keys = compound.getKeySet();
+        if (keys.size() !== 3 || !keys.contains("name")) throw new Error("NBT getKeySet");
+        const copy = compound.copy();
+        copy.setInteger("count", 9);
+        if (compound.getInteger("count") !== 4 || copy.getInteger("count") !== 9) {
+          throw new Error("NBT copy must be deep");
+        }
+
+        const list = r.create("net.minecraft.nbt.NBTTagList");
+        list.appendTag(r.create("net.minecraft.nbt.NBTTagString", "a"));
+        list.appendTag(r.create("net.minecraft.nbt.NBTTagString", "b"));
+        if (list.tagCount() !== 2 || list.getStringTagAt(1) !== "b" || list.getTagType() !== 8) {
+          throw new Error("NBT list append/get");
+        }
+        const nested = r.create("net.minecraft.nbt.NBTTagCompound");
+        nested.setTagList("items", list);
+        if (nested.getTagList("items", 8).tagCount() !== 2) throw new Error("NBT nested list");
+        if (nested.getTagList("items", 10).tagCount() !== 0) {
+          throw new Error("NBT getTagList must reject a mismatched element type");
+        }
+
+        const bytes = r.create("net.minecraft.nbt.NBTTagByteArray", [1, -2, 130]);
+        if (bytes.getByteArray()[1] !== -2 || bytes.getByteArray()[2] !== -126) {
+          throw new Error("NBT byte array signed narrowing");
+        }
+        const ints = r.create("net.minecraft.nbt.NBTTagIntArray", [3, -4]);
+        if (ints.getIntArray()[0] !== 3 || ints.getIntArray()[1] !== -4) {
+          throw new Error("NBT int array");
+        }
+        const uuid = r.createJava("java.util.UUID", "123e4567-e89b-12d3-a456-426614174000");
+        compound.setUniqueId("id", uuid);
+        if (!compound.getUniqueId("id").equals(uuid)) throw new Error("NBT UUID round trip");
+
+        const vec = r.create("net.minecraft.util.math.Vec3i", 1, 2, 3);
+        if (vec.getX() !== 1 || vec.getY() !== 2 || vec.getZ() !== 3) throw new Error("Vec3i");
+        if (vec.distanceSq(4, 6, 3) !== 25) throw new Error("Vec3i.distanceSq");
+        if (vec.field_test_x !== 1) throw new Error("SRG field alias read");
+        vec.field_test_x = 9;
+        if (vec.getX() !== 9 || vec.field_test_x !== 9) {
+          throw new Error("SRG field alias write");
+        }
+        const chunk = r.create("net.minecraft.util.math.ChunkPos", 1, -2);
+        if (chunk.getXStart() !== 16 || chunk.getXEnd() !== 31
+            || chunk.getZStart() !== -32 || chunk.getZEnd() !== -17) {
+          throw new Error("ChunkPos bounds");
+        }
+
+        const text = r.create("net.minecraft.util.text.TextComponentString", "hello");
+        text.appendText(" world");
+        if (text.getUnformattedText() !== "hello world") throw new Error("TextComponentString text");
+        const red = r.getStaticField("net.minecraft.util.text.TextFormatting", "RED");
+        text.setStyle(r.create("net.minecraft.util.text.Style").setColor(red));
+        const formatted = text.getFormattedText();
+        if (!formatted.startsWith(String.fromCharCode(167) + "c")
+            || !formatted.endsWith(String.fromCharCode(167) + "r")) {
+          throw new Error("TextComponentString formatting: " + formatted);
+        }
+
+        const lightBlue = r.getStaticField("net.minecraft.item.EnumDyeColor", "LIGHT_BLUE");
+        if (lightBlue.getMetadata() !== 3 || lightBlue.getDyeDamage() !== 12
+            || lightBlue.getColorValue() !== 3847130) {
+          throw new Error("EnumDyeColor data");
+        }
+        if (r.invokePlatformStatic("net.minecraft.item.EnumDyeColor", "byDyeDamage", 15)
+            !== r.getStaticField("net.minecraft.item.EnumDyeColor", "WHITE")) {
+          throw new Error("EnumDyeColor.byDyeDamage");
+        }
+        if (r.invokePlatformStatic("net.minecraft.util.EnumHand", "valueOf", "OFF_HAND").ordinal() !== 1) {
+          throw new Error("EnumHand.valueOf");
+        }
+        if (r.getStaticField("net.minecraft.world.EnumSkyBlock", "SKY").defaultLightValue !== 15) {
+          throw new Error("EnumSkyBlock defaultLightValue");
+        }
+
+        const mutable = r.create("net.minecraft.util.math.MutableBlockPos");
+        mutable.setPos(4, 5, 6);
+        if (mutable.getX() !== 4 || mutable.getY() !== 5 || mutable.getZ() !== 6) {
+          throw new Error("MutableBlockPos.setPos");
+        }
+        const miss = r.getStaticField("net.minecraft.util.math.RayTraceResult$Type", "MISS");
+        const missResult = r.create("net.minecraft.util.math.RayTraceResult", miss);
+        if (missResult.getTypeOfHit() !== miss) throw new Error("RayTraceResult MISS");
+        const blockPos = r.create("net.minecraft.util.math.BlockPos", 1, 2, 3);
+        const up = r.getStaticField("net.minecraft.util.EnumFacing", "UP");
+        const hitVec = r.create("net.minecraft.util.math.Vec3d", 1, 2, 3);
+        const blockResult = r.create(
+            "net.minecraft.util.math.RayTraceResult", hitVec, up, blockPos);
+        if (blockResult.typeOfHit.constantName !== "BLOCK" || blockResult.blockPos !== blockPos
+            || blockResult.sideHit !== up || blockResult.hitVec !== hitVec) {
+          throw new Error("RayTraceResult BLOCK");
+        }
+        const entityResult = r.create("net.minecraft.util.math.RayTraceResult", { id: "entity" });
+        if (entityResult.typeOfHit.constantName !== "ENTITY" || entityResult.entityHit.id !== "entity") {
+          throw new Error("RayTraceResult ENTITY");
+        }
+        if (r.getStaticField("net.minecraft.util.EnumActionResult", "SUCCESS").ordinal() !== 0) {
+          throw new Error("EnumActionResult");
+        }
+        if (r.getStaticField("net.minecraft.entity.player.EnumPlayerModelParts", "ALL").getPartMask() !== 127) {
+          throw new Error("EnumPlayerModelParts.ALL");
+        }
+        console.log("nbt-value-adapters-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (Exception error) {
+      throw new AssertionError("Node.js is required for runtime adapter tests", error);
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "runtime NBT adapter test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("nbt-value-adapters-ok", outputText.substring(outputText.lastIndexOf('\n') + 1));
+  }
 }

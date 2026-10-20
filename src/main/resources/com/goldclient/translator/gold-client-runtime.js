@@ -1587,10 +1587,624 @@ GoldClientMinecraftSide.CLIENT = new GoldClientMinecraftSide("CLIENT", 0);
 GoldClientMinecraftSide.SERVER = new GoldClientMinecraftSide("SERVER", 1);
 GoldClientMinecraftSide.VALUES = [GoldClientMinecraftSide.CLIENT, GoldClientMinecraftSide.SERVER];
 
+// ---------------------------------------------------------------------------
+// Self-contained Minecraft value types and enums. These carry real 1.12.2
+// semantics and need no host binding; they are not placeholders.
+// ---------------------------------------------------------------------------
+
+class GoldClientMinecraftSimpleEnum {
+  constructor(typeName, constantName, ordinal) {
+    this.typeName = typeName;
+    this.constantName = constantName;
+    this.ordinalValue = ordinal;
+  }
+  name() { return this.constantName; }
+  ordinal() { return this.ordinalValue; }
+  toString() { return this.constantName; }
+  equals(other) { return other != null && other.constantName === this.constantName; }
+  hashCode() { return this.ordinalValue; }
+  compareTo(other) { return Math.sign((other?.ordinal?.() ?? 0) - this.ordinal()); }
+}
+
+/**
+ * Installs SRG aliases for adapter members. Production Forge JARs call
+ * func_* / field_* names while these value classes define the MCP names. The
+ * profile loads gold-client-member-map.js (SRG -> MCP) before the bundle, so
+ * an alias can delegate to the real MCP implementation. Node-only unit tests
+ * leave the map absent and are unaffected.
+ */
+function installAdapterMemberAliases(target) {
+  const memberMap = globalThis.goldClientForgeMemberMap;
+  if (target == null || memberMap == null || typeof memberMap !== "object") return target;
+  for (const [srg, mcp] of Object.entries(memberMap)) {
+    if (!srg || !mcp || srg === mcp) continue;
+    if (typeof target[srg] === "function") continue;
+    const method = target[mcp];
+    if (typeof method !== "function") continue;
+    try {
+      Object.defineProperty(target, srg, {
+        value: function goldClientMemberAlias(...args) {
+          return method.apply(this, args);
+        },
+        configurable: true,
+        writable: true
+      });
+    } catch (ignored) {
+      // Frozen/hostile prototypes keep their MCP-only surface.
+    }
+  }
+  return target;
+}
+
+/** Resolves an SRG member name to its MCP name when the profile map is loaded. */
+function goldClientMappedMemberName(name) {
+  const memberMap = globalThis.goldClientForgeMemberMap;
+  if (memberMap != null && typeof memberMap === "object"
+      && typeof memberMap[name] === "string") {
+    return memberMap[name];
+  }
+  return null;
+}
+
+// Adapter value types expose public 1.12.2 fields as plain JS properties.
+// Production bytecode reads those fields through their SRG names, so install
+// per-instance accessors for the known field names. The alias list is built
+// once from the profile member map.
+const GOLD_ADAPTER_FIELD_NAMES = new Set([
+  "x", "y", "z", "resourceDomain", "resourcePath", "typeOfHit", "hitVec",
+  "sideHit", "blockPos", "entityHit", "text", "siblings", "style", "color",
+  "bold", "italic", "underlined", "strikethrough", "obfuscated", "insertion",
+  "clickEvent", "hoverEvent", "parentStyle", "value", "list", "tags", "values",
+  "constantName", "ordinalValue", "formattingCode", "colorIndex",
+  "friendlyName", "fancy", "axis", "direction", "offsetX", "offsetY", "offsetZ",
+  "minX", "minY", "minZ", "maxX", "maxY", "maxZ"
+]);
+let goldAdapterFieldAliases = null;
+
+function goldAdapterFieldAliasEntries() {
+  if (goldAdapterFieldAliases) return goldAdapterFieldAliases;
+  const entries = [];
+  const memberMap = globalThis.goldClientForgeMemberMap;
+  if (memberMap != null && typeof memberMap === "object") {
+    for (const [srg, mcp] of Object.entries(memberMap)) {
+      if (srg !== mcp && GOLD_ADAPTER_FIELD_NAMES.has(mcp)) entries.push([srg, mcp]);
+    }
+  }
+  goldAdapterFieldAliases = entries;
+  return entries;
+}
+
+function installAdapterFieldAliases(value) {
+  if (value == null || typeof value !== "object") return value;
+  for (const [srg, mcp] of goldAdapterFieldAliasEntries()) {
+    if (!Object.prototype.hasOwnProperty.call(value, mcp)) continue;
+    if (typeof value[mcp] === "function") continue;
+    if (Object.prototype.hasOwnProperty.call(value, srg)) continue;
+    Object.defineProperty(value, srg, {
+      get() { return this[mcp]; },
+      set(next) { this[mcp] = next; },
+      configurable: true
+    });
+  }
+  return value;
+}
+
+function goldClientSimpleEnumAdapter(typeName, names, decorate = null, extraStaticMethods = null) {
+  const values = names.map((name, index) => {
+    const value = new GoldClientMinecraftSimpleEnum(typeName, name, index);
+    if (decorate) Object.assign(value, decorate(name, index));
+    installAdapterMemberAliases(value);
+    installAdapterFieldAliases(value);
+    return value;
+  });
+  const staticFields = {};
+  for (const value of values) staticFields[value.constantName] = value;
+  const adapter = {
+    kind: "enum",
+    staticFields,
+    staticMethods: {
+      values: () => values.slice(),
+      valueOf: args => {
+        const found = values.find(value => value.constantName === String(args[0]));
+        if (!found) {
+          throw new TypeError("IllegalArgumentException: No enum constant "
+              + typeName + "." + args[0]);
+        }
+        return found;
+      }
+    }
+  };
+  if (extraStaticMethods) Object.assign(adapter.staticMethods, extraStaticMethods(values));
+  return adapter;
+}
+
+class GoldClientMinecraftVec3i {
+  constructor(x = 0, y = 0, z = 0) {
+    if (x != null && typeof x === "object") {
+      const source = x;
+      this.x = Math.trunc(Number(source.x ?? source.getX?.() ?? 0));
+      this.y = Math.trunc(Number(source.y ?? source.getY?.() ?? 0));
+      this.z = Math.trunc(Number(source.z ?? source.getZ?.() ?? 0));
+    } else {
+      this.x = Math.trunc(Number(x));
+      this.y = Math.trunc(Number(y));
+      this.z = Math.trunc(Number(z));
+    }
+    if (![this.x, this.y, this.z].every(Number.isFinite)) {
+      throw new TypeError("IllegalArgumentException: invalid Vec3i");
+    }
+  }
+  getX() { return this.x; }
+  getY() { return this.y; }
+  getZ() { return this.z; }
+  distanceSq(...args) {
+    let x, y, z;
+    if (args.length === 1 && args[0] != null && typeof args[0] === "object") {
+      x = args[0].x ?? args[0].getX?.() ?? 0;
+      y = args[0].y ?? args[0].getY?.() ?? 0;
+      z = args[0].z ?? args[0].getZ?.() ?? 0;
+    } else {
+      [x, y, z] = args;
+    }
+    const dx = this.x - Number(x), dy = this.y - Number(y), dz = this.z - Number(z);
+    return dx * dx + dy * dy + dz * dz;
+  }
+  crossProduct(other) {
+    return new GoldClientMinecraftVec3i(
+        this.y * (other.z ?? other.getZ?.() ?? 0) - this.z * (other.y ?? other.getY?.() ?? 0),
+        this.z * (other.x ?? other.getX?.() ?? 0) - this.x * (other.z ?? other.getZ?.() ?? 0),
+        this.x * (other.y ?? other.getY?.() ?? 0) - this.y * (other.x ?? other.getX?.() ?? 0));
+  }
+  equals(other) {
+    return other != null
+        && this.x === (other.x ?? other.getX?.())
+        && this.y === (other.y ?? other.getY?.())
+        && this.z === (other.z ?? other.getZ?.());
+  }
+  hashCode() { return ((this.y + this.z * 31) * 31 + this.x) | 0; }
+  toString() { return this.x + ", " + this.y + ", " + this.z; }
+}
+
+class GoldClientMinecraftChunkPos {
+  constructor(x = 0, z = 0) {
+    if (x != null && typeof x === "object") {
+      this.x = Math.trunc(Number(x.x ?? x.getX?.() ?? 0));
+      this.z = Math.trunc(Number(x.z ?? x.getZ?.() ?? 0));
+    } else {
+      this.x = Math.trunc(Number(x));
+      this.z = Math.trunc(Number(z));
+    }
+  }
+  getXStart() { return this.x << 4; }
+  getZStart() { return this.z << 4; }
+  getXEnd() { return (this.x << 4) + 15; }
+  getZEnd() { return (this.z << 4) + 15; }
+  equals(other) {
+    return other != null && this.x === (other.x ?? other.getX?.())
+        && this.z === (other.z ?? other.getZ?.());
+  }
+  hashCode() { return (this.x & 0xffff) | ((this.z & 0xffff) << 16); }
+  toString() { return "[" + this.x + ", " + this.z + "]"; }
+}
+
+class GoldClientMinecraftMutableBlockPos extends GoldClientMinecraftBlockPos {
+  setPos(...args) {
+    const position = args.length === 1 && args[0] != null && typeof args[0] === "object"
+        ? args[0] : null;
+    this.x = Math.trunc(Number(position?.x ?? position?.getX?.() ?? args[0] ?? this.x));
+    this.y = Math.trunc(Number(position?.y ?? position?.getY?.() ?? args[1] ?? this.y));
+    this.z = Math.trunc(Number(position?.z ?? position?.getZ?.() ?? args[2] ?? this.z));
+    return this;
+  }
+}
+
+const GOLD_RAY_TRACE_TYPES = ["MISS", "BLOCK", "ENTITY"].map((name, index) =>
+  new GoldClientMinecraftSimpleEnum("net.minecraft.util.math.RayTraceResult$Type", name, index));
+
+class GoldClientMinecraftRayTraceResult {
+  constructor(first, sideHit = null, blockPos = null) {
+    this.hitVec = null;
+    this.sideHit = null;
+    this.blockPos = null;
+    this.entityHit = null;
+    const type = name => GOLD_RAY_TRACE_TYPES.find(value => value.constantName === name);
+    if (first != null && typeof first === "object" && first.constantName) {
+      this.typeOfHit = first;
+    } else if (first != null && typeof first === "object" && sideHit != null && blockPos != null) {
+      this.typeOfHit = type("BLOCK");
+      this.hitVec = first;
+      this.sideHit = sideHit;
+      this.blockPos = blockPos;
+    } else if (first != null && typeof first === "object") {
+      this.typeOfHit = type("ENTITY");
+      this.entityHit = first;
+    } else {
+      this.typeOfHit = type("MISS");
+    }
+  }
+  getTypeOfHit() { return this.typeOfHit; }
+  getBlockPos() { return this.blockPos; }
+  getHitVec() { return this.hitVec; }
+  getEntityHit() { return this.entityHit; }
+  toString() {
+    return "RayTraceResult{" + this.typeOfHit?.constantName + "}";
+  }
+}
+
+
+class GoldClientMinecraftStyle {
+  constructor() {
+    this.color = null;
+    this.bold = null;
+    this.italic = null;
+    this.underlined = null;
+    this.strikethrough = null;
+    this.obfuscated = null;
+    this.insertion = null;
+    this.clickEvent = null;
+    this.hoverEvent = null;
+    this.parentStyle = null;
+  }
+  getColor() { return this.color; }
+  setColor(color) { this.color = color; return this; }
+  getBold() { return this.bold; }
+  setBold(value) { this.bold = value; return this; }
+  getItalic() { return this.italic; }
+  setItalic(value) { this.italic = value; return this; }
+  getUnderlined() { return this.underlined; }
+  setUnderlined(value) { this.underlined = value; return this; }
+  getStrikethrough() { return this.strikethrough; }
+  setStrikethrough(value) { this.strikethrough = value; return this; }
+  getObfuscated() { return this.obfuscated; }
+  setObfuscated(value) { this.obfuscated = value; return this; }
+  getInsertion() { return this.insertion; }
+  setInsertion(value) { this.insertion = value; return this; }
+  getClickEvent() { return this.clickEvent; }
+  setClickEvent(value) { this.clickEvent = value; return this; }
+  getHoverEvent() { return this.hoverEvent; }
+  setHoverEvent(value) { this.hoverEvent = value; return this; }
+  getParentStyle() { return this.parentStyle; }
+  setParentStyle(value) { this.parentStyle = value; return this; }
+  isEmpty() {
+    return this.color == null && this.bold == null && this.italic == null
+        && this.underlined == null && this.strikethrough == null && this.obfuscated == null
+        && this.insertion == null && this.clickEvent == null && this.hoverEvent == null;
+  }
+  createShallowCopy() {
+    const copy = new GoldClientMinecraftStyle();
+    Object.assign(copy, this);
+    return copy;
+  }
+}
+
+class GoldClientMinecraftTextComponentString {
+  constructor(text) {
+    this.text = text == null ? "" : String(text);
+    this.siblings = [];
+    this.style = new GoldClientMinecraftStyle();
+  }
+  getUnformattedComponentText() {
+    return this.text + this.siblings
+        .map(sibling => sibling?.getUnformattedComponentText?.()
+            ?? sibling?.getUnformattedText?.() ?? String(sibling ?? ""))
+        .join("");
+  }
+  getUnformattedText() { return this.getUnformattedComponentText(); }
+  getString() { return this.getUnformattedText(); }
+  getFormattedText() { return this.renderFormatted(this.style); }
+  renderFormatted(style) {
+    let prefix = "";
+    if (style?.color) prefix += String(style.color);
+    if (style?.bold === true) prefix += "\u00a7l";
+    if (style?.italic === true) prefix += "\u00a7o";
+    if (style?.underlined === true) prefix += "\u00a7n";
+    if (style?.strikethrough === true) prefix += "\u00a7m";
+    if (style?.obfuscated === true) prefix += "\u00a7k";
+    return prefix + this.text + this.siblings.map(sibling => {
+      if (typeof sibling?.renderFormatted === "function") {
+        return sibling.renderFormatted(sibling.style ?? style);
+      }
+      return sibling?.getFormattedText?.() ?? String(sibling ?? "");
+    }).join("") + (prefix ? "\u00a7r" : "");
+  }
+  appendText(text) {
+    this.siblings.push(new GoldClientMinecraftTextComponentString(text));
+    return this;
+  }
+  appendSibling(component) {
+    if (component != null) this.siblings.push(component);
+    return this;
+  }
+  getSiblings() { return new GoldClientJavaList(this.siblings.slice()); }
+  createCopy() {
+    const copy = new GoldClientMinecraftTextComponentString(this.text);
+    copy.style = this.style.createShallowCopy();
+    copy.siblings = this.siblings.map(sibling => sibling?.createCopy?.() ?? sibling);
+    return copy;
+  }
+  getStyle() { return this.style; }
+  setStyle(style) {
+    this.style = style ?? new GoldClientMinecraftStyle();
+    return this;
+  }
+  setChatStyle(style) { return this.setStyle(style); }
+  toString() { return this.getUnformattedText(); }
+}
+
+// ---------------------------------------------------------------------------
+// NBT. Minecraft's NBT model is pure data, so the runtime implements the 1.12.2
+// tag types instead of leaving compounds/lists to a host binding.
+// ---------------------------------------------------------------------------
+
+const GOLD_NBT_END = 0;
+const GOLD_NBT_BYTE = 1;
+const GOLD_NBT_SHORT = 2;
+const GOLD_NBT_INT = 3;
+const GOLD_NBT_LONG = 4;
+const GOLD_NBT_FLOAT = 5;
+const GOLD_NBT_DOUBLE = 6;
+const GOLD_NBT_BYTE_ARRAY = 7;
+const GOLD_NBT_STRING = 8;
+const GOLD_NBT_LIST = 9;
+const GOLD_NBT_COMPOUND = 10;
+const GOLD_NBT_INT_ARRAY = 11;
+
+class GoldClientNbtBase {
+  constructor(typeId) { this.typeId = typeId; }
+  getId() { return this.typeId; }
+  hasNoTags() { return false; }
+  copy() { return this; }
+  toString() { return this.toNbtString(); }
+  toNbtString() { return ""; }
+}
+
+class GoldClientNbtEnd extends GoldClientNbtBase {
+  constructor() { super(GOLD_NBT_END); }
+  copy() { return new GoldClientNbtEnd(); }
+  toNbtString() { return ""; }
+}
+
+class GoldClientNbtNumber extends GoldClientNbtBase {
+  constructor(typeId, value) {
+    super(typeId);
+    if (typeId === GOLD_NBT_LONG) {
+      // 64-bit values cannot round-trip through Number without losing bits.
+      this.value = typeof value === "bigint" ? BigInt.asIntN(64, value) : Math.trunc(Number(value));
+      return;
+    }
+    let numeric = Number(value);
+    if (typeId === GOLD_NBT_BYTE) numeric = (numeric << 24) >> 24;
+    else if (typeId === GOLD_NBT_SHORT) numeric = (numeric << 16) >> 16;
+    else if (typeId === GOLD_NBT_INT) numeric = numeric | 0;
+    this.value = numeric;
+  }
+  getByte() {
+    return typeof this.value === "bigint"
+        ? Number(BigInt.asIntN(8, this.value)) : (this.value << 24) >> 24;
+  }
+  getShort() {
+    return typeof this.value === "bigint"
+        ? Number(BigInt.asIntN(16, this.value)) : (this.value << 16) >> 16;
+  }
+  getInt() {
+    return typeof this.value === "bigint"
+        ? Number(BigInt.asIntN(32, this.value)) : this.value | 0;
+  }
+  getLong() { return typeof this.value === "bigint" ? this.value : Math.trunc(this.value); }
+  getFloat() { return Number(this.value); }
+  getDouble() { return Number(this.value); }
+  getString() { return String(this.value); }
+  copy() {
+    const copy = Object.create(Object.getPrototypeOf(this));
+    copy.typeId = this.typeId;
+    copy.value = this.value;
+    return copy;
+  }
+  toNbtString() { return String(this.value); }
+}
+
+class GoldClientNbtString extends GoldClientNbtBase {
+  constructor(value = "") {
+    super(GOLD_NBT_STRING);
+    this.value = String(value ?? "");
+  }
+  getString() { return this.value; }
+  getInt() { const parsed = Number.parseInt(this.value, 10); return Number.isFinite(parsed) ? parsed | 0 : 0; }
+  getByte() { return (this.getInt() << 24) >> 24; }
+  getShort() { return (this.getInt() << 16) >> 16; }
+  getLong() { const parsed = Number.parseInt(this.value, 10); return Number.isFinite(parsed) ? Math.trunc(parsed) : 0; }
+  getFloat() { const parsed = Number.parseFloat(this.value); return Number.isFinite(parsed) ? parsed : 0; }
+  getDouble() { return this.getFloat(); }
+  copy() { return new GoldClientNbtString(this.value); }
+  toNbtString() { return JSON.stringify(this.value); }
+}
+
+class GoldClientNbtByteArray extends GoldClientNbtBase {
+  constructor(values = []) {
+    super(GOLD_NBT_BYTE_ARRAY);
+    this.values = Array.from(values?.items ?? values ?? [], value => (Number(value) << 24) >> 24);
+  }
+  getByteArray() { return this.values.slice(); }
+  copy() { return new GoldClientNbtByteArray(this.values); }
+  toNbtString() { return "[B;" + this.values.join(",") + "]"; }
+}
+
+class GoldClientNbtIntArray extends GoldClientNbtBase {
+  constructor(values = []) {
+    super(GOLD_NBT_INT_ARRAY);
+    this.values = Array.from(values?.items ?? values ?? [], value => Number(value) | 0);
+  }
+  getIntArray() { return this.values.slice(); }
+  copy() { return new GoldClientNbtIntArray(this.values); }
+  toNbtString() { return "[I;" + this.values.join(",") + "]"; }
+}
+
+class GoldClientNbtList extends GoldClientNbtBase {
+  constructor() {
+    super(GOLD_NBT_LIST);
+    this.list = [];
+  }
+  appendTag(tag) {
+    if (tag == null) throw new TypeError("NullPointerException: cannot append a null NBT tag");
+    this.list.push(tag);
+    return this;
+  }
+  set(index, tag) {
+    const position = Number(index);
+    if (position < 0 || position >= this.list.length) {
+      throw new RangeError("IndexOutOfBoundsException: " + position);
+    }
+    this.list[position] = tag;
+    return this;
+  }
+  get(index) {
+    const position = Number(index);
+    if (position < 0 || position >= this.list.length) {
+      throw new RangeError("IndexOutOfBoundsException: " + position);
+    }
+    return this.list[position];
+  }
+  tagCount() { return this.list.length; }
+  getTagType() { return this.list.length ? this.list[0].getId() : GOLD_NBT_END; }
+  hasNoTags() { return this.list.length === 0; }
+  getCompoundTagAt(index) {
+    const tag = this.get(index);
+    return tag instanceof GoldClientNbtCompound ? tag : new GoldClientNbtCompound();
+  }
+  getStringTagAt(index) {
+    const tag = this.get(index);
+    return tag instanceof GoldClientNbtString ? tag.getString() : "";
+  }
+  getIntTagAt(index) {
+    const tag = this.get(index);
+    return tag?.getInt?.() ?? 0;
+  }
+  copy() {
+    const copy = new GoldClientNbtList();
+    copy.list = this.list.map(tag => tag?.copy?.() ?? tag);
+    return copy;
+  }
+  toNbtString() { return "[" + this.list.map(tag => tag.toString()).join(",") + "]"; }
+}
+
+class GoldClientNbtCompound extends GoldClientNbtBase {
+  constructor() {
+    super(GOLD_NBT_COMPOUND);
+    this.tags = new Map();
+  }
+  setTag(key, tag) {
+    const name = String(key);
+    if (tag == null) this.tags.delete(name);
+    else this.tags.set(name, tag);
+    return this;
+  }
+  setInteger(key, value) { return this.setTag(key, new GoldClientNbtNumber(GOLD_NBT_INT, value)); }
+  setString(key, value) { return this.setTag(key, new GoldClientNbtString(value)); }
+  setBoolean(key, value) { return this.setTag(key, new GoldClientNbtNumber(GOLD_NBT_BYTE, value ? 1 : 0)); }
+  setFloat(key, value) { return this.setTag(key, new GoldClientNbtNumber(GOLD_NBT_FLOAT, value)); }
+  setDouble(key, value) { return this.setTag(key, new GoldClientNbtNumber(GOLD_NBT_DOUBLE, value)); }
+  setLong(key, value) { return this.setTag(key, new GoldClientNbtNumber(GOLD_NBT_LONG, value)); }
+  setShort(key, value) { return this.setTag(key, new GoldClientNbtNumber(GOLD_NBT_SHORT, value)); }
+  setByte(key, value) { return this.setTag(key, new GoldClientNbtNumber(GOLD_NBT_BYTE, value)); }
+  setIntArray(key, value) { return this.setTag(key, new GoldClientNbtIntArray(value)); }
+  setByteArray(key, value) { return this.setTag(key, new GoldClientNbtByteArray(value)); }
+  setTagList(key, value) { return this.setTag(key, value ?? new GoldClientNbtList()); }
+  setUniqueId(key, uuid) {
+    if (uuid == null) return this;
+    const list = new GoldClientNbtList();
+    list.appendTag(new GoldClientNbtNumber(GOLD_NBT_LONG, uuid.getMostSignificantBits()));
+    list.appendTag(new GoldClientNbtNumber(GOLD_NBT_LONG, uuid.getLeastSignificantBits()));
+    return this.setTag(key, list);
+  }
+  getTag(key) { return this.tags.get(String(key)) ?? null; }
+  getInteger(key) { return this.getTag(key)?.getInt?.() ?? 0; }
+  getString(key) { return this.getTag(key)?.getString?.() ?? ""; }
+  getBoolean(key) { return (this.getTag(key)?.getByte?.() ?? 0) !== 0; }
+  getFloat(key) { return this.getTag(key)?.getFloat?.() ?? 0; }
+  getDouble(key) { return this.getTag(key)?.getDouble?.() ?? 0; }
+  getLong(key) { return this.getTag(key)?.getLong?.() ?? 0; }
+  getShort(key) { return this.getTag(key)?.getShort?.() ?? 0; }
+  getByte(key) { return this.getTag(key)?.getByte?.() ?? 0; }
+  getIntArray(key) {
+    const tag = this.getTag(key);
+    return tag instanceof GoldClientNbtIntArray ? tag.getIntArray() : [];
+  }
+  getByteArray(key) {
+    const tag = this.getTag(key);
+    return tag instanceof GoldClientNbtByteArray ? tag.getByteArray() : [];
+  }
+  getCompoundTag(key) {
+    const tag = this.getTag(key);
+    return tag instanceof GoldClientNbtCompound ? tag : new GoldClientNbtCompound();
+  }
+  getTagList(key, expectedType) {
+    const tag = this.getTag(key);
+    if (tag instanceof GoldClientNbtList
+        && (expectedType == null || tag.getTagType() === Number(expectedType))) {
+      return tag;
+    }
+    return new GoldClientNbtList();
+  }
+  getUniqueId(key) {
+    const tag = this.getTag(key);
+    if (!(tag instanceof GoldClientNbtList) || tag.tagCount() < 2) {
+      return new GoldClientJavaUuid("00000000-0000-0000-0000-000000000000");
+    }
+    const most = BigInt.asUintN(64, BigInt(tag.get(0).getLong()));
+    const least = BigInt.asUintN(64, BigInt(tag.get(1).getLong()));
+    const hex = most.toString(16).padStart(16, "0") + least.toString(16).padStart(16, "0");
+    return new GoldClientJavaUuid(hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-"
+        + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20));
+  }
+  hasKey(key, type = undefined) {
+    const tag = this.getTag(key);
+    return tag != null && (type === undefined || tag.getId() === Number(type));
+  }
+  hasKeyOfType(key, type) { return this.hasKey(key, type); }
+  getKeySet() { return new GoldClientJavaSet(this.tags.keys()); }
+  getSize() { return this.tags.size; }
+  hasNoTags() { return this.tags.size === 0; }
+  removeTag(key) { this.tags.delete(String(key)); }
+  merge(other) {
+    if (other?.tags instanceof Map) {
+      for (const [key, tag] of other.tags) {
+        this.tags.set(key, tag?.copy?.() ?? tag);
+      }
+    }
+    return this;
+  }
+  copy() {
+    const copy = new GoldClientNbtCompound();
+    for (const [key, tag] of this.tags) copy.tags.set(key, tag?.copy?.() ?? tag);
+    return copy;
+  }
+  toNbtString() {
+    return "{" + Array.from(this.tags, ([key, tag]) => key + ":" + tag.toString()).join(",") + "}";
+  }
+}
+
 // Built-in platform adapters. These registrations are the runtime's single
 // source of truth for owners served without host bindings;
 // gold-client-adapters.json mirrors them for the Java compatibility planner and
 // JavaScriptModTranslationExporterTest keeps both lists in sync.
+for (const constructor of [
+  GoldClientMinecraftResourceLocation, GoldClientMinecraftBlockPos,
+  GoldClientMinecraftVec3d, GoldClientMinecraftAxisAlignedBB,
+  GoldClientMinecraftVec3i, GoldClientMinecraftChunkPos,
+  GoldClientMinecraftStyle, GoldClientMinecraftTextComponentString,
+  GoldClientMinecraftTextFormatting, GoldClientMinecraftEnumRarity,
+  GoldClientMinecraftEnumFacing, GoldClientMinecraftEnumAxis,
+  GoldClientMinecraftAxisDirection, GoldClientMinecraftSide,
+  GoldClientMinecraftSimpleEnum, GoldClientMinecraftRayTraceResult,
+  GoldClientNbtBase, GoldClientNbtEnd, GoldClientNbtNumber, GoldClientNbtString,
+  GoldClientNbtByteArray, GoldClientNbtIntArray, GoldClientNbtList,
+  GoldClientNbtCompound
+]) {
+  if (constructor?.prototype) installAdapterMemberAliases(constructor.prototype);
+  if (Array.isArray(constructor?.VALUES)) {
+    for (const value of constructor.VALUES) installAdapterFieldAliases(value);
+  }
+}
 const GoldClientMinecraftAdapters = new Map();
 function registerMinecraftAdapter(owner, definition) {
   if (GoldClientMinecraftAdapters.has(owner)) {
@@ -1752,6 +2366,167 @@ registerMinecraftAdapter("net.minecraft.util.NonNullList", {
     create: args => GoldClientMinecraftNonNullList.create(...args),
     withSize: args => GoldClientMinecraftNonNullList.withSize(args[0], args[1])
   }
+});
+
+registerMinecraftAdapter("net.minecraft.util.math.Vec3i", {
+  kind: "value-type",
+  construct: args => new GoldClientMinecraftVec3i(...args)
+});
+registerMinecraftAdapter("net.minecraft.util.math.ChunkPos", {
+  kind: "value-type",
+  construct: args => new GoldClientMinecraftChunkPos(...args)
+});
+registerMinecraftAdapter("net.minecraft.util.math.MutableBlockPos", {
+  kind: "value-type",
+  construct: () => new GoldClientMinecraftMutableBlockPos()
+});
+registerMinecraftAdapter("net.minecraft.util.math.RayTraceResult", {
+  kind: "value-type",
+  construct: args => new GoldClientMinecraftRayTraceResult(...args)
+});
+const GOLD_RAY_TRACE_TYPE_FIELDS = Object.freeze(Object.fromEntries(
+    GOLD_RAY_TRACE_TYPES.map(value => [value.constantName, value])));
+registerMinecraftAdapter("net.minecraft.util.math.RayTraceResult$Type", {
+  kind: "enum",
+  staticFields: GOLD_RAY_TRACE_TYPE_FIELDS,
+  staticMethods: {
+    values: () => GOLD_RAY_TRACE_TYPES.slice(),
+    valueOf: args => {
+      const found = GOLD_RAY_TRACE_TYPES.find(
+          value => value.constantName === String(args[0]));
+      if (!found) {
+        throw new TypeError("IllegalArgumentException: No enum constant "
+            + "net.minecraft.util.math.RayTraceResult$Type." + args[0]);
+      }
+      return found;
+    }
+  }
+});
+registerMinecraftAdapter("net.minecraft.util.text.Style", {
+  kind: "value-type",
+  construct: () => new GoldClientMinecraftStyle()
+});
+registerMinecraftAdapter("net.minecraft.util.text.TextComponentString", {
+  kind: "value-type",
+  construct: args => new GoldClientMinecraftTextComponentString(args[0] ?? "")
+});
+
+registerMinecraftAdapter("net.minecraft.util.EnumHand",
+    goldClientSimpleEnumAdapter("net.minecraft.util.EnumHand", ["MAIN_HAND", "OFF_HAND"]));
+registerMinecraftAdapter("net.minecraft.util.EnumHandSide",
+    goldClientSimpleEnumAdapter("net.minecraft.util.EnumHandSide", ["LEFT", "RIGHT"]));
+registerMinecraftAdapter("net.minecraft.util.EnumBlockRenderType",
+    goldClientSimpleEnumAdapter("net.minecraft.util.EnumBlockRenderType",
+        ["INVISIBLE", "LIQUID", "ENTITYBLOCK_ANIMATED", "MODEL"]));
+registerMinecraftAdapter("net.minecraft.util.SoundCategory",
+    goldClientSimpleEnumAdapter("net.minecraft.util.SoundCategory",
+        ["MASTER", "MUSIC", "RECORDS", "WEATHER", "BLOCKS", "HOSTILE", "NEUTRAL",
+          "PLAYERS", "AMBIENT", "VOICE"]));
+registerMinecraftAdapter("net.minecraft.util.EnumActionResult",
+    goldClientSimpleEnumAdapter("net.minecraft.util.EnumActionResult",
+        ["SUCCESS", "CONSUME", "PASS"]));
+registerMinecraftAdapter("net.minecraft.entity.EnumCreatureAttribute",
+    goldClientSimpleEnumAdapter("net.minecraft.entity.EnumCreatureAttribute",
+        ["UNDEFINED", "UNDEAD", "ARTHROPOD"]));
+const GOLD_PLAYER_MODEL_PART_DATA = [
+  ["CAPE", 0x01, "cape"],
+  ["JACKET", 0x02, "jacket"],
+  ["LEFT_SLEEVE", 0x04, "left_sleeve"],
+  ["RIGHT_SLEEVE", 0x08, "right_sleeve"],
+  ["LEFT_PANTS_LEG", 0x10, "left_pants_leg"],
+  ["RIGHT_PANTS_LEG", 0x20, "right_pants_leg"],
+  ["HAT", 0x40, "hat"],
+  ["ALL", 0x7f, "all"]
+];
+registerMinecraftAdapter("net.minecraft.entity.player.EnumPlayerModelParts",
+    goldClientSimpleEnumAdapter("net.minecraft.entity.player.EnumPlayerModelParts",
+        GOLD_PLAYER_MODEL_PART_DATA.map(part => part[0]),
+        (name, index) => ({
+          getPartMask: () => GOLD_PLAYER_MODEL_PART_DATA[index][1],
+          getPartId: () => index,
+          getName: () => GOLD_PLAYER_MODEL_PART_DATA[index][2]
+        })));
+registerMinecraftAdapter("net.minecraft.world.EnumDifficulty",
+    goldClientSimpleEnumAdapter("net.minecraft.world.EnumDifficulty",
+        ["PEACEFUL", "EASY", "NORMAL", "HARD"]));
+registerMinecraftAdapter("net.minecraft.world.EnumSkyBlock",
+    goldClientSimpleEnumAdapter("net.minecraft.world.EnumSkyBlock", ["SKY", "BLOCK"],
+        (name, index) => ({ defaultLightValue: index === 0 ? 15 : 0 })));
+registerMinecraftAdapter("net.minecraft.item.EnumAction",
+    goldClientSimpleEnumAdapter("net.minecraft.item.EnumAction",
+        ["NONE", "EAT", "DRINK", "BLOCK", "BOW"]));
+
+const GOLD_DYE_COLOR_VALUES = [
+  16383998, 16351261, 13061821, 3847130, 16701501, 8439583, 15961002, 4673362,
+  10329495, 1481884, 8991416, 3949738, 8606770, 6192150, 11546150, 1908001
+];
+const GOLD_DYE_DAMAGE = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+registerMinecraftAdapter("net.minecraft.item.EnumDyeColor",
+    goldClientSimpleEnumAdapter("net.minecraft.item.EnumDyeColor",
+        ["WHITE", "ORANGE", "MAGENTA", "LIGHT_BLUE", "YELLOW", "LIME", "PINK", "GRAY",
+          "SILVER", "CYAN", "PURPLE", "BLUE", "BROWN", "GREEN", "RED", "BLACK"],
+        (name, index) => ({
+          getMetadata: () => index,
+          getDyeDamage: () => GOLD_DYE_DAMAGE[index],
+          getColorValue: () => GOLD_DYE_COLOR_VALUES[index],
+          getName: () => name.toLowerCase(),
+          getUnlocalizedName: () => "item.dye." + name.toLowerCase()
+        }),
+        values => ({
+          byMetadata: args => values[Number(args[0]) & 15] ?? null,
+          byDyeDamage: args => {
+            const index = GOLD_DYE_DAMAGE.indexOf(Number(args[0]));
+            return index < 0 ? null : values[index];
+          }
+        })));
+
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagCompound", {
+  kind: "value-type",
+  construct: () => new GoldClientNbtCompound()
+});
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagList", {
+  kind: "value-type",
+  construct: () => new GoldClientNbtList()
+});
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagString", {
+  kind: "value-type",
+  construct: args => new GoldClientNbtString(args[0] ?? "")
+});
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagByte", {
+  kind: "value-type",
+  construct: args => new GoldClientNbtNumber(GOLD_NBT_BYTE, args[0] ?? 0)
+});
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagShort", {
+  kind: "value-type",
+  construct: args => new GoldClientNbtNumber(GOLD_NBT_SHORT, args[0] ?? 0)
+});
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagInt", {
+  kind: "value-type",
+  construct: args => new GoldClientNbtNumber(GOLD_NBT_INT, args[0] ?? 0)
+});
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagLong", {
+  kind: "value-type",
+  construct: args => new GoldClientNbtNumber(GOLD_NBT_LONG, args[0] ?? 0)
+});
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagFloat", {
+  kind: "value-type",
+  construct: args => new GoldClientNbtNumber(GOLD_NBT_FLOAT, args[0] ?? 0)
+});
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagDouble", {
+  kind: "value-type",
+  construct: args => new GoldClientNbtNumber(GOLD_NBT_DOUBLE, args[0] ?? 0)
+});
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagByteArray", {
+  kind: "value-type",
+  construct: args => new GoldClientNbtByteArray(args[0] ?? [])
+});
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagIntArray", {
+  kind: "value-type",
+  construct: args => new GoldClientNbtIntArray(args[0] ?? [])
+});
+registerMinecraftAdapter("net.minecraft.nbt.NBTTagEnd", {
+  kind: "value-type",
+  construct: () => new GoldClientNbtEnd()
 });
 
 // Forge 1.12 mods commonly register event handlers at runtime with
@@ -2267,9 +3042,15 @@ export const GoldClientRuntime = Object.freeze({
   },
   getStaticField(className, fieldName) {
     const adapter = GoldClientMinecraftAdapters.get(className);
-    if (adapter?.staticFields
-        && Object.prototype.hasOwnProperty.call(adapter.staticFields, fieldName)) {
-      return adapter.staticFields[fieldName];
+    if (adapter?.staticFields) {
+      if (Object.prototype.hasOwnProperty.call(adapter.staticFields, fieldName)) {
+        return adapter.staticFields[fieldName];
+      }
+      const mapped = goldClientMappedMemberName(fieldName);
+      if (mapped != null
+          && Object.prototype.hasOwnProperty.call(adapter.staticFields, mapped)) {
+        return adapter.staticFields[mapped];
+      }
     }
     if (className === "java.util.concurrent.TimeUnit") return GoldClientJavaTimeUnit.named(fieldName);
     if (className === "java.util.Locale") {
@@ -2357,8 +3138,14 @@ export const GoldClientRuntime = Object.freeze({
   },
   invokePlatformStatic(owner, method, ...args) {
     const adapter = GoldClientMinecraftAdapters.get(owner);
-    if (adapter?.staticMethods && typeof adapter.staticMethods[method] === "function") {
-      return adapter.staticMethods[method](args);
+    if (adapter?.staticMethods) {
+      if (typeof adapter.staticMethods[method] === "function") {
+        return adapter.staticMethods[method](args);
+      }
+      const mapped = goldClientMappedMemberName(method);
+      if (mapped != null && typeof adapter.staticMethods[mapped] === "function") {
+        return adapter.staticMethods[mapped](args);
+      }
     }
     // The loader knows exactly which mods it started, so Forge's dependency
     // query can be answered without host bindings. This is only active when a
@@ -2386,7 +3173,7 @@ export const GoldClientRuntime = Object.freeze({
   },
   create(name, ...args) {
     const adapter = GoldClientMinecraftAdapters.get(name);
-    if (adapter?.construct) return adapter.construct(args);
+    if (adapter?.construct) return installAdapterFieldAliases(adapter.construct(args));
     const constructor = this.classes.get(name);
     if (!constructor) {
       const service = this.platformService(name);

@@ -120,7 +120,13 @@ public final class JavaScriptModTranslationExporter {
     Files.writeString(root.resolve("gold-client-runtime.js"), runtimeSource(), StandardCharsets.UTF_8);
     writeModuleIndex(classes, root);
     writeClassManifest(classes, root);
-    new ForgeLifecycleExporter().export(classes, metadataModIds, root);
+    ForgeTransformationInspector.Report transformations =
+        ForgeTransformationInspector.inspect(jars);
+    Files.writeString(root.resolve("forge-transformations.json"),
+        new GsonBuilder().setPrettyPrinting().create().toJson(transformations)
+            + System.lineSeparator(), StandardCharsets.UTF_8);
+    new ForgeLifecycleExporter().export(classes, metadataModIds, root,
+        transformations.blockers());
     new ForgeHostRuntimeExporter().export(root);
     new ForgeCompatibilityPlanner().export(classes, root);
     Files.writeString(root.resolve("package.json"),

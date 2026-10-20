@@ -157,6 +157,11 @@ public final class LoaderCommand {
       report.put("loadOrder", lifecycle.get("loadOrder").getAsString());
       report.put("lifecycleStatus", lifecycle.get("status").getAsString());
       report.put("blockers", blockerList);
+      Path transformationsFile = destination.resolve("forge-transformations.json");
+      if (Files.isRegularFile(transformationsFile)) {
+        report.put("transformations", JsonParser.parseString(
+            Files.readString(transformationsFile, StandardCharsets.UTF_8)));
+      }
       report.put("translationComplete", export.incompleteCount() == 0);
       report.put("ready", blockerList.isEmpty() && export.incompleteCount() == 0);
       if (singleFileSummary != null) {

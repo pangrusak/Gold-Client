@@ -75,8 +75,7 @@ public final class JavaScriptTranslator {
         || body.contains("Unsupported JVM IR");
     body = lowerJavaSyntax(body);
     body = makeUnsupportedOperationsExplicit(body);
-    boolean approximatedCatch = body.contains(
-        "Gold Client approximation: merged multiple catch clauses");
+    boolean approximatedCatch = body.contains(MERGED_CATCH_APPROXIMATION);
     hasUnsupportedMarkers |= body.contains("GoldClientRuntime.unsupported(\"invalid-call-receiver\"")
         || approximatedCatch;
     boolean complete = structured.complete() && !hasUnsupportedMarkers;
@@ -178,19 +177,37 @@ public final class JavaScriptTranslator {
     final String variable;
     final String body;
     final int bodyEnd;
-    CatchClause(String type, String variable, String body, int bodyEnd) {
+    /**
+     * False for synthetic JVM handlers the structured translator rendered
+     * without a Java type. Those are dispatched as if they catch Throwable, so
+     * a merged clause can shadow later clauses; the merge is then approximate.
+     */
+    final boolean explicitType;
+    CatchClause(String type, String variable, String body, int bodyEnd, boolean explicitType) {
       this.type = type;
       this.variable = variable;
       this.body = body;
       this.bodyEnd = bodyEnd;
+      this.explicitType = explicitType;
     }
   }
+
+  private static final String MERGED_CATCH_APPROXIMATION =
+      "Gold Client approximation: merged multiple catch clauses";
 
   /**
    * JavaScript has one catch clause per try. The JVM exception table can expose
    * several adjacent handlers, including synthetic try-with-resources plumbing.
-   * Merge them into one catch with runtime type dispatch so the module stays
-   * parseable; callers must treat the method as approximate when this happens.
+   * Merge them into one catch with ordered runtime type dispatch so the module
+   * stays parseable.
+   *
+   * <p>When every clause carries an explicit Java type, the merge is exact:
+   * Java forbids a catch clause whose type is a supertype of an earlier clause,
+   * so dispatching in table order reproduces the JVM's first-match rule, and
+   * the trailing {@code else} rethrows just like the JVM. A single synthetic
+   * untyped handler is also exact when it is last, because nothing can be
+   * shadowed and its own guard/rethrow carries the real semantics. Only a
+   * shadowing untyped handler makes the merge approximate.</p>
    */
   private static String mergeAdjacentCatchClauses(String source) {
     StringBuilder out = new StringBuilder(source.length());
@@ -229,8 +246,24 @@ public final class JavaScriptTranslator {
       }
       out.append(source, copied, catchStart);
       String caught = "__goldCaught" + catchStart;
-      out.append("catch (").append(caught).append(") {\n")
-          .append("  // Gold Client approximation: merged multiple catch clauses; first matching type wins.\n");
+      boolean approximation = false;
+      int untypedCount = 0;
+      int lastUntyped = -1;
+      for (int i = 0; i < clauses.size(); i++) {
+        if (!clauses.get(i).explicitType) {
+          untypedCount++;
+          lastUntyped = i;
+        }
+      }
+      // An untyped synthetic handler is dispatched as Throwable. It only
+      // changes semantics when it shadows a later clause; in the final
+      // position its own guard/rethrow is exactly what the JVM handler does.
+      approximation = untypedCount > 1
+          || (untypedCount == 1 && lastUntyped != clauses.size() - 1);
+      out.append("catch (").append(caught).append(") {\n");
+      out.append(approximation
+          ? "  // " + MERGED_CATCH_APPROXIMATION + "; first matching type wins.\n"
+          : "  // JVM catch clauses merged into ordered runtime type dispatch; exact for explicit types.\n");
       for (int i = 0; i < clauses.size(); i++) {
         CatchClause clause = clauses.get(i);
         out.append("  ").append(i == 0 ? "if" : "else if").append(" (");
@@ -264,17 +297,20 @@ public final class JavaScriptTranslator {
     int split = parameter.lastIndexOf(' ');
     String type;
     String variable;
+    boolean explicitType = true;
     if (split <= 0) {
       // Synthetic JVM multi-catch handlers are rendered as an untyped JS catch
       // variable; the handler body carries its own runtime type guard.
       type = "java.lang.Throwable";
       variable = parameter;
+      explicitType = false;
     } else {
       type = parameter.substring(0, split).trim().replace(" | ", "|");
       variable = parameter.substring(split + 1).trim();
     }
     if (type.isEmpty() || variable.isEmpty()) return null;
-    return new CatchClause(type, variable, source.substring(bodyOpen + 1, bodyClose), bodyClose + 1);
+    return new CatchClause(type, variable, source.substring(bodyOpen + 1, bodyClose), bodyClose + 1,
+        explicitType);
   }
 
   private static int matchingBrace(String source, int open) {

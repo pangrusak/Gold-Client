@@ -18,7 +18,7 @@ each input, and what remains explicitly unsupported.
 | Minified JavaScript clients | No matching build profile or runtime verification. | Unsupported; retained as a product requirement. |
 | Eaglercraft 26.2 WebAssembly | Existing assessment found WASM exports without Minecraft-facing methods. | Unsupported; retained as a product requirement. |
 | Forge 1.12.2 client | No Forge runtime/loader is present in the supplied Eaglercraft client. | Unsupported. |
-| Eaglercraft 1.12.2 with EaglerForge injected | The stripped EaglerForge injector, SRG-to-MCP table, binding adapter, and client-candidate builder are implemented. A headless-Firefox candidate run resolved real client members and completed AppleSkin's four client lifecycle phases. JEI still fails explicitly at a native `TextureMap` superclass, and rendering/network I/O remain unsupported. | Partial host adapter; AppleSkin lifecycle works, arbitrary mod support does not. |
+| Eaglercraft 1.12.2 with EaglerForge injected | The stripped EaglerForge injector, SRG-to-MCP table, binding adapter, client-candidate builder, transformation inspector, and self-contained value/NBT adapters are implemented. A headless-Firefox candidate run resolved real client members and completed AppleSkin's four client lifecycle phases. Translated subclasses of native classes use EaglerForge's internal super initializers when the host exposes them; JEI still needs real rendering/resource behavior, and rendering/network I/O remain unsupported. | Partial host adapter; AppleSkin lifecycle works, arbitrary mod support does not. |
 | Fabric Minecraft 1.16.2-1.16.5 client | No exact client build or Fabric loader supplied. | Unsupported. |
 
 ## Multi-mod Forge loader bundle
@@ -84,27 +84,34 @@ The profile injector prefers this file when present and emits a classic
   ready lifecycle plan.
 - [x] AppleSkin plus JEI translates to 393 classes and two mod entries
   (`jei`, `appleskin`) with dependency ordering and a ready lifecycle plan.
-  Four JEI methods remain incomplete: two `JeiTextureMap` methods combine
-  several typed handlers with catch-all/finally cleanup, and two methods
-  (`RecipeRegistry#addRecipe`, `JeiStarter#registerCategories`) merge
-  multi-catch bodies with non-trivial control flow. The command reports them,
-  lists them in `loader-plan.json` (`incompleteMethods`), and exits with status
-  `2` rather than claiming a complete translation. Two `BookmarkList`
-  try-with-resources methods were corrected by rendering the JVM catch-all
-  handler as `finally` instead of an unreachable sibling `catch (Throwable)`.
-  The two `JeiTextureMap` methods now leave their try block through a labeled
-  break when the normal-path join sits past catch-only code; they remain
-  incomplete because the merged multi-catch cannot prove finally behavior when
-  a typed handler itself throws.
+  All 2,287 methods are complete for the represented IR
+  (`translationComplete: true`). The previous four incomplete JEI methods were
+  caused by adjacent typed catch clauses being marked approximate; the merger
+  now proves an ordered `instanceof` dispatch exact for explicit Java types and
+  for a single trailing synthetic handler, so those methods no longer carry a
+  control-flow or exception-stack gap. `BookmarkList` try-with-resources
+  methods still use the JVM catch-all handler rendered as `finally`.
 - [x] General mod smoke survey with `loader --single-file --compact` on the
   tracked inputs: AppleSkin (22 classes, 0 incomplete, ready), Waystones
-  (85 classes, 0 incomplete, ready), JEI (371 classes, 4 incomplete), Xaero's
-  Minimap (1280 classes, 13 incomplete; coremod and missing `xaerolib`
-  blockers), Universal Tweaks (1191 classes, 3 incomplete; Mixin/coremod and
+  (85 classes, 0 incomplete, ready), JEI (371 classes, 0 incomplete), Xaero's
+  Minimap (1280 classes, 1 incomplete; coremod and missing `xaerolib`
+  blockers), Universal Tweaks (1191 classes, 0 incomplete; Mixin/coremod and
   missing dependency blockers), ConfigAnytime (3 classes, 0 incomplete;
-  coremod blocker), and MixinBooter (1305 classes, 67 incomplete; no `@Mod`
+  coremod blocker), and MixinBooter (1305 classes, 10 incomplete; no `@Mod`
   entry plus Mixin/coremod blockers). These are structural translation
   results, not proof that the mods run without real Minecraft/Forge bindings.
+- [x] Loop/exception structuring now keeps a protected region outside a loop
+  that exits onto the region's start, and keeps a loop header that is also the
+  start of a protected range. This removed five of Xaero's six and three of
+  MixinBooter's thirteen incomplete methods; the remaining methods are
+  unresolved stack merges, table switches split across compiler-generated
+  exception regions, and user-catch/finally shapes, and stay explicit.
+- [x] The transformation inspector parses Mixin configs (`package`, `mixins`,
+  `client`, `server`, plugin, refmap), access-transformer rules, and
+  coremod/tweak manifest keys, writes `forge-transformations.json`, and feeds
+  precise blockers into the lifecycle plan. Every non-empty surface remains an
+  explicit blocker: the JavaScript pipeline does not execute Mixin, AT, or
+  coremod transformations.
 - [x] Generated AppleSkin and AppleSkin+JEI modules pass `node --check` and
   import through `forge-lifecycle.js` without executing game APIs.
 - [x] `--single-file --compact` packs the AppleSkin+JEI build (398 modules) into

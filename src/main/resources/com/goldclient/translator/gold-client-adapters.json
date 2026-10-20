@@ -2,17 +2,173 @@
   "formatVersion": "gold-client-builtin-adapters-v1",
   "description": "Minecraft owners served by built-in adapters in gold-client-runtime.js. The Java compatibility planner reads this list so adapter-backed owners are not reported as missing target bindings. JavaScriptModTranslationExporterTest verifies that the runtime's GoldClientRuntime.builtinAdapterOwners() list matches these owners exactly.",
   "adapters": [
-    { "owner": "net.minecraft.util.ResourceLocation", "kind": "value-type" },
-    { "owner": "net.minecraft.util.math.BlockPos", "kind": "value-type" },
-    { "owner": "net.minecraft.util.math.Vec3d", "kind": "value-type" },
-    { "owner": "net.minecraft.util.math.AxisAlignedBB", "kind": "value-type" },
-    { "owner": "net.minecraft.util.EnumFacing", "kind": "enum" },
-    { "owner": "net.minecraft.util.EnumFacing$Axis", "kind": "enum" },
-    { "owner": "net.minecraft.util.EnumFacing$AxisDirection", "kind": "enum" },
-    { "owner": "net.minecraft.util.math.MathHelper", "kind": "static-utils" },
-    { "owner": "net.minecraft.util.text.TextFormatting", "kind": "enum" },
-    { "owner": "net.minecraft.item.EnumRarity", "kind": "enum" },
-    { "owner": "net.minecraftforge.fml.relauncher.Side", "kind": "enum" },
-    { "owner": "net.minecraft.util.NonNullList", "kind": "collection" }
+    {
+      "owner": "net.minecraft.util.ResourceLocation",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.math.BlockPos",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.math.Vec3d",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.math.AxisAlignedBB",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.EnumFacing",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.util.EnumFacing$Axis",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.util.EnumFacing$AxisDirection",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.util.math.MathHelper",
+      "kind": "static-utils"
+    },
+    {
+      "owner": "net.minecraft.util.text.TextFormatting",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.item.EnumRarity",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraftforge.fml.relauncher.Side",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.util.NonNullList",
+      "kind": "collection"
+    },
+    {
+      "owner": "net.minecraft.util.math.Vec3i",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.math.ChunkPos",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.text.Style",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.text.TextComponentString",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.EnumHand",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.util.EnumHandSide",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.util.EnumBlockRenderType",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.util.SoundCategory",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.util.math.RayTraceResult$Type",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.world.EnumDifficulty",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.world.EnumSkyBlock",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.item.EnumAction",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.item.EnumDyeColor",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagCompound",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagList",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagString",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagByte",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagShort",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagInt",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagLong",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagFloat",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagDouble",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagByteArray",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagIntArray",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.nbt.NBTTagEnd",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.math.MutableBlockPos",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.math.RayTraceResult",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.EnumActionResult",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.entity.EnumCreatureAttribute",
+      "kind": "enum"
+    },
+    {
+      "owner": "net.minecraft.entity.player.EnumPlayerModelParts",
+      "kind": "enum"
+    }
   ]
 }

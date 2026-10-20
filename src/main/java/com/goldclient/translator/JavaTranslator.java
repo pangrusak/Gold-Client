@@ -664,6 +664,14 @@ public final class JavaTranslator {
     while (bodyStart < tryEnd
         && ("LABEL".equals(operations.get(bodyStart).kind())
             || "TRY_BEGIN".equals(operations.get(bodyStart).kind()))) bodyStart++;
+    // A protected range can start exactly at a loop header (try inside the
+    // loop body, or a try-with-resources body that is itself a loop). Keep the
+    // header label so the body renderer can structure the back edge instead of
+    // leaving it as an unresolved jump.
+    if (startIndex != null && isBackwardBranchTarget(
+        operations, startIndex, tryEnd, startLabel, labels)) {
+      bodyStart = startIndex;
+    }
     // A region that starts exactly at this region's end label emits its
     // TRY_BEGIN marker before this region's TRY_END. The body has to stop at
     // that marker: the nested region belongs to the normal completion path,
@@ -1018,6 +1026,11 @@ public final class JavaTranslator {
     int bodyStart = thisStart + 1;
     while (bodyStart < tryEnd && isExceptionBoundary(operations.get(bodyStart))) bodyStart++;
     if (bodyStart >= tryEnd) return null;
+    // The try-with-resources body may itself be a loop that starts at this
+    // region's start label. Keep that label so the loop back edge is structured.
+    if (isBackwardBranchTarget(operations, thisStart, tryEnd, startLabel, labels)) {
+      bodyStart = thisStart;
+    }
 
     int finallyBodyEnd = finallyThrow;
     if (finallyBodyEnd - 1 >= finallyStart + 1) {
@@ -1060,6 +1073,25 @@ public final class JavaTranslator {
       if (!isExceptionBoundary(operations.get(i))) return false;
     }
     return true;
+  }
+
+  private static boolean isBackwardBranchTarget(List<IrOperationModel> operations,
+      int startIndex, int end, String label, Map<String, Integer> labels) {
+    String key = labelKey(label);
+    for (int i = startIndex + 1; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      String target = null;
+      if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+        target = operation.operands().get(0);
+      } else if ("CONDITIONAL_BRANCH".equals(operation.kind())
+          && operation.operands().size() >= 2) {
+        target = operation.operands().get(1);
+      }
+      if (target == null || !key.equals(labelKey(target))) continue;
+      Integer targetIndex = labels.get(key);
+      if (targetIndex != null && targetIndex <= startIndex) return true;
+    }
+    return false;
   }
 
   private static boolean isExceptionBoundary(IrOperationModel operation) {
@@ -1220,6 +1252,14 @@ public final class JavaTranslator {
     while (bodyStart < tryEnd
         && ("LABEL".equals(operations.get(bodyStart).kind())
             || "TRY_BEGIN".equals(operations.get(bodyStart).kind()))) bodyStart++;
+    // A protected range can start exactly at a loop header (try inside the
+    // loop body, or a try-with-resources body that is itself a loop). Keep the
+    // header label so the body renderer can structure the back edge instead of
+    // leaving it as an unresolved jump.
+    if (startIndex != null && isBackwardBranchTarget(
+        operations, startIndex, tryEnd, startLabel, labels)) {
+      bodyStart = startIndex;
+    }
     RenderResult tryBodyCore = renderRange(
         operations, bodyStart, tryEnd, indent + 1, context, labels);
     StringBuilder tryBodySource = new StringBuilder(tryBodyCore.source());
@@ -3761,8 +3801,9 @@ public final class JavaTranslator {
     boolean farExit = loop.exitIndex() > loop.backEdgeIndex() + 1 && loop.exitIndex() < end;
     String skipLabel = farExit ? "_loopExit" + loopHeaderIndex : null;
     String continuationLabel = null;
+    int rawContinuationStart = loop.backEdgeIndex() + 1;
+    int continuationStart = rawContinuationStart;
     if (farExit) {
-      int continuationStart = loop.backEdgeIndex() + 1;
       while (continuationStart < loop.exitIndex()) {
         IrOperationModel candidate = operations.get(continuationStart);
         if ("LABEL".equals(candidate.kind())) break;
@@ -3773,6 +3814,21 @@ public final class JavaTranslator {
           && "LABEL".equals(operations.get(continuationStart).kind())
           && !operations.get(continuationStart).operands().isEmpty()) {
         continuationLabel = labelKey(operations.get(continuationStart).operands().get(0));
+      }
+    }
+    // A loop can exit onto the start of a protected region. That region's
+    // TRY_END and catch handler lie past this loop's continuation range, so
+    // rendering it inside the labeled exit block would truncate the try. Leave
+    // the region for the enclosing range, which can see its full extent.
+    boolean continuationStartsProtectedRegion = false;
+    if (farExit && exitLabel != null) {
+      for (int i = rawContinuationStart; i < loop.exitIndex(); i++) {
+        IrOperationModel candidate = operations.get(i);
+        if ("TRY_BEGIN".equals(candidate.kind()) && !candidate.operands().isEmpty()
+            && labelKey(candidate.operands().get(0)).equals(labelKey(exitLabel))) {
+          continuationStartsProtectedRegion = true;
+          break;
+        }
       }
     }
     boolean labeled = needsLoopLabel(
@@ -3819,16 +3875,21 @@ public final class JavaTranslator {
     if (farExit) {
       // The header exit leaves past the loop's continuation block, which only
       // a labeled block can express. Render that block inside the label so a
-      // plain break still lands on the loop's normal continuation.
-      RenderResult continuation = renderRange(
-          operations, loop.backEdgeIndex() + 1, loop.exitIndex(), indent + 1, context, labels);
-      source.append(continuation.source());
-      complete &= continuation.complete();
+      // plain break still lands on the loop's normal continuation. A protected
+      // region that starts exactly at the exit is rendered by the caller.
+      if (!continuationStartsProtectedRegion) {
+        RenderResult continuation = renderRange(
+            operations, loop.backEdgeIndex() + 1, loop.exitIndex(), indent + 1, context, labels);
+        source.append(continuation.source());
+        complete &= continuation.complete();
+      }
       source.append(indent(indent)).append("}\n");
     }
     // Resume at the exit label instead of skipping it: the label can be the
     // header of a following loop, and its block still needs to be structured.
-    int lastIndex = loop.exitIndex() < end ? loop.exitIndex() - 1 : end - 1;
+    int lastIndex = continuationStartsProtectedRegion
+        ? loop.backEdgeIndex()
+        : (loop.exitIndex() < end ? loop.exitIndex() - 1 : end - 1);
     return new ConditionalRender(
         source.toString(), complete, lastIndex);
   }

@@ -108,6 +108,17 @@ public final class ForgeLifecycleExporter {
    */
   public LifecycleReport export(List<ClassModel> classes, Map<String, String> metadataModIds,
       Path outputDirectory) throws IOException {
+    return export(classes, metadataModIds, outputDirectory, List.of());
+  }
+
+  /**
+   * Exports the lifecycle plan with blockers contributed by the transformation
+   * inspector (Mixin configs, access transformers, coremod plugins). Those
+   * surfaces are not implemented by the JavaScript pipeline, so they must stay
+   * explicit in the plan instead of disappearing from the report.
+   */
+  public LifecycleReport export(List<ClassModel> classes, Map<String, String> metadataModIds,
+      Path outputDirectory, List<String> transformationBlockers) throws IOException {
     if (classes == null || outputDirectory == null) {
       throw new IllegalArgumentException("Classes and output directory must not be null.");
     }
@@ -231,6 +242,13 @@ public final class ForgeLifecycleExporter {
     int subscriberCount = staticSubscribers.size()
         + ordered.stream().mapToInt(mod -> mod.instanceSubscribers().size()).sum();
     String loadOrder = String.join(",", ordered.stream().map(ModEntry::modId).toList());
+    if (transformationBlockers != null) {
+      for (String blocker : transformationBlockers) {
+        if (blocker != null && !blocker.isBlank() && !blockers.contains(blocker)) {
+          blockers.add(blocker);
+        }
+      }
+    }
     String status = blockers.isEmpty() ? "READY_FOR_REAL_FORGE_HOST" : "PARTIAL_WITH_BLOCKERS";
     LifecycleReport report = new LifecycleReport("gold-forge-lifecycle-v2", status,
         ordered.size(), handlerCount, injectionCount, subscriberCount, loadOrder,

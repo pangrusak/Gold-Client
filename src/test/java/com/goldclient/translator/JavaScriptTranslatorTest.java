@@ -129,6 +129,62 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void keepsAProtectedRegionOutsideALoopThatExitsOntoItsStart() {
+    var method = new IrMethodModel("loopThenTry", "()V", List.of(
+        op("LABEL", "Lhead"),
+        op("LOCAL_READ", "local0"),
+        op("CONDITIONAL_BRANCH", "local0 == 0", "Ltry"),
+        op("METHOD_CALL", "body()"),
+        op("JUMP", "Lhead"),
+        op("TRY_BEGIN", "Ltry", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Ltry"),
+        op("METHOD_CALL", "work()"),
+        op("TRY_END", "Ltry", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Lend"),
+        op("JUMP", "Ljoin"),
+        op("CATCH_BEGIN", "Ltry", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Lhandler"),
+        op("LOCAL_WRITE", "local1", "<exception>"),
+        op("METHOD_CALL", "recover(local1)"),
+        op("LABEL", "Ljoin"),
+        op("RETURN")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains("work();"), result.source());
+    assertFalse(result.source().contains("unsupported(\"try-catch-region\""), result.source());
+  }
+
+  @Test
+  void keepsALoopHeaderAtTheStartOfAProtectedRegion() {
+    var method = new IrMethodModel("tryContainingLoop", "()V", List.of(
+        op("TRY_BEGIN", "Lhead", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Lhead"),
+        op("LOCAL_READ", "local0"),
+        op("CONDITIONAL_BRANCH", "local0 == 0", "Lend"),
+        op("METHOD_CALL", "body()"),
+        op("JUMP", "Lhead"),
+        op("TRY_END", "Lhead", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Lend"),
+        op("JUMP", "Ljoin"),
+        op("CATCH_BEGIN", "Lhead", "Lend", "Lhandler", "java.lang.Exception"),
+        op("LABEL", "Lhandler"),
+        op("LOCAL_WRITE", "local1", "<exception>"),
+        op("METHOD_CALL", "recover(local1)"),
+        op("LABEL", "Ljoin"),
+        op("RETURN")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("break;"), result.source());
+    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
   void preservesStringsWhenLoweringJavaSyntax() {
     String source = """
         void sample() {
@@ -523,6 +579,65 @@ class JavaScriptTranslatorTest {
     assertTrue(lowered.contains("throw missingNode;"), lowered);
     assertTrue(lowered.contains("recover(missingNode);"), lowered);
     assertFalse(lowered.contains("catch (java.io.IOException"), lowered);
+  }
+
+  @Test
+  void explicitAdjacentCatchClausesMergeWithoutBeingLabelledApproximate() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        try {
+          work();
+        } catch (java.io.IOException io) {
+          recover(io);
+        } catch (java.lang.RuntimeException runtime) {
+          recover(runtime);
+        } catch (java.lang.Throwable fatal) {
+          rethrow(fatal);
+        }
+        """);
+
+    assertTrue(lowered.contains("GoldClientRuntime.instanceOf(__goldCaught"), lowered);
+    assertTrue(lowered.contains("else if (GoldClientRuntime.instanceOf(__goldCaught"), lowered);
+    assertTrue(lowered.contains("else { throw __goldCaught"), lowered);
+    assertTrue(lowered.contains("JVM catch clauses merged into ordered runtime type dispatch"),
+        lowered);
+    assertFalse(lowered.contains("Gold Client approximation: merged multiple catch clauses"),
+        lowered);
+  }
+
+  @Test
+  void untypedSyntheticCatchMergeStaysLabelledApproximate() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        try {
+          work();
+        } catch (first) {
+          recover(first);
+        } catch (java.lang.RuntimeException runtime) {
+          recover(runtime);
+        }
+        """);
+
+    assertTrue(lowered.contains("Gold Client approximation: merged multiple catch clauses"),
+        lowered);
+  }
+
+  @Test
+  void trailingSyntheticCatchHandlerMergesWithoutApproximation() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        try {
+          work();
+        } catch (mezz.jei.recipes.BrokenCraftingRecipeException broken) {
+          recover(broken);
+        } catch (caughtException) {
+          if (!(guard(caughtException))) throw caughtException;
+          recover(caughtException);
+        }
+        """);
+
+    assertTrue(lowered.contains("JVM catch clauses merged into ordered runtime type dispatch"),
+        lowered);
+    assertTrue(lowered.contains("throw __goldCaught"), lowered);
+    assertFalse(lowered.contains("Gold Client approximation: merged multiple catch clauses"),
+        lowered);
   }
 
 }

@@ -18,6 +18,38 @@ function installFixture() {
     Minecraft.prototype.$getItemColors = function () { return 7; };
     Minecraft.prototype.$setWorld = function (value) { this.$theWorld = value; };
 
+    function TextureMap(glTextureId) {
+        this.$glTextureId = glTextureId;
+        this.$nativeInitialized = true;
+    }
+    TextureMap.prototype.$getGlTextureId = function () { return this.$glTextureId; };
+
+    const textureMapEntry = {
+        id: "net.minecraft.client.renderer.texture.TextureMap",
+        compiledName: "nmc_TextureMap",
+        class: TextureMap,
+        methods: {
+            getGlTextureId: {
+                method: TextureMap.prototype.$getGlTextureId,
+                methodName: "nmc_TextureMap_getGlTextureId"
+            }
+        },
+        staticMethods: {},
+        staticVariables: {},
+        constructors: [
+            function TextureMapConstructor(glTextureId) { return new TextureMap(glTextureId); }
+        ],
+        // EaglerForge's Class__init_N($this, ...) form: initializes an
+        // existing receiver, which is what calling super() on a translated
+        // subclass needs.
+        internalConstructors: [
+            function TextureMap__init_0($this, glTextureId) {
+                $this.$glTextureId = glTextureId;
+                $this.$nativeInitialized = true;
+            }
+        ]
+    };
+
     const minecraft = {
         $theWorld: world,
         $getItemColors: function () { return 7; },
@@ -55,10 +87,14 @@ function installFixture() {
         hooks: {},
         reflect: {
             getClassById(id) {
-                return id === "net.minecraft.client.Minecraft" ? minecraftEntry : null;
+                if (id === "net.minecraft.client.Minecraft") return minecraftEntry;
+                if (id === "net.minecraft.client.renderer.texture.TextureMap") return textureMapEntry;
+                return null;
             },
             getClassByName(name) {
-                return name === "Minecraft" ? minecraftEntry : null;
+                if (name === "Minecraft") return minecraftEntry;
+                if (name === "TextureMap") return textureMapEntry;
+                return null;
             }
         },
         util: {
@@ -129,6 +165,52 @@ test("native proxies expose mapped fields and methods without leaking $ names", 
     client.field_71441_e = null;
     assert.equal(client.$theWorld, null);
     assert.throws(() => client.func_999999_z(), /missing-native-member/);
+});
+
+test("initializes a translated subclass with the native internal constructor", () => {
+    const { bindings, context } = installFixture();
+    const TextureMapClass = context.ModAPI.reflect
+        .getClassById("net.minecraft.client.renderer.texture.TextureMap").class;
+    function TranslatedJeiTextureMap() {}
+    TranslatedJeiTextureMap.__goldClassName = "mezz.jei.gui.textures.JeiTextureMap";
+    TranslatedJeiTextureMap.prototype.$translatedMethod = function () {
+        return this.$translatedField;
+    };
+    const receiver = Object.create(TranslatedJeiTextureMap.prototype);
+    receiver.$translatedField = 7;
+    receiver.$className = "mezz.jei.gui.textures.JeiTextureMap";
+
+    const result = bindings.minecraft.construct(
+        "net.minecraft.client.renderer.texture.TextureMap", [42], receiver);
+
+    assert.equal(result, receiver);
+    assert.equal(Object.getPrototypeOf(receiver), TranslatedJeiTextureMap.prototype);
+    assert.equal(receiver.$translatedMethod(), 7);
+    assert.equal(receiver instanceof TextureMapClass, true);
+    assert.equal(receiver.$glTextureId, 42);
+    assert.equal(receiver.$nativeInitialized, true);
+    assert.equal(receiver.$translatedField, 7);
+    assert.equal(typeof receiver.$getGlTextureId, "function");
+    assert.equal(receiver.$getGlTextureId(), 42);
+});
+
+test("fails loudly when a native constructor allocates instead of initializing the receiver", () => {
+    const { bindings, context } = installFixture();
+    context.ModAPI.reflect.getClassById = id => ({
+        id,
+        compiledName: "nmc_Allocating",
+        class: function Allocating() {},
+        methods: {},
+        staticMethods: {},
+        staticVariables: {},
+        // No internalConstructors: the only path is the allocating
+        // constructor, whose result cannot be adopted as the receiver.
+        constructors: [function AllocatingConstructor() { return { allocated: true }; }]
+    });
+
+    assert.throws(
+        () => bindings.minecraft.construct("net.minecraft.world.Allocating", [], {}),
+        /unsupported-platform-superclass/);
 });
 
 test("converts JS strings and booleans at the native boundary", () => {

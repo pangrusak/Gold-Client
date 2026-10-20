@@ -202,9 +202,12 @@ A separate headless-Firefox run of the generated AppleSkin candidate verified
 that `ModAPI`, `goldClientForgeBindings`, and `GoldClientForge` exist, that the
 19,659-entry member table loads, and that SRG member calls resolve against the
 real client. The same run completed AppleSkin's `preInit`, `init`, `postInit`,
-and `loadComplete` phases through `GoldClientForge.start(bindings)`. JEI is
-blocked earlier because translated `JeiTextureMap` extends the native
-`TextureMap` class; the adapter raises `unsupported-platform-superclass`
-rather than guessing how to copy native constructor state. Rendering, real
+and `loadComplete` phases through `GoldClientForge.start(bindings)`. Translated
+subclasses of native Minecraft classes now attach the native prototype to the
+translated prototype chain and run EaglerForge's `Class__init_N($this, ...)`
+super initializer, so JEI's `JeiTextureMap` reaches the native `TextureMap`
+initialization path instead of failing before it. If a host exposes only an
+allocating constructor, the adapter still raises `unsupported-platform-superclass`
+rather than copying or guessing native constructor state. Rendering, real
 networking, registries, capabilities, and most gameplay APIs remain explicit
 unsupported boundaries.
