@@ -64,6 +64,20 @@ class JavaScriptRuntimeHostAdaptersTest {
         if (runtime.getStaticField("probe.StaticFieldProbe", "name") !== "waystone") {
           throw new Error("static field named name was not writable");
         }
+        for (const fieldName of ["length", "caller", "arguments"]) {
+          runtime.setStaticField("probe.StaticFieldProbe", fieldName, fieldName + "-value");
+          if (runtime.getStaticField("probe.StaticFieldProbe", fieldName) !== fieldName + "-value") {
+            throw new Error("static field named " + fieldName + " was not writable");
+          }
+        }
+        runtime.setStaticField("probe.StaticFieldProbe", "prototype", "kept");
+        if (runtime.getStaticField("probe.StaticFieldProbe", "prototype") !== "kept") {
+          throw new Error("static field named prototype was not readable");
+        }
+        if (typeof StaticFieldProbe.prototype !== "object") {
+          throw new Error("static field named prototype replaced the class prototype");
+        }
+        new StaticFieldProbe();
 
         const fixed = runtime.createJava("java.text.DecimalFormat", "0.00");
         if (runtime.invokeInstance(fixed, "format", 3.5) !== "3.50") {

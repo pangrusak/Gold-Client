@@ -267,7 +267,7 @@ public final class JavaScriptModTranslationExporter {
         module.append("  ").append(name).append("(...args) { return GoldClientRuntime.invoke(this, __goldMethods, ")
             .append(quote(name)).append(", args); }\n");
       }
-      if (hasStatic) {
+      if (hasStatic && isJavaScriptStaticMember(name)) {
         module.append("  static ").append(name).append("(...args) { return GoldClientRuntime.invokeStatic(this, __goldMethods, ")
             .append(quote(name)).append(", args); }\n");
       }
@@ -297,6 +297,7 @@ public final class JavaScriptModTranslationExporter {
           .append(quote(name)).append(", args); }\n");
     }
     for (String name : inheritedStatic) {
+      if (!isJavaScriptStaticMember(name)) continue;
       module.append("  static ").append(name)
           .append("(...args) { return GoldClientRuntime.invokeStatic(this, __goldMethods, ")
           .append(quote(name)).append(", args); }\n");
@@ -395,6 +396,15 @@ public final class JavaScriptModTranslationExporter {
             "switch", "this", "throw", "try", "typeof", "var", "void", "while", "with",
             "yield", "enum", "implements", "interface", "let", "package", "private",
             "protected", "public", "static").contains(value);
+  }
+
+  /**
+   * JavaScript class syntax rejects a static member named {@code prototype}.
+   * Java static methods with that name still dispatch through the runtime's
+   * method table, so the facade is skipped rather than emitting invalid JS.
+   */
+  private static boolean isJavaScriptStaticMember(String value) {
+    return !"prototype".equals(value);
   }
 
   private static int copyResources(List<Path> inputJars, Path root) throws IOException {

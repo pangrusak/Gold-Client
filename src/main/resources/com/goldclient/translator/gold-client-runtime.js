@@ -31,6 +31,12 @@ class GoldClientLog4jLogger {
 }
 const goldClientLoggers = new Map();
 
+// Static Java fields are normally own properties of the translated constructor.
+// A few names cannot be installed that way on function objects (notably a class
+// constructor's non-configurable `prototype`), so keep those values here instead
+// of replacing the class prototype or throwing inside a static initializer.
+const goldStaticFieldOverrides = new WeakMap();
+
 // Small compatibility helpers used by generated JavaScript.
 // This is not a replacement for Minecraft/Forge or a full JVM runtime.
 
@@ -2290,7 +2296,7 @@ export const GoldClientRuntime = Object.freeze({
       return this.unsupported("missing-static-field-class", className);
     }
     this.ensureInitialized(constructor);
-    return constructor[fieldName];
+    return this.staticFieldValue(constructor, fieldName);
   },
   setStaticField(className, fieldName, value) {
     const constructor = this.classes.get(className);
@@ -2311,19 +2317,29 @@ export const GoldClientRuntime = Object.freeze({
     return this.defineStaticField(constructor, fieldName, value);
   },
   defineStaticField(constructor, fieldName, value) {
-    // Function objects have non-writable name/length properties. Mods use
-    // static fields named "name" frequently, so define the Java field instead
-    // of relying on assignment. This is also used before registration for
-    // literal class-field initialization, so it must not trigger <clinit>.
+    // Function objects have non-writable properties such as name/length, and a
+    // class constructor's prototype is non-configurable. Mods use static fields
+    // named "name" frequently, so define the Java field as an own data property
+    // instead of relying on assignment. Names that cannot be installed (for
+    // example "prototype") go into a side map so construction keeps working.
+    // This is also used before registration for literal class-field
+    // initialization, so it must not trigger <clinit>.
     try {
       Object.defineProperty(constructor, fieldName, {
         value, writable: true, enumerable: true, configurable: true
       });
-    } catch (error) {
-      if (!(fieldName in constructor)) throw error;
-      constructor[fieldName] = value;
+      goldStaticFieldOverrides.get(constructor)?.delete(fieldName);
+    } catch {
+      let overrides = goldStaticFieldOverrides.get(constructor);
+      if (!overrides) goldStaticFieldOverrides.set(constructor, overrides = new Map());
+      overrides.set(fieldName, value);
     }
     return value;
+  },
+  staticFieldValue(constructor, fieldName) {
+    const overrides = goldStaticFieldOverrides.get(constructor);
+    if (overrides?.has(fieldName)) return overrides.get(fieldName);
+    return constructor[fieldName];
   },
   platformService(owner) {
     if (owner.startsWith("net.minecraft.")) return "minecraft";
@@ -2980,6 +2996,11 @@ export const GoldClientRuntime = Object.freeze({
     const constructor = this.classes.get(className);
     if (!constructor) return this.unsupported("missing-static-class", className);
     this.ensureInitialized(constructor);
+    // Dispatch through the method table first so a static Java method whose name
+    // is also a function/class property (name, length, prototype) is not shadowed
+    // by that property.
+    const target = this.resolveClassMethod(className, methodName, args, true);
+    if (target) return target.fn.apply(constructor, args);
     const method = constructor[methodName];
     if (typeof method !== "function") {
       return this.unsupported("missing-static-method", className + "." + methodName);

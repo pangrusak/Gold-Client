@@ -123,6 +123,61 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void staticMembersNamedAfterFunctionPropertiesRemainAddressable() throws Exception {
+    ClassModel clazz = new ClassModel("example/ReservedStatics", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(),
+        List.of(new FieldModel("prototype", "I", null,
+            Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, List.of(), 5)),
+        List.of(
+            method("prototype", "()Z", Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, List.of(
+                op("CONSTANT", "true"), op("RETURN", "true"))),
+            method("name", "()Z", Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, List.of(
+                op("CONSTANT", "true"), op("RETURN", "true")))),
+        List.of());
+
+    Path output = tempDir.resolve("reserved-statics");
+    new JavaScriptModTranslationExporter().export(List.of(clazz), output);
+    String moduleSource = Files.readString(output.resolve("example/ReservedStatics.translated.js"));
+    assertTrue(moduleSource.contains(
+        "defineStaticField(Translated_example_ReservedStatics, \"prototype\", 5)"), moduleSource);
+    assertTrue(moduleSource.contains("static name("), moduleSource);
+    assertFalse(moduleSource.contains("static prototype("), moduleSource);
+
+    Path runner = output.resolve("reserved-statics.mjs");
+    Files.writeString(runner, """
+        import { Translated_example_ReservedStatics as Reserved } from "./example/ReservedStatics.translated.js";
+        import { GoldClientRuntime as runtime } from "./gold-client-runtime.js";
+        if (runtime.getStaticField("example.ReservedStatics", "prototype") !== 5) {
+          throw new Error("static field named prototype lost its value");
+        }
+        if (typeof Reserved.prototype !== "object") {
+          throw new Error("static field named prototype replaced the class prototype");
+        }
+        if (!(new Reserved() instanceof Reserved)) {
+          throw new Error("class construction broke after defining a prototype field");
+        }
+        if (runtime.invokeStaticClass("example.ReservedStatics", "prototype") !== true) {
+          throw new Error("static method named prototype did not dispatch through the runtime");
+        }
+        if (runtime.invokeStaticClass("example.ReservedStatics", "name") !== true) {
+          throw new Error("static method named name did not dispatch through the runtime");
+        }
+        console.log("reserved-statics-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "reserved static member test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("reserved-statics-ok", outputText);
+  }
+
+  @Test
   void emitsGenericForgeLifecycleDispatcherFromAnnotations() throws Exception {
     var modAnnotation = new com.goldclient.model.AnnotationData(
         "net.minecraftforge.fml.common.Mod", true, java.util.Map.of("modid", "samplemod"));

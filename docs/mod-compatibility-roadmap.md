@@ -149,6 +149,13 @@ The profile injector prefers this file when present and emits a classic
   `getOpposite`, `name`, `ordinal`, `values`, and `valueOf`, so generated side
   comparisons and network-message side filters work without a host binding.
   Host bindings and lifecycle events should return these same objects.
+- [x] Static fields are installed with `defineStaticField` as own data properties
+  on the translated constructor, so Java fields named `name`/`length` do not
+  read or write JavaScript function metadata. A field named `prototype` is kept
+  in a runtime side map instead of replacing the class prototype, and a static
+  method named `prototype` (illegal as a JavaScript static class member)
+  dispatches through the runtime method table. This is a lowering/runtime
+  guarantee, not evidence that a mod runs.
 
 ### Not demonstrated / unsupported
 

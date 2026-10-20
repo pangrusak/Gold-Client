@@ -4,13 +4,13 @@ Gold Client is an experimental tool for analyzing Minecraft Modrinth JARs and pr
 
 ## Current status (October 2026)
 
-Gold Client is an experimental Java-bytecode-to-JavaScript translation pipeline aimed at Forge 1.12.2 mods and an Eaglercraft 1.12.2 client. It is beyond metadata analysis: it can export per-class JavaScript modules, a mod index/manifest, preserved resources, diagnostics, and a Forge startup bridge. The translator handles a growing subset of Java control flow, exceptions, lambdas/method references, fields, and class initialization.
+Gold Client is an experimental Java-bytecode-to-JavaScript translation pipeline aimed at Forge 1.12.2 mods and an Eaglercraft 1.12.2 client. It is beyond metadata analysis: it can export per-class JavaScript modules, a mod index/manifest, preserved resources, diagnostics, and a Forge startup bridge. The translator handles a growing subset of Java control flow, exceptions, lambdas/method references, fields, and class initialization. Generated static fields are installed as own data properties on the translated class constructor, so Java fields named `name` or `length` do not read or write JavaScript function metadata; a field that cannot be installed (such as `prototype`) is kept in a runtime side map instead of replacing the class prototype, and a static method with that name dispatches through the runtime method table rather than emitting invalid JavaScript.
 
 **This is not yet a general-purpose Forge mod converter.** Successful export means the represented bytecode was emitted; it does not prove semantic equivalence or that the translated mod runs in Minecraft. The target runtime still needs concrete implementations for Minecraft/Forge APIs, events, registries, rendering, resources, networking, configuration, logging, and other services.
 
 The latest recorded AppleSkin + JEI loader build translates 393 classes and 2,287 methods, with zero adapter-required declarations in `loader-plan.json` and **four incomplete JEI methods**. Those measures are not proof of game compatibility: zero incomplete methods does not mean zero platform bindings, and an adapter declaration is not a runtime implementation. The four incomplete JEI methods are listed in `loader-plan.json` and keep the translation-complete flag false.
 
-**Build/CI status:** the current checkpoint passed `mvn --batch-mode verify` (260 tests, 0 failures, 0 errors, 3 optional skips) and all three standalone Node suites. The older `5e7ef56` failure note is historical.
+**Build/CI status:** the current checkpoint passed `mvn --batch-mode verify` (261 tests, 0 failures, 0 errors, 3 optional skips) and the standalone Node suites. The older `5e7ef56` failure note is historical.
 
 ## Usage
 
