@@ -58,6 +58,13 @@ class JavaScriptRuntimeHostAdaptersTest {
           throw new Error("java.io.File adapter path: " + file.path);
         }
 
+        class StaticFieldProbe {}
+        runtime.registerClass("probe.StaticFieldProbe", StaticFieldProbe);
+        runtime.setStaticField("probe.StaticFieldProbe", "name", "waystone");
+        if (runtime.getStaticField("probe.StaticFieldProbe", "name") !== "waystone") {
+          throw new Error("static field named name was not writable");
+        }
+
         const fixed = runtime.createJava("java.text.DecimalFormat", "0.00");
         if (runtime.invokeInstance(fixed, "format", 3.5) !== "3.50") {
           throw new Error("DecimalFormat fixed pattern: " + fixed.format(3.5));

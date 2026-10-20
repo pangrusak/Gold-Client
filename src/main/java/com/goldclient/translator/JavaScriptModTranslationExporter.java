@@ -304,8 +304,9 @@ public final class JavaScriptModTranslationExporter {
     module.append("}\n");
     for (var field : clazz.fields()) {
       if ((field.access() & Opcodes.ACC_STATIC) != 0) {
-        module.append(className).append('.').append(field.name()).append(" = ")
-            .append(fieldInitializer(field, true)).append(";\n");
+        module.append("GoldClientRuntime.defineStaticField(").append(className).append(", ")
+            .append(quote(field.name())).append(", ")
+            .append(fieldInitializer(field, true)).append(");\n");
       }
     }
     module.append("GoldClientRuntime.registerClass(")

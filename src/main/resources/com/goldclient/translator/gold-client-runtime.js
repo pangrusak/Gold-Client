@@ -2308,7 +2308,21 @@ export const GoldClientRuntime = Object.freeze({
       return this.unsupported("missing-static-field-class", className);
     }
     this.ensureInitialized(constructor);
-    constructor[fieldName] = value;
+    return this.defineStaticField(constructor, fieldName, value);
+  },
+  defineStaticField(constructor, fieldName, value) {
+    // Function objects have non-writable name/length properties. Mods use
+    // static fields named "name" frequently, so define the Java field instead
+    // of relying on assignment. This is also used before registration for
+    // literal class-field initialization, so it must not trigger <clinit>.
+    try {
+      Object.defineProperty(constructor, fieldName, {
+        value, writable: true, enumerable: true, configurable: true
+      });
+    } catch (error) {
+      if (!(fieldName in constructor)) throw error;
+      constructor[fieldName] = value;
+    }
     return value;
   },
   platformService(owner) {
