@@ -2,7 +2,7 @@
 
 ## What this repo is
 
-Gold Client is a Java 17 / Maven CLI that analyzes Minecraft mod JARs, exports per-class JavaScript, and can compile an explicitly selected class with TeaVM. It is not itself a Minecraft mod: the root `fabric.mod.json` is a tracked Lithium test fixture, and `target/gold-client-0.1.0-SNAPSHOT.jar` is the actual tool.
+Gold Client is a Java 17 / Maven CLI that analyzes Minecraft mod JARs, exports per-class JavaScript, and can compile an explicitly selected class with TeaVM. It is not itself a Minecraft mod: the root `fabric.mod.json` is a tracked Lithium test fixture, and `target/gold-client-1.jar` is the actual tool.
 
 The product goal is a generic Minecraft 1.12.2 Forge → Eaglercraft translator: any arbitrary 1.12.2 Forge JAR in, one JavaScript mod file out for EaglerForgeInjector's Mod Manager ("Upload Mod (.js)"). Treat arbitrary-mod support as the target and every incomplete/stubbed/blocked method as a gap to close, never as silently-faked support.
 
@@ -37,12 +37,12 @@ node --test bridge-proof/test-injector.cjs
 CLI distinctions that are easy to get wrong:
 
 ```bash
-java -jar target/gold-client-0.1.0-SNAPSHOT.jar mod.jar --translate-js out
-java -jar target/gold-client-0.1.0-SNAPSHOT.jar mod.jar --translate --output-dir out
-java -jar target/gold-client-0.1.0-SNAPSHOT.jar mod.jar --class a.b.C --method m --translate
-java -jar target/gold-client-0.1.0-SNAPSHOT.jar mod.jar --to-js out --main-class a.b.C
-java -jar target/gold-client-0.1.0-SNAPSHOT.jar pipeline --input a.jar --root a.b.C --report report.json
-java -jar target/gold-client-0.1.0-SNAPSHOT.jar loader --input a.jar --input b.jar --output out/ --report out/loader-plan.json [--single-file --compact]
+java -jar target/gold-client-1.jar mod.jar --translate-js out
+java -jar target/gold-client-1.jar mod.jar --translate --output-dir out
+java -jar target/gold-client-1.jar mod.jar --class a.b.C --method m --translate
+java -jar target/gold-client-1.jar mod.jar --to-js out --main-class a.b.C
+java -jar target/gold-client-1.jar pipeline --input a.jar --root a.b.C --report report.json
+java -jar target/gold-client-1.jar loader --input a.jar --input b.jar --output out/ --report out/loader-plan.json [--single-file --compact]
 ```
 
 - `pipeline` and `loader` are first-argument subcommands; everything else takes the mod JAR as first argument. `loader` builds one shared JS bundle from multiple JARs and exits `2` on blockers while still writing the bundle and plan.

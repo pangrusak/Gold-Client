@@ -32,7 +32,7 @@ $comparisonData = Join-Path $repo `
 $fastutil = Join-Path $env:USERPROFILE `
     ".m2\repository\it\unimi\dsi\fastutil\7.1.0\fastutil-7.1.0.jar"
 
-$tool = Join-Path $repo "target\gold-client-0.1.0-SNAPSHOT.jar"
+$tool = Join-Path $repo "target\gold-client-1.jar"
 
 function Invoke-CheckedNative {
     param(

@@ -13,7 +13,7 @@ if (-not (Test-Path -LiteralPath $client -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $java -PathType Leaf)) {
     throw "Project Java 21 runtime is not installed: $java"
 }
-if (-not (Test-Path -LiteralPath (Join-Path $repo "target\gold-client-0.1.0-SNAPSHOT.jar") -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath (Join-Path $repo "target\gold-client-1.jar") -PathType Leaf)) {
     throw "Build Gold-Client first with mvn clean package."
 }
 
@@ -34,7 +34,7 @@ try {
         throw "Could not package translated Java bridge fixture (exit code $LASTEXITCODE)"
     }
 
-    & $java -jar target\gold-client-0.1.0-SNAPSHOT.jar $fixtureJar `
+    & $java -jar target\gold-client-1.jar $fixtureJar `
         --to-js $bridgeOutput --main-class com.goldclient.bridge.ClientBridgeFixture
     if ($LASTEXITCODE -ne 0) {
         throw "TeaVM bridge fixture compilation failed with exit code $LASTEXITCODE"

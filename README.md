@@ -33,7 +33,7 @@ Run the unit tests without packaging with `mvn test`. The optional JEI/Forge int
 Analyze a mod:
 
 ```bash
-java -jar target/gold-client-0.1.0-SNAPSHOT.jar path/to/mod.jar
+java -jar target/gold-client-1.jar path/to/mod.jar
 ```
 
 The report separates required and optional dependencies declared in mod
@@ -45,7 +45,7 @@ TeaVM compilation is a separate, opt-in path and requires an explicitly
 selected class with `public static void main(String[])`:
 
 ```bash
-java -jar target/gold-client-0.1.0-SNAPSHOT.jar path/to/mod.jar --to-js output --main-class example.Entry
+java -jar target/gold-client-1.jar path/to/mod.jar --to-js output --main-class example.Entry
 ```
 
 Fabric/Forge mod entrypoints are loader lifecycle hooks, not TeaVM `main`
@@ -58,7 +58,7 @@ loader or graphics stubs.
 Build one shared JavaScript loader bundle from several Forge 1.12.2 mod JARs:
 
 ```bash
-java -jar target/gold-client-0.1.0-SNAPSHOT.jar loader \
+java -jar target/gold-client-1.jar loader \
   --input test-mods/appleskin1.12.2.jar \
   --input test-mods/jei1.12.2.jar \
   --output output/forge-loader \

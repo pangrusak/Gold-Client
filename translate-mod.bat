@@ -5,7 +5,7 @@ set "SCRIPT_DIR=%~dp0"
 set "JRE_DIR=%SCRIPT_DIR%.gold-client-jre"
 set "JRE_ZIP=%JRE_DIR%\jre.zip"
 set "JAVA_EXE=%JRE_DIR%\jdk-21.0.2+13-jre\bin\java.exe"
-set "APP_JAR=%SCRIPT_DIR%target\gold-client-0.1.0-SNAPSHOT.jar"
+set "APP_JAR=%SCRIPT_DIR%target\gold-client-1.jar"
 
 if "%~1"=="" (
     echo Usage: translate-mod.bat path\to\mod.jar [--to-js ^<output_dir^>] [--main-class ^<class^>]

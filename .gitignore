@@ -7,3 +7,4 @@ output/*
 !output/.gitkeep
 .gold-client-jre
 translated-js/
+unminified-clients/

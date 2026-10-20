@@ -25,7 +25,7 @@ jobs:
       - name: Build Gold Client
         run: mvn --batch-mode --no-transfer-progress clean package
       - name: Export JEI 1.12.2 and regenerate diagnostics
-        run: java -jar target/gold-client-0.1.0-SNAPSHOT.jar test-mods/jei1.12.2.jar --translate-js output/jei-js
+        run: java -jar target/gold-client-1.jar test-mods/jei1.12.2.jar --translate-js output/jei-js
       - name: Print compatibility summary
         if: always()
         run: |
