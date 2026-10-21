@@ -1310,6 +1310,33 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void lowersASharedLoopTailReachedFromANestedArm() {
+    IrMethodModel method = new IrMethodModel("scan", "()V", List.of(
+        new IrOperationModel("LABEL", List.of("Lloop"), 0),
+        new IrOperationModel("CALL_VALUE", List.of("hasNext()"), 1),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("hasNext() == 0", "Lend"), 2),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("isFrame", "Lskip"), 3),
+        new IrOperationModel("JUMP", List.of("Ltail"), 4),
+        new IrOperationModel("LABEL", List.of("Lskip"), 5),
+        new IrOperationModel("METHOD_CALL", List.of("process()"), 6),
+        new IrOperationModel("LABEL", List.of("Ltail"), 7),
+        new IrOperationModel("LOCAL_READ", List.of("keep"), 8),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("keep == 0", "Lcontinue"), 9),
+        new IrOperationModel("JUMP", List.of("Lend"), 10),
+        new IrOperationModel("LABEL", List.of("Lcontinue"), 11),
+        new IrOperationModel("JUMP", List.of("Lloop"), 12),
+        new IrOperationModel("LABEL", List.of("Lend"), 13),
+        new IrOperationModel("RETURN", List.of(), 14)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("if (!((keep == 0))) break;"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
   void prioritizesOuterForwardExitOverInnerContinueBranch() {
     IrMethodModel method = new IrMethodModel("loopWithContinue", "()V", List.of(
         new IrOperationModel("LABEL", List.of("Lloop"), 0),

@@ -102,7 +102,7 @@ The profile injector prefers this file when present and emits a classic
   0 incomplete; ready lifecycle), Universal Tweaks (1191 classes, 0 incomplete;
   Mixin/coremod and missing dependency blockers), Xaero's Minimap
   (1280 classes, 1 incomplete; coremod and missing `xaerolib` blockers), and
-  MixinBooter (1305 classes, 2 incomplete; no `@Mod` entry plus Mixin/coremod
+  MixinBooter (1305 classes, 1 incomplete; no `@Mod` entry plus Mixin/coremod
   blockers). Each single-file bundle passed `node --check` and loaded in a Node
   `vm` sandbox exposing `GoldClientForge` with the expected mod IDs and class
   counts (for example Biomes O' Plenty: 551 classes, 0 blockers). FancyMenu and
@@ -130,10 +130,12 @@ The profile injector prefers this file when present and emits a classic
   incomplete methods. Later guard-chain, boolean-return, and loop-structure
   fixes removed the remaining Biomes O' Plenty, Konkrete, and Universal Tweaks
   methods plus MixinBooter's `ConverterHelper.toBeRenamed`,
-  `JsonReader.nextUnquotedValue`, and `ClassWrapper.init`. A try body that
-  jumps to its own protected end label now breaks out of a labeled try block
-  instead of lowering an unsupported jump, which also covers
-  `MainAttributes.getNioAttributes`. A
+  `JsonReader.nextUnquotedValue`, `ClassWrapper.init`, and
+  `Locals.getLocalsAt`. A try body that jumps to its own protected end label
+  now breaks out of a labeled try block instead of lowering an unsupported
+  jump, which also covers `MainAttributes.getNioAttributes`. A shared loop
+  continuation tail reached from a nested arm is duplicated at the jump so
+  its guard runs before continuing. A
   do-while whose body contains explicit `continue` edges keeps the final
   conditional back-edge as its loop condition, and its shared continuation
   label is registered as a break target; this fixed
@@ -141,9 +143,9 @@ The profile injector prefers this file when present and emits a classic
   ignored when folding a conditional into a value expression, so the method
   materializes one ternary instead of empty branches. The remaining
   incompletes are explicit rather than guessed:
-  - MixinBooter (2): `Locals.getLocalsAt` and `LazyLoader.loadBytecode`. They
-    combine stack merges, exception-stack values, and a loop continue tail or
-    protected-region cleanup that the current structured renderer cannot own.
+  - MixinBooter (1): `LazyLoader.loadBytecode`. Its loop back edge sits after
+    the protected region containing the header, so the try/loop structuring
+    currently renders the iteration as a plain conditional.
   - Xaero's Minimap (1): `MinimapWriter.writeChunk`, a loop/switch value
     merge that also carries an exception-stack value. A decision tree that
     feeds a field write is now materialized as one nested ternary, which

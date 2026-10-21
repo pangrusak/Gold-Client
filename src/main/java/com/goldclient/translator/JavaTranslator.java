@@ -466,6 +466,24 @@ public final class JavaTranslator {
           i = targetIndex - 1;
           continue;
         }
+        if (targetIndex != null && targetIndex > i && targetIndex != end) {
+          // A shared loop-continuation tail sits after the loop body: it
+          // evaluates the loop guard and then continues or leaves the loop.
+          // A jump into that tail has to execute the guard, so inline the tail
+          // at this edge instead of treating the label as an unsupported jump.
+          int tailLimit = forwardLoopTailLimit(operations, targetIndex, context, labels);
+          if (tailLimit > targetIndex) {
+            int[] extent = {targetIndex};
+            int[] budget = {64};
+            RenderResult tail = renderForwardArm(
+                operations, targetIndex, tailLimit, indent, context, labels,
+                extent, budget, 0);
+            if (tail != null && tail.complete() && extent[0] < tailLimit) {
+              source.append(tail.source());
+              continue;
+            }
+          }
+        }
         if (targetIndex != null
             && jumpChainEndsInVoidReturn(operations, targetIndex, labels)) {
           // Several arms can share one exit block whose only content is a jump
@@ -3632,6 +3650,49 @@ public final class JavaTranslator {
       index = next;
     }
     return false;
+  }
+
+  /**
+   * Finds the exclusive end of a small shared loop-continuation tail starting
+   * at {@code targetIndex}. The tail must execute only expressions and a
+   * branch chain and finish by leaving the current range or jumping elsewhere
+   * forward. Returning that destination as the limit lets the forward-arm
+   * renderer duplicate the guard without swallowing unrelated code.
+   */
+  private static int forwardLoopTailLimit(
+      List<IrOperationModel> operations,
+      int targetIndex,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    int limit = -1;
+    boolean conditional = false;
+    int stop = Math.min(operations.size(), targetIndex + 64);
+    for (int i = targetIndex; i < stop; i++) {
+      IrOperationModel operation = operations.get(i);
+      switch (operation.kind()) {
+        case "LABEL" -> {
+        }
+        case "CONDITIONAL_BRANCH" -> {
+          if (operation.operands().size() < 2) return -1;
+          Integer target = labels.get(labelKey(operation.operands().get(1)));
+          if (target == null || target <= targetIndex) return -1;
+          conditional = true;
+        }
+        case "JUMP" -> {
+          if (operation.operands().isEmpty()) return -1;
+          String target = labelKey(operation.operands().get(0));
+          if (context.isActiveLoop(target)) continue;
+          Integer targetIndex2 = labels.get(target);
+          if (targetIndex2 == null || targetIndex2 <= targetIndex) return -1;
+          limit = targetIndex2;
+        }
+        default -> {
+          if (!isExpressionOnly(operation)) return -1;
+        }
+      }
+      if (limit >= 0) return conditional ? limit : -1;
+    }
+    return -1;
   }
 
   private static int loopTailJumpIndex(
