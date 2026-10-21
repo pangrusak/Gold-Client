@@ -130,6 +130,52 @@
 
     const nativeProxies = new WeakMap();
 
+    function createTextureStitchEvent(map) {
+        const event = new GoldClientForgeEvent();
+        event.getMap = () => map;
+        return event;
+    }
+
+    function postTextureStitch(phase, map) {
+        if (map === null || map === undefined) return;
+        const bus = global.goldClientForgeEventBus;
+        if (!bus || typeof bus.post !== "function") return;
+        try {
+            const type = "net.minecraftforge.client.event.TextureStitchEvent$" + phase;
+            if (typeof console.warn === "function") {
+                console.warn("[GoldForge texture-stitch-event] " + phase
+                    + " listeners=" + (bus.listeners?.(type)?.length ?? "?"),
+                    classNameOf(map) ?? map?.constructor?.name ?? typeof map);
+            }
+            const result = bus.post(type, createTextureStitchEvent(map));
+            for (const failure of result?.failures ?? []) {
+                console.error("[GoldForge texture-stitch-event] " + phase
+                    + " listener " + failure.owner + " failed: "
+                    + (failure.error?.message ?? String(failure.error)), failure.error);
+            }
+        } catch (error) {
+            console.error("[GoldForge texture-stitch-event] " + phase + " dispatch failed", error);
+        }
+    }
+
+    /**
+     * Mirrors Forge's TextureStitchEvent around a real native texture-map load.
+     * The event is only posted when a Forge event bus is installed and a map
+     * object is supplied; the native load still performs all texture work.
+     */
+    function invokeNativeMethod(raw, name, method, args) {
+        const mapped = name?.startsWith("$") ? name.slice(1) : name;
+        const textureLoad = (mapped === "loadTexture"
+            || mapped === "loadTickableTexture" || mapped === "func_110580_a")
+            && args.length >= 2 && args[1] !== null && typeof args[1] === "object";
+        if (textureLoad) postTextureStitch("Pre", args[1]);
+        try {
+            return Reflect.apply(method, raw, args.map(unwrapArgument));
+        } finally {
+            if (textureLoad) postTextureStitch("Post", args[1]);
+        }
+    }
+
     function nativeProxy(target) {
         const existing = nativeProxies.get(target);
         if (existing) return existing;
@@ -150,10 +196,18 @@
                     };
                 }
                 if (typeof property === "symbol") return Reflect.get(raw, property, raw);
+                if (property === "ordinal") {
+                    if (typeof raw.$ordinal === "number") return raw.$ordinal;
+                    if (typeof raw.ordinal === "number") return raw.ordinal;
+                }
+                if (property === "name") {
+                    if (typeof raw.$name2 === "string") return api().util.ustr(raw.$name2);
+                    if (typeof raw.$name === "string") return api().util.ustr(raw.$name);
+                }
                 if (property.startsWith("$")) {
                     const direct = Reflect.get(raw, property, raw);
                     return typeof direct === "function"
-                        ? (...args) => adaptNative(Reflect.apply(direct, raw, args.map(unwrapArgument)))
+                        ? (...args) => adaptNative(invokeNativeMethod(raw, property, direct, args))
                         : adaptNative(direct);
                 }
                 const names = memberNames(property);
@@ -162,13 +216,16 @@
                     if (key in raw) {
                         const value = Reflect.get(raw, key, raw);
                         return typeof value === "function"
-                            ? (...args) => adaptNative(Reflect.apply(value, raw, args.map(unwrapArgument)))
+                            ? (...args) => adaptNative(invokeNativeMethod(raw, name, value, args))
                             : adaptNative(value);
                     }
                 }
                 for (const name of names) {
                     if (name in raw) {
-                        return adaptNative(Reflect.get(raw, name, raw));
+                        const value = Reflect.get(raw, name, raw);
+                        return typeof value === "function"
+                            ? (...args) => adaptNative(invokeNativeMethod(raw, name, value, args))
+                            : adaptNative(value);
                     }
                 }
                 // TeaVM fields may receive numeric suffixes when names collide.
@@ -180,12 +237,24 @@
                     if (key) {
                         const value = Reflect.get(raw, key, raw);
                         return typeof value === "function"
-                            ? (...args) => adaptNative(Reflect.apply(value, raw, args.map(unwrapArgument)))
+                            ? (...args) => adaptNative(invokeNativeMethod(raw, name, value, args))
                             : adaptNative(value);
                     }
                 }
-                fail("missing-native-member", (classNameOf(raw) || "<unknown>") + "." + property
-                    + "; mapped candidates: " + names.join(", "));
+                if (isNativeItemStack(raw)) {
+                    if (property === "hasCapability") {
+                        return (capability, facing) =>
+                            stackHasCapability(raw, capability, facing) ? 1 : 0;
+                    }
+                    if (property === "getCapability") {
+                        return (capability, facing) =>
+                            adaptNative(stackGetCapability(raw, capability, facing));
+                    }
+                }
+                fail("missing-native-member", (classNameOf(raw)
+                    || raw?.constructor?.name || "<unknown>") + "." + property
+                    + "; mapped candidates: " + names.join(", ")
+                    + "; own keys: " + Reflect.ownKeys(raw).slice(0, 12).map(String).join(", "));
             },
             set(raw, property, value) {
                 if (typeof property !== "string") return Reflect.set(raw, property, value, raw);
@@ -219,6 +288,35 @@
         return null;
     }
 
+    const callbackProxies = new WeakMap();
+
+    /**
+     * TeaVM calls callbacks through their Java interface method names (for
+     * example `$onResourceManagerReload`). A lowered Java lambda is a plain
+     * JavaScript closure, which has no such member. Wrap it lazily so any
+     * TeaVM-style `$method` call invokes the closure with the native arguments;
+     * the generated lambda already has the exact functional-interface body.
+     */
+    function adaptCallback(callback) {
+        let proxy = callbackProxies.get(callback);
+        if (proxy) return proxy;
+        proxy = new Proxy(callback, {
+            get(target, property, receiver) {
+                if (typeof property === "string" && property.startsWith("$")
+                    && !Reflect.has(target, property)) {
+                    return (...args) => adaptNative(
+                        Reflect.apply(target, target, args.map(unwrapArgument)));
+                }
+                return Reflect.get(target, property, target);
+            },
+            apply(target, thisArg, args) {
+                return Reflect.apply(target, thisArg, args);
+            }
+        });
+        callbackProxies.set(callback, proxy);
+        return proxy;
+    }
+
     function unwrapArgument(value) {
         if (isProxy(value)) return value.getRef();
         if (value === null || value === undefined) return value;
@@ -228,6 +326,7 @@
             return util.str(value);
         }
         if (typeof value === "boolean") return value ? 1 : 0;
+        if (typeof value === "function") return adaptCallback(value);
         if (Array.isArray(value)) return value.map(unwrapArgument);
         return value;
     }
@@ -275,9 +374,33 @@
         return adaptNative(result);
     }
 
+    let warnedKeyBindingAdapter = false;
+
+    function adaptKeyBindingArguments(owner, args) {
+        if (!String(owner).endsWith("net.minecraft.client.settings.KeyBinding")) {
+            return { args, context: null, modifier: null };
+        }
+        if (args.length === 4) {
+            return { args: [args[0], args[2], args[3]], context: args[1], modifier: null };
+        }
+        if (args.length === 5) {
+            return { args: [args[0], args[3], args[4]], context: args[1], modifier: args[2] };
+        }
+        return { args, context: null, modifier: null };
+    }
+
     function constructNative(owner, args, receiver = null) {
         const entry = reflection(owner);
-        const encoded = Array.from(args, unwrapArgument);
+        const adapted = adaptKeyBindingArguments(owner, Array.from(args));
+        if (adapted.context !== null && !warnedKeyBindingAdapter) {
+            warnedKeyBindingAdapter = true;
+            if (global.console && typeof global.console.warn === "function") {
+                global.console.warn("[GoldForge key-binding-adapter] Forge key conflict context"
+                    + " and modifier metadata is retained, but the Eaglercraft KeyBinding does not"
+                    + " enforce it");
+            }
+        }
+        const encoded = Array.from(adapted.args, unwrapArgument);
         if (receiver) return initializeNativeSuperclass(owner, entry, encoded, receiver);
         const constructors = entry.constructors ?? [];
         if (!constructors.length) {
@@ -295,6 +418,10 @@
         }
         const result = Reflect.apply(constructor, receiver ?? entry.class, encoded);
         if (result === null || result === undefined) fail("null-constructor", owner);
+        if (adapted.context !== null) {
+            result.$goldKeyConflictContext = adapted.context;
+            if (adapted.modifier !== null) result.$goldKeyModifier = adapted.modifier;
+        }
         return adaptNative(result);
     }
 
@@ -312,6 +439,53 @@
      * if that constructor allocates a different object we fail instead of
      * copying or guessing its state.</p>
      */
+    /**
+     * Some public Minecraft methods are absent from Eaglercraft's TeaVM method
+     * table even though their behavior is still needed by translated Forge
+     * subclasses. TextureMap.registerSprite is one such method: the native
+     * implementation populates `mapRegisteredSprites` with a
+     * TextureAtlasSprite constructed from the location's Java string. Rebuild
+     * that behavior from visible native fields and the real constructor rather
+     * than returning a placeholder.
+     */
+    function installNativeSuperclassAdapters(owner, prototype) {
+        if (owner !== "net.minecraft.client.renderer.texture.TextureMap"
+            || prototype == null) return;
+        const registerSprite = function goldClientRegisterSprite(location) {
+            if (location === null || location === undefined) {
+                fail("texture-map-register-sprite", "cannot register a null sprite location");
+            }
+            const map = this.$mapRegisteredSprites;
+            if (!map || typeof map.$get !== "function" || typeof map.$put !== "function") {
+                fail("texture-map-register-sprite",
+                    "native TextureMap has no initialized mapRegisteredSprites");
+            }
+            let sprite = map.$get(location);
+            if (sprite === null || sprite === undefined) {
+                const util = api().util;
+                if (typeof util.str !== "function") {
+                    fail("texture-map-register-sprite", "ModAPI.util.str is unavailable");
+                }
+                const created = constructNative(
+                    "net.minecraft.client.renderer.texture.TextureAtlasSprite",
+                    [util.str(String(location))]);
+                sprite = isProxy(created) ? created.getRef() : created;
+                map.$put(location, sprite);
+            }
+            return adaptNative(sprite);
+        };
+        for (const name of ["registerSprite", "func_174942_a"]) {
+            if (typeof prototype[name] === "function") continue;
+            try {
+                Object.defineProperty(prototype, name, {
+                    value: registerSprite, configurable: true, writable: true
+                });
+            } catch (ignored) {
+                // Frozen prototypes keep their existing surface.
+            }
+        }
+    }
+
     function initializeNativeSuperclass(owner, entry, args, receiver) {
         const nativeClass = entry.class;
         if (typeof nativeClass !== "function" || !nativeClass.prototype) {
@@ -340,6 +514,8 @@
                     + owner + " to an unexpected receiver prototype");
             }
         }
+
+        installNativeSuperclassAdapters(owner, Object.getPrototypeOf(receiver));
 
         const internal = (entry.internalConstructors ?? []).filter(fn => typeof fn === "function");
         const exact = internal.filter(fn => fn.length === args.length + 1);
@@ -639,19 +815,59 @@
             }
             return this.categories.get(key);
         }
-        getCategory(name) {
-            const category = this.category(name);
-            return Object.freeze({
+        categoryView(category) {
+            if (category.view) return category.view;
+            const self = this;
+            category.view = {
                 getName: () => category.name,
+                getQualifiedName: () => category.name,
                 setComment: comment => { category.comment = String(comment); },
                 getComment: () => category.comment,
                 setLanguageKey: key => { category.languageKey = String(key); },
                 getLanguageKey: () => category.languageKey ?? "config." + category.name,
                 getOrderedConfigElements: () => Object.keys(category.values)
                     .sort()
-                    .map(key => this.get(category.name, key, category.values[key]))
-            });
+                    .map(key => self.get(category.name, key, category.values[key])),
+                getValues: () => ({ ...category.values }),
+                get: key => category.values[stringArgument(key)],
+                containsKey: key => Object.prototype.hasOwnProperty.call(
+                    category.values, stringArgument(key)),
+                put: (key, value) => {
+                    category.values[stringArgument(key)] = value;
+                    self.changed = true;
+                },
+                remove: key => {
+                    const name = stringArgument(key);
+                    if (!Object.prototype.hasOwnProperty.call(category.values, name)) return;
+                    delete category.values[name];
+                    self.changed = true;
+                },
+                hasChanged: () => self.changed,
+                getChildren: () => [],
+                getChild: () => null,
+                isChild: () => false,
+                setChild: () => {}
+            };
+            return category.view;
         }
+        addCategory(name) {
+            const category = this.category(name);
+            return this.categoryView(category);
+        }
+        getCategory(name) {
+            const key = stringArgument(name);
+            if (!this.categories.has(key)) return null;
+            return this.categoryView(this.categories.get(key));
+        }
+        removeCategory(category) {
+            const name = typeof category === "string"
+                ? stringArgument(category)
+                : (typeof category?.getName === "function" ? stringArgument(category.getName()) : null);
+            if (name === null || !this.categories.has(name)) return;
+            this.categories.delete(name);
+            this.changed = true;
+        }
+        hasCategory(name) { return this.categories.has(stringArgument(name)); }
         getCategoryNames() { return [...this.categories.keys()].sort(); }
         addCustomCategoryComment(category, comment) {
             this.category(category).comment = String(comment);
@@ -664,6 +880,16 @@
         }
         getCategoryLanguageKey(category) {
             return this.category(category).languageKey ?? "config." + stringArgument(category);
+        }
+        getLoadedConfigVersion() {
+            const text = this.file.readText();
+            if (!text) return null;
+            try {
+                const parsed = JSON.parse(text);
+                return parsed.version === undefined ? null : String(parsed.version);
+            } catch (error) {
+                fail("invalid-config", this.file.getPath() + " is not valid JSON: " + error.message);
+            }
         }
         get(categoryName, key, defaultValue, description, type) {
             const category = this.category(categoryName);
@@ -679,6 +905,8 @@
                 defaultValue,
                 description: description === undefined ? null : String(description),
                 type,
+                showInGui: true,
+                languageKey: null,
                 getBoolean(fallback = false) { return Boolean(category.values[name] ?? fallback); },
                 getInt(fallback = 0) { return Number(category.values[name] ?? fallback) | 0; },
                 getFloat(fallback = 0) { return Math.fround(Number(category.values[name] ?? fallback)); },
@@ -695,32 +923,82 @@
                     self.changed = true;
                     return true;
                 },
+                hasChanged() {
+                    return JSON.stringify(category.values[name]) !== JSON.stringify(defaultValue);
+                },
                 isDefault() {
                     return JSON.stringify(category.values[name]) === JSON.stringify(defaultValue);
                 },
                 getDefault() { return defaultValue; },
                 getName() { return name; },
                 getQualifiedName() { return category.name + "." + name; },
-                getLanguageKey() { return "config." + category.name + "." + name; },
+                getLanguageKey() { return property.languageKey ?? "config." + category.name + "." + name; },
                 setLanguageKey(languageKey) { property.languageKey = String(languageKey); },
-                getType() { return type; }
+                getComment() { return property.description; },
+                setComment(comment) { property.description = String(comment); },
+                getType() { return type; },
+                setValidValues(values) {
+                    property.validValues = Array.isArray(values) ? values.map(String) : [];
+                },
+                getValidValues() { return property.validValues ?? []; },
+                setShowInGui(show) { property.showInGui = Boolean(show); },
+                showInGui() { return property.showInGui; },
+                setRequiresMcRestart() {},
+                setRequiresWorldRestart() {},
+                requiresMcRestart() { return false; },
+                requiresWorldRestart() { return false; }
             };
             return property;
         }
-        getInt(category, key, defaultValue, description) {
-            return this.get(category, key, defaultValue, description).getInt(defaultValue);
+        enumName(value) {
+            if (value === undefined || value === null) return null;
+            if (typeof value === "string") return value;
+            if (value.name !== undefined) return String(value.name);
+            if (value.ordinal !== undefined) return String(value.ordinal);
+            return String(value);
+        }
+        getEnum(name, category, defaultValue, enumValues) {
+            const categoryName = stringArgument(category);
+            const key = stringArgument(name);
+            const values = Array.isArray(enumValues) ? enumValues : [];
+            const categoryObject = this.category(categoryName);
+            let stored;
+            if (Object.prototype.hasOwnProperty.call(categoryObject.values, key)) {
+                stored = categoryObject.values[key];
+            } else {
+                stored = this.enumName(defaultValue);
+                categoryObject.values[key] = stored;
+            }
+            const wanted = (typeof stored === "object" && stored !== null)
+                ? this.enumName(stored) : stringArgument(stored);
+            const match = values.find(value => this.enumName(value) === wanted);
+            return match ?? defaultValue;
+        }
+        setEnum(name, category, value, enumValues) {
+            const key = stringArgument(name);
+            const categoryObject = this.category(category);
+            categoryObject.values[key] = this.enumName(value);
+            this.changed = true;
+        }
+        getInt(name, category, defaultValue, minValue, maxValue, description) {
+            const property = this.get(category, name, defaultValue, description);
+            const value = property.getInt(defaultValue);
+            if (typeof minValue === "number" && typeof maxValue === "number") {
+                return Math.min(Math.max(value, Math.min(minValue, maxValue)), Math.max(minValue, maxValue));
+            }
+            return value;
         }
         getBoolean(category, key, defaultValue, description) {
             return this.get(category, key, defaultValue, description).getBoolean(defaultValue);
         }
-        getString(category, key, defaultValue, description) {
-            return this.get(category, key, defaultValue, description).getString(defaultValue);
+        getString(name, category, defaultValue, description) {
+            return this.get(category, name, defaultValue, description).getString(defaultValue);
         }
-        getFloat(category, key, defaultValue, description) {
-            return this.get(category, key, defaultValue, description).getFloat(defaultValue);
+        getFloat(name, category, defaultValue, description) {
+            return this.get(category, name, defaultValue, description).getFloat(defaultValue);
         }
-        getStringList(category, key, defaultValue, description) {
-            return this.get(category, key, defaultValue, description).getStringList(defaultValue);
+        getStringList(name, category, defaultValue, description) {
+            return this.get(category, name, defaultValue, description).getStringList(defaultValue);
         }
     }
 
@@ -797,6 +1075,95 @@
         };
     }
 
+    // Forge's ASMDataTable is discovery data harvested from the input JAR. The
+    // translated bundle carries the same annotation values in registerClass
+    // metadata, so reconstruct the table instead of inventing annotations.
+    // Annotations that were not present in the bytecode stay absent.
+    function asmAnnotationRecords() {
+        const forge = global.GoldClientForge;
+        if (Array.isArray(forge?.annotations)) return forge.annotations;
+        const value = global.GoldClientRuntime;
+        return typeof value?.annotationData === "function" ? value.annotationData() : [];
+    }
+
+    function descriptorClassName(descriptor) {
+        if (typeof descriptor !== "string" || !descriptor) return null;
+        if (descriptor.startsWith("L") && descriptor.endsWith(";")) {
+            return descriptor.slice(1, -1).replace(/\//g, ".");
+        }
+        if (descriptor.startsWith("[")) {
+            return descriptorClassName(descriptor.slice(1)) + "[]";
+        }
+        return ({ Z: "boolean", B: "byte", C: "char", S: "short",
+            I: "int", J: "long", F: "float", D: "double", V: "void" })[descriptor] ?? descriptor;
+    }
+
+    function asmAnnotationValue(value) {
+        if (value === null || value === undefined) return null;
+        if (Array.isArray(value)) return value.map(asmAnnotationValue);
+        if (typeof value !== "object") return value;
+        if (value.$goldEnum) return String(value.$goldEnum.constant);
+        if (value.$goldClass) {
+            const name = descriptorClassName(value.$goldClass);
+            return name === null ? null : runtime().classLiteral(name);
+        }
+        if (value.$goldAnnotation) {
+            return asmAnnotationMap(value.$goldAnnotation.values ?? {});
+        }
+        return value;
+    }
+
+    function asmAnnotationMap(values) {
+        const map = runtime().createJava("java.util.HashMap");
+        for (const [key, value] of Object.entries(values ?? {})) {
+            map.put(key, asmAnnotationValue(value));
+        }
+        return map;
+    }
+
+    function asmDataFor(record) {
+        return Object.freeze({
+            getClassName: () => record.className,
+            getAnnotationName: () => record.name,
+            getObject: () => asmAnnotationMap(record.values),
+            getMethodName: () => record.target === "method" ? record.member : null,
+            getFieldName: () => record.target === "field" ? record.member : null,
+            isClass: () => record.target === "class",
+            toString: () => record.className + "@" + record.name
+        });
+    }
+
+    function asmDataSet(predicate) {
+        const set = runtime().createJava("java.util.LinkedHashSet");
+        for (const record of asmAnnotationRecords()) {
+            if (predicate(record)) set.add(asmDataFor(record));
+        }
+        return set;
+    }
+
+    function asmDataTable() {
+        return Object.freeze({
+            getAll(annotationName) {
+                const name = String(annotationName);
+                return asmDataSet(record => record.name === name);
+            },
+            getForClass(className) {
+                const name = String(className);
+                return asmDataSet(record => record.className === name);
+            },
+            getAllFor(className) {
+                return this.getForClass(className);
+            },
+            getASMData(className, annotationName) {
+                const target = String(className);
+                const name = String(annotationName);
+                const record = asmAnnotationRecords().find(item =>
+                    item.className === target && item.name === name);
+                return record ? asmDataFor(record) : null;
+            }
+        });
+    }
+
     function createLifecycleEvent(mod, phase, context, side) {
         const event = new GoldClientForgeEvent();
         event.eventType = phase.eventType;
@@ -814,9 +1181,7 @@
         };
         event.getSuggestedConfigurationFile = () =>
             new GoldClientVirtualFile("config", mod.modId + ".cfg");
-        event.getAsmData = () => {
-            fail("unsupported-asm-data", "FMLPreInitializationEvent.getAsmData is not available through EaglerForge");
-        };
+        event.getAsmData = () => asmDataTable();
         // FMLConstructionEvent exposes the discovery/loader state. The browser
         // host has no Forge discovery table or loader-state list, so these fail
         // explicitly instead of returning invented containers.
@@ -877,24 +1242,382 @@
         return channel;
     }
 
+    function eventDrivenChannel(name) {
+        const channelName = String(name);
+        const registrations = [];
+        const unsupported = operation => fail("unsupported-network",
+            "FMLEventChannel." + operation + " is not available through the Eaglercraft client");
+        const channel = Object.freeze({
+            channelName,
+            registrations,
+            register(...args) {
+                registrations.push(Object.freeze({ args: args.slice() }));
+                return undefined;
+            },
+            registerMessage(...args) {
+                registrations.push(Object.freeze({ args: args.slice() }));
+                return undefined;
+            },
+            sendToServer: () => unsupported("sendToServer"),
+            sendTo: () => unsupported("sendTo"),
+            sendToAll: () => unsupported("sendToAll"),
+            sendToAllAround: () => unsupported("sendToAllAround"),
+            sendToDimension: () => unsupported("sendToDimension"),
+            getChannelName: () => channelName
+        });
+        NETWORK_CHANNELS.set(channelName, channel);
+        return channel;
+    }
+
     const NETWORK_REGISTRY = Object.freeze({
         newSimpleChannel(...args) { return simpleNetworkChannel(args[0]); },
+        newEventDrivenChannel(...args) { return eventDrivenChannel(args[0]); },
         registerGuiHandler: () => fail("unsupported-gui",
             "NetworkRegistry.registerGuiHandler has no Eaglercraft client route")
     });
 
+    // Forge's inter-mod communication bus has no Eaglercraft equivalent. The
+    // Java API returns a boolean delivery result, so report non-delivery
+    // instead of pretending the message reached another mod.
+    function undeliveredImc(operation, args) {
+        const target = args && args[0] != null ? String(args[0]) : "";
+        if (global.console && typeof global.console.warn === "function") {
+            global.console.warn("[GoldForge unsupported-imc] " + operation
+                + (target ? " for " + target : "") + " was not delivered");
+        }
+        return false;
+    }
+
+    // Forge client settings enums have no native Eaglercraft counterparts, but
+    // they are metadata passed to KeyBinding constructors. Expose the real 1.12.2
+    // constants and fail explicitly if translated code tries to evaluate the
+    // client-specific conflict logic itself.
+    function keySettingsEnum(values, operation) {
+        const constants = values.map((name, ordinal) => Object.freeze({
+            name, ordinal, toString: () => name,
+            compareTo: other => ordinal - (other?.ordinal ?? 0),
+            isActive: () => fail(operation, "isActive"),
+            conflicts: () => fail(operation, "conflicts"),
+            matches: () => fail(operation, "matches")
+        }));
+        return Object.freeze({
+            staticFields: Object.freeze(Object.fromEntries(
+                constants.map(value => [value.name, value]))),
+            staticMethods: {
+                values: () => constants.slice(),
+                valueOf: args => constants.find(value => value.name === String(args[0]))
+                    ?? fail("unknown-enum", operation + "." + args[0])
+            }
+        });
+    }
+
+    // Forge's ClientRegistry has no Eaglercraft counterpart. Keep a real
+    // registration list so mods can query what they registered, but warn that
+    // the bindings are not wired into the client's input loop by this bridge.
+    const CLIENT_KEY_BINDINGS = [];
+    let warnedClientRegistry = false;
+    const CLIENT_REGISTRY = Object.freeze({
+        registerKeyBinding(...bindings) {
+            const list = Array.isArray(bindings) ? bindings : [bindings];
+            CLIENT_KEY_BINDINGS.push(...list);
+            if (!warnedClientRegistry) {
+                warnedClientRegistry = true;
+                if (global.console && typeof global.console.warn === "function") {
+                    global.console.warn("[GoldForge client-registry] Key bindings are recorded but"
+                        + " not attached to the Eaglercraft input loop by this bridge");
+                }
+            }
+        },
+        getKeyBinding: () => null
+    });
+
+    function forgeModContainer(mod) {
+        const modId = String(mod.modId);
+        const name = String(mod.name ?? modId);
+        const version = String(mod.version ?? "unknown");
+        const metadata = Object.freeze({
+            getModId: () => modId,
+            getName: () => name,
+            getVersion: () => version
+        });
+        return Object.freeze({
+            __goldClassName: "net.minecraftforge.fml.common.ModContainer",
+            getModId: () => modId,
+            getName: () => name,
+            getVersion: () => version,
+            getMetadata: () => metadata,
+            getSource: () => null,
+            getOwningMod: () => null,
+            getDependencies: () => Object.freeze([]),
+            getDependants: () => Object.freeze([]),
+            getCustomModProperties: () => new Map(),
+            getSharedModDescriptor: () => null
+        });
+    }
+
+    const FML_LOADER = Object.freeze({
+        __goldClassName: "net.minecraftforge.fml.common.Loader",
+        instance: () => FML_LOADER,
+        getIndexedModList() {
+            const indexed = new Map();
+            for (const mod of global.GoldClientForge?.mods ?? []) {
+                indexed.set(String(mod.modId), forgeModContainer(mod));
+            }
+            return indexed;
+        },
+        getModList() { return Array.from(this.getIndexedModList().values()); },
+        getModContainerById(modId) {
+            return this.getIndexedModList().get(String(modId)) ?? null;
+        },
+        getModContainerState(modId) {
+            return this.getModContainerById(modId) ? "LOADED" : "MISSING";
+        },
+        isModLoaded(modId) {
+            const loaded = global.goldClientForgeModIds?.has(String(modId))
+                || this.getIndexedModList().has(String(modId));
+            return loaded ? 1 : 0;
+        },
+        isModActive() { return false; },
+        getActiveModList() { return this.getModList(); },
+        activeModContainer() { return this.getModList()[0] ?? null; },
+        isInitialized() { return true; },
+        isLoading() { return false; },
+        getLoaderState() { return "AVAILABLE"; }
+    });
+
+    const PROGRESS_STACK = [];
+    const PROGRESS_MANAGER = Object.freeze({
+        push(title, size) {
+            const total = Number(size ?? 0);
+            const bar = {
+                __goldClassName: "net.minecraftforge.fml.common.ProgressManager$ProgressBar",
+                title: String(title ?? ""),
+                size: Number.isFinite(total) ? total : 0,
+                steps: 0,
+                step(value) {
+                    this.steps = Math.min(this.size, this.steps + 1);
+                    return value;
+                }
+            };
+            PROGRESS_STACK.push(bar);
+            return bar;
+        },
+        pop() {
+            if (!PROGRESS_STACK.length) {
+                fail("progress-manager", "pop without a matching push");
+            }
+            return PROGRESS_STACK.pop();
+        }
+    });
+
+    // ---------------------------------------------------------------------
+    // Forge capabilities
+    //
+    // Eaglercraft's native classes have no Forge capability system. The bridge
+    // keeps the real 1.12.2 contract: built-in capability instances are stable
+    // objects, CapabilityManager registrations create further instances, and
+    // ItemStack lookups consult the item's own initCapabilities provider. There
+    // is no invented provider: an item that supplies none reports no capability.
+    // ---------------------------------------------------------------------
+    const CAPABILITY_TYPES = new Map();
+
+    function capabilityTypeName(type) {
+        if (type == null) return null;
+        if (typeof type === "string") return type.replaceAll("/", ".");
+        if (typeof type === "function") {
+            return type.__goldClassName ?? type.className ?? type.name ?? null;
+        }
+        const named = type.getName?.() ?? type.__goldClassName ?? type.name;
+        return named == null ? null : String(named).replaceAll("/", ".");
+    }
+
+    function createCapability(name, typeName, options = {}) {
+        return Object.freeze({
+            __goldClassName: "net.minecraftforge.common.capabilities.Capability",
+            name: String(name),
+            typeName: typeName == null ? null : String(typeName),
+            defaultProvider: options.defaultProvider ?? null,
+            storage: options.storage ?? null,
+            getName: () => String(name),
+            getType: () => typeName ?? null,
+            getDefault: () => options.defaultProvider ?? null,
+            cast: value => value ?? null
+        });
+    }
+
+    function registerCapability(type, storage, defaultProvider) {
+        const typeName = capabilityTypeName(type);
+        if (!typeName) {
+            fail("capability-registration", "Cannot register a capability without a type");
+        }
+        const capability = createCapability(typeName, typeName, { storage, defaultProvider });
+        CAPABILITY_TYPES.set(typeName, capability);
+        CAPABILITY_TYPES.set(typeName.replaceAll("/", "."), capability);
+        return capability;
+    }
+
+    const CAPABILITY_FLUID_HANDLER = createCapability(
+        "net.minecraftforge.fluids.capability.IFluidHandler",
+        "net.minecraftforge.fluids.capability.IFluidHandler");
+    const CAPABILITY_FLUID_HANDLER_ITEM = createCapability(
+        "net.minecraftforge.fluids.capability.IFluidHandlerItem",
+        "net.minecraftforge.fluids.capability.IFluidHandlerItem");
+    const CAPABILITY_ITEM_HANDLER = createCapability(
+        "net.minecraftforge.items.IItemHandler",
+        "net.minecraftforge.items.IItemHandler");
+    const CAPABILITY_ENERGY = createCapability(
+        "net.minecraftforge.energy.IEnergyStorage",
+        "net.minecraftforge.energy.IEnergyStorage");
+    registerCapability("net.minecraftforge.fluids.capability.IFluidHandler",
+        null, null);
+    registerCapability("net.minecraftforge.fluids.capability.IFluidHandlerItem",
+        null, null);
+    registerCapability("net.minecraftforge.items.IItemHandler", null, null);
+    registerCapability("net.minecraftforge.energy.IEnergyStorage", null, null);
+    // Built-in constants keep their canonical objects even after registration.
+    CAPABILITY_TYPES.set("net.minecraftforge.fluids.capability.IFluidHandler",
+        CAPABILITY_FLUID_HANDLER);
+    CAPABILITY_TYPES.set("net.minecraftforge.fluids.capability.IFluidHandlerItem",
+        CAPABILITY_FLUID_HANDLER_ITEM);
+    CAPABILITY_TYPES.set("net.minecraftforge.items.IItemHandler", CAPABILITY_ITEM_HANDLER);
+    CAPABILITY_TYPES.set("net.minecraftforge.energy.IEnergyStorage", CAPABILITY_ENERGY);
+
+    const CAPABILITY_MANAGER = Object.freeze({
+        __goldClassName: "net.minecraftforge.common.capabilities.CapabilityManager",
+        register(type, storage, defaultProvider) {
+            registerCapability(type, storage, defaultProvider);
+        },
+        registerInternal(type, storage, defaultProvider) {
+            registerCapability(type, storage, defaultProvider);
+        }
+    });
+
+    const stackCapabilityProviders = new WeakMap();
+
+    function itemStackProviders(stack) {
+        const cached = stackCapabilityProviders.get(stack);
+        if (cached) return cached;
+        const providers = [];
+        const getItem = resolveNativeMember(stack, "getItem");
+        const item = getItem ? getItem() : null;
+        if (item != null) {
+            const initCapabilities = resolveNativeMember(item, "initCapabilities");
+            if (initCapabilities) {
+                const provider = initCapabilities(stack, null);
+                if (provider != null) providers.push(isProxy(provider) ? provider.getRef() : provider);
+            }
+        }
+        stackCapabilityProviders.set(stack, providers);
+        return providers;
+    }
+
+    function providerHasCapability(provider, capability, facing) {
+        if (provider == null) return false;
+        const has = resolveNativeMember(provider, "hasCapability");
+        if (has) return Boolean(has(capability, facing));
+        // ICapabilityProvider's default hasCapability() is getCapability() != null.
+        const get = resolveNativeMember(provider, "getCapability");
+        return get ? get(capability, facing) != null : false;
+    }
+
+    function providerGetCapability(provider, capability, facing) {
+        if (provider == null) return null;
+        const get = resolveNativeMember(provider, "getCapability");
+        return get ? get(capability, facing) : null;
+    }
+
+    function stackHasCapability(stack, capability, facing) {
+        if (capability == null || capability.__goldClassName
+                !== "net.minecraftforge.common.capabilities.Capability") {
+            return false;
+        }
+        return itemStackProviders(stack).some(provider =>
+            providerHasCapability(provider, capability, facing));
+    }
+
+    function stackGetCapability(stack, capability, facing) {
+        if (capability == null || capability.__goldClassName
+                !== "net.minecraftforge.common.capabilities.Capability") {
+            return null;
+        }
+        for (const provider of itemStackProviders(stack)) {
+            const value = providerGetCapability(provider, capability, facing);
+            if (value != null) return value;
+        }
+        return capability.getDefault?.() ?? null;
+    }
+
+    let nativeItemStackClass;
+    function isNativeItemStack(raw) {
+        if (nativeItemStackClass === undefined) {
+            try {
+                const entry = api().reflect.getClassById("net.minecraft.item.ItemStack");
+                nativeItemStackClass = entry?.class ?? null;
+            } catch (ignored) {
+                nativeItemStackClass = null;
+            }
+        }
+        if (nativeItemStackClass && raw instanceof nativeItemStackClass) return true;
+        return raw?.constructor?.name === "nmi_ItemStack";
+    }
+
     const FACADES = new Map([
+        ["net.minecraftforge.common.capabilities.CapabilityManager", {
+            staticFields: { INSTANCE: CAPABILITY_MANAGER },
+            staticMethods: {
+                register: args => CAPABILITY_MANAGER.register(args[0], args[1], args[2]),
+                registerInternal: args =>
+                    CAPABILITY_MANAGER.registerInternal(args[0], args[1], args[2])
+            }
+        }],
+        ["net.minecraftforge.fluids.capability.CapabilityFluidHandler", {
+            staticFields: {
+                FLUID_HANDLER_CAPABILITY: CAPABILITY_FLUID_HANDLER,
+                FLUID_HANDLER_ITEM_CAPABILITY: CAPABILITY_FLUID_HANDLER_ITEM
+            }
+        }],
+        ["net.minecraftforge.items.CapabilityItemHandler", {
+            staticFields: { ITEM_HANDLER_CAPABILITY: CAPABILITY_ITEM_HANDLER }
+        }],
+        ["net.minecraftforge.energy.CapabilityEnergy", {
+            staticFields: { ENERGY: CAPABILITY_ENERGY }
+        }],
+        ["net.minecraftforge.fml.client.registry.ClientRegistry", {
+            staticMethods: {
+                registerKeyBinding: (...args) => CLIENT_REGISTRY.registerKeyBinding(...args),
+                getKeyBinding: () => CLIENT_REGISTRY.getKeyBinding()
+            }
+        }],
+        ["net.minecraftforge.client.settings.KeyConflictContext",
+            keySettingsEnum(["UNIVERSAL", "GUI", "IN_GAME"], "KeyConflictContext")],
+        ["net.minecraftforge.client.settings.KeyModifier",
+            keySettingsEnum(["NONE", "SHIFT", "CONTROL", "ALT"], "KeyModifier")],
         ["net.minecraftforge.fml.common.network.NetworkRegistry", {
             staticFields: { INSTANCE: NETWORK_REGISTRY }
+        }],
+        ["net.minecraftforge.fml.common.event.FMLInterModComms", {
+            staticMethods: {
+                sendRuntimeMessage: args => undeliveredImc("sendRuntimeMessage", args),
+                sendMessage: args => undeliveredImc("sendMessage", args)
+            }
+        }],
+        ["net.minecraftforge.fml.common.ProgressManager", {
+            staticMethods: {
+                push: args => PROGRESS_MANAGER.push(args[0], args[1]),
+                pop: () => PROGRESS_MANAGER.pop()
+            }
         }],
         ["net.minecraftforge.fml.common.FMLCommonHandler", {
             staticMethods: { instance: () => FML_COMMON_HANDLER }
         }],
         ["net.minecraftforge.fml.common.Loader", {
             staticMethods: {
-                isModLoaded: args => global.goldClientForgeModIds?.has(String(args[0])) ? 1 : 0,
-                isModActive: () => fail("unsupported-operation", "Loader.isModActive"),
-                getModList: () => fail("unsupported-operation", "Loader.getModList")
+                instance: () => FML_LOADER,
+                isModLoaded: args => FML_LOADER.isModLoaded(args[0]),
+                isModActive: () => false,
+                getModList: () => FML_LOADER.getModList(),
+                getIndexedModList: () => FML_LOADER.getIndexedModList(),
+                getModContainerById: args => FML_LOADER.getModContainerById(args[0])
             }
         }],
         ["net.minecraftforge.fml.common.eventhandler.EventPriority", {
@@ -923,6 +1646,11 @@
         receiver.modId = config.modId;
         for (const name of Object.getOwnPropertyNames(GoldClientConfiguration.prototype)) {
             if (name === "constructor") continue;
+            // A translated subclass (for example JEI's LocalizedConfiguration)
+            // already exposes its own override through its prototype. Do not
+            // shadow it with the base adapter method. Plain receivers still get
+            // the base implementation.
+            if (typeof receiver[name] === "function") continue;
             // Assign the prototype function, not a bound copy: every method
             // reads this.categories/this.changed from the translated receiver.
             receiver[name] = GoldClientConfiguration.prototype[name];

@@ -865,7 +865,7 @@ public final class JavaScriptTranslator {
     StringBuffer staticWrites = new StringBuffer();
     while (staticWrite.find()) {
       String owner = staticWrite.group(1);
-      if (owner.startsWith("java.") || owner.startsWith("javax.") || owner.startsWith("GoldClientRuntime")
+      if (owner.startsWith("GoldClientRuntime")
           || java.util.Set.of("String", "Integer", "Boolean", "Math", "System", "Objects",
               "Collections", "Arrays", "Character", "Long", "Double", "Float", "Byte", "Short")
               .contains(owner)) {
@@ -885,7 +885,7 @@ public final class JavaScriptTranslator {
     StringBuffer staticFields = new StringBuffer();
     while (staticField.find()) {
       String owner = staticField.group(1);
-      if (owner.startsWith("java.") || owner.startsWith("javax.") || owner.startsWith("GoldClientRuntime")
+      if (owner.startsWith("GoldClientRuntime")
           || java.util.Set.of("String", "Integer", "Boolean", "Math", "System", "Objects",
               "Collections", "Arrays", "Character", "Long", "Double", "Float", "Byte", "Short")
               .contains(owner)) {

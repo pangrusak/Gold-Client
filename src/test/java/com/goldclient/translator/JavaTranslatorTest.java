@@ -109,6 +109,24 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void keepsConstructorChainsIntactInsteadOfQuotingTheChainTail() {
+    IrMethodModel method = new IrMethodModel("test", "()V", List.of(
+        new IrOperationModel(
+            "LOCAL_WRITE",
+            List.of("local1", "new java.lang.StringBuilder().append(local0).append(46).toString()"),
+            0),
+        new IrOperationModel("RETURN", List.of(), 1)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains(
+        "new java.lang.StringBuilder().append(local0).append(46).toString()"),
+        result.source());
+    assertFalse(result.source().contains("new java.lang.StringBuilder(\")"), result.source());
+  }
+
+  @Test
   void emitsSynchronizedMonitorOperationsAsExplicitNoOpApproximations() {
     IrMethodModel method = new IrMethodModel("guarded", "()V", List.of(
         new IrOperationModel("MONITOR", List.of("MONITORENTER", "local0"), 0),
@@ -1223,6 +1241,91 @@ class JavaTranslatorTest {
         result.source());
     assertTrue(!result.source().contains("<unknown>"), result.source());
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void foldsNestedMergeValuesIntoTheirConsumingCondition() {
+    IrMethodModel method = new IrMethodModel("updateFlags", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("settings != 0", "Ltrue"), 0),
+        new IrOperationModel("LOCAL_READ", List.of("local0"), 1),
+        new IrOperationModel("FIELD_READ", List.of("local0", "A", "local0.a"), 2),
+        new IrOperationModel("CONSTANT", List.of("-1"), 3),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local0.a != -1", "LskipA"), 4),
+        new IrOperationModel("CONSTANT", List.of("1"), 5),
+        new IrOperationModel("JUMP", List.of("LjoinA"), 6),
+        new IrOperationModel("LABEL", List.of("LskipA"), 7),
+        new IrOperationModel("CONSTANT", List.of("0"), 8),
+        new IrOperationModel("LABEL", List.of("LjoinA"), 9),
+        new IrOperationModel("LOCAL_READ", List.of("local0"), 10),
+        new IrOperationModel("FIELD_READ", List.of("local0", "B", "local0.b"), 11),
+        new IrOperationModel("CONSTANT", List.of("-1"), 12),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local0.b != -1", "LskipB"), 13),
+        new IrOperationModel("CONSTANT", List.of("1"), 14),
+        new IrOperationModel("JUMP", List.of("LjoinB"), 15),
+        new IrOperationModel("LABEL", List.of("LskipB"), 16),
+        new IrOperationModel("CONSTANT", List.of("0"), 17),
+        new IrOperationModel("LABEL", List.of("LjoinB"), 18),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("<unknown> == <unknown>", "Lfalse"), 19),
+        new IrOperationModel("LABEL", List.of("Ltrue"), 20),
+        new IrOperationModel("CONSTANT", List.of("1"), 21),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 22),
+        new IrOperationModel("LABEL", List.of("Lfalse"), 23),
+        new IrOperationModel("CONSTANT", List.of("0"), 24),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 25),
+        new IrOperationModel("LOCAL_WRITE", List.of("local0", "<unknown>"), 26),
+        new IrOperationModel("RETURN", List.of(), 27)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(result.source().contains("(settings != 0 ? 1 :"), result.source());
+    assertTrue(result.source().contains(
+        "(local0.a != -1 ? 0 : 1) == (local0.b != -1 ? 0 : 1)"), result.source());
+  }
+
+  @Test
+  void startsElseArmAtTryMarkerWhenBranchTargetsProtectedLabel() {
+    IrMethodModel method = new IrMethodModel("updateItem", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local1.isEmpty() != 0", "Lthen"), 0),
+        new IrOperationModel("LOCAL_READ", List.of("local1"), 1),
+        new IrOperationModel("CONSTANT", List.of("\"-\""), 2),
+        new IrOperationModel("CALL_VALUE", List.of("local1.equals(\"-\")"), 3),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local1.equals(\"-\") == 0", "Ltry"), 4),
+        new IrOperationModel("LABEL", List.of("Lthen"), 5),
+        new IrOperationModel("FIELD_WRITE",
+            List.of("local0", "Example.item", "null"), 6),
+        new IrOperationModel("RETURN", List.of(), 7),
+        new IrOperationModel("TRY_BEGIN",
+            List.of("Ltry", "Lend", "Lhandler", "java.lang.Exception", "false"), 8),
+        new IrOperationModel("LABEL", List.of("Ltry"), 9),
+        new IrOperationModel("OBJECT_CREATE", List.of("new java.lang.Object"), 10),
+        new IrOperationModel("DUP", List.of("new java.lang.Object"), 11),
+        new IrOperationModel("LOCAL_READ", List.of("local1"), 12),
+        new IrOperationModel("CALL_VALUE", List.of("new java.lang.Object(local1)"), 13),
+        new IrOperationModel("LOCAL_WRITE", List.of("local2", "new java.lang.Object(local1)"), 14),
+        new IrOperationModel("TRY_END",
+            List.of("Ltry", "Lend", "Lhandler", "java.lang.Exception", "false"), 15),
+        new IrOperationModel("LABEL", List.of("Lend"), 16),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 17),
+        new IrOperationModel("CATCH_BEGIN",
+            List.of("Ltry", "Lend", "Lhandler", "java.lang.Exception", "false"), 18),
+        new IrOperationModel("LABEL", List.of("Lhandler"), 19),
+        new IrOperationModel("LOCAL_WRITE", List.of("local3", "<exception>"), 20),
+        new IrOperationModel("CALL_VALUE", List.of("log(local3.getMessage())"), 21),
+        new IrOperationModel("RETURN", List.of(), 22),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 23),
+        new IrOperationModel("CALL_VALUE", List.of("use(local2)"), 24),
+        new IrOperationModel("RETURN", List.of(), 25)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("try {"), result.source());
+    assertTrue(result.source().contains("} catch (java.lang.Exception local3) {"),
+        result.source());
+    assertFalse(result.source().contains("unsupported(\"try-catch-region\""), result.source());
+    assertFalse(result.source().contains("unsupported(\"JUMP\""), result.source());
   }
 
   @Test

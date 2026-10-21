@@ -736,11 +736,15 @@ public final class ForgeHostRuntimeExporter {
           };
           // Runtime registration intercepted by GoldClientRuntime (for example
           // MinecraftForge.EVENT_BUS.register) must target this real host bus.
-          globalThis.goldClientForgeEventBus = eventBus;
+          // In a browser globalThis === window, so define the read-only property
+          // directly; a prior plain assignment would make a retry throw because
+          // the property can no longer be written.
           if (globalThis.window) {
             Object.defineProperty(globalThis.window, "goldClientForgeEventBus", {
               value: eventBus, configurable: true, writable: false
             });
+          } else {
+            globalThis.goldClientForgeEventBus = eventBus;
           }
           return Object.freeze(host);
         }

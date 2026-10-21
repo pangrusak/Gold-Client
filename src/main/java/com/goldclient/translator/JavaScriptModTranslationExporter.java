@@ -234,6 +234,7 @@ public final class JavaScriptModTranslationExporter {
             .append(", descriptor: ").append(quote(method.descriptor()))
             .append(", isStatic: ").append((method.access() & Opcodes.ACC_STATIC) != 0)
             .append(", isAbstract: ").append((method.access() & Opcodes.ACC_ABSTRACT) != 0)
+            .append(", isBridge: ").append((method.access() & Opcodes.ACC_BRIDGE) != 0)
             .append(", isAdapterRequired: ")
             .append((method.access() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0
                 || method.intermediateRepresentation().operations().isEmpty())
@@ -324,7 +325,73 @@ public final class JavaScriptModTranslationExporter {
         .append(", interfaces: [")
         .append(String.join(", ", clazz.interfaces().stream()
             .map(name -> quote(name.replace('/', '.'))).toList()))
-        .append("], methods: __goldMethods });\n");
+        .append("], methods: __goldMethods, annotations: ")
+        .append(annotationEntryList(clazz)).append(" });\n");
+  }
+
+  /**
+   * Serializes the annotation values harvested from the class file so the
+   * runtime can rebuild a Forge ASMDataTable facade. The manifest only keeps
+   * annotation names; this table keeps the values a mod may read through
+   * {@code ASMData.getObject()}.
+   */
+  private static String annotationEntryList(ClassModel clazz) {
+    List<String> entries = new ArrayList<>();
+    for (AnnotationData annotation : clazz.annotationData()) {
+      entries.add(annotationEntry(annotation, "class", null, null));
+    }
+    for (FieldModel field : clazz.fields()) {
+      for (AnnotationData annotation : field.annotationData()) {
+        entries.add(annotationEntry(annotation, "field", field.name(), field.descriptor()));
+      }
+    }
+    for (MethodModel method : clazz.methods()) {
+      for (AnnotationData annotation : method.annotationData()) {
+        entries.add(annotationEntry(annotation, "method", method.name(), method.descriptor()));
+      }
+    }
+    return "[" + String.join(", ", entries) + "]";
+  }
+
+  private static String annotationEntry(AnnotationData annotation, String target,
+      String member, String descriptor) {
+    return "{ target: " + quote(target)
+        + ", member: " + (member == null ? "null" : quote(member))
+        + ", descriptor: " + (descriptor == null ? "null" : quote(descriptor))
+        + ", name: " + quote(annotation.name())
+        + ", runtimeVisible: " + annotation.runtimeVisible()
+        + ", values: " + annotationValuesLiteral(annotation.values()) + " }";
+  }
+
+  private static String annotationValuesLiteral(Map<String, Object> values) {
+    List<String> entries = new ArrayList<>();
+    for (Map.Entry<String, Object> entry : values.entrySet()) {
+      entries.add(quote(entry.getKey()) + ": " + annotationValueLiteral(entry.getValue()));
+    }
+    return "{" + String.join(", ", entries) + "}";
+  }
+
+  private static String annotationValueLiteral(Object value) {
+    if (value == null) return "null";
+    if (value instanceof AnnotationData.EnumValue enumValue) {
+      return "{ $goldEnum: { descriptor: " + quote(enumValue.descriptor())
+          + ", constant: " + quote(enumValue.constant()) + " } }";
+    }
+    if (value instanceof AnnotationData.ClassValue classValue) {
+      return "{ $goldClass: " + quote(classValue.descriptor()) + " }";
+    }
+    if (value instanceof AnnotationData annotation) {
+      return "{ $goldAnnotation: { name: " + quote(annotation.name())
+          + ", values: " + annotationValuesLiteral(annotation.values()) + " } }";
+    }
+    if (value instanceof List<?> list) {
+      List<String> entries = new ArrayList<>();
+      for (Object item : list) entries.add(annotationValueLiteral(item));
+      return "[" + String.join(", ", entries) + "]";
+    }
+    if (value instanceof Boolean || value instanceof Number) return value.toString();
+    if (value instanceof Character character) return "String.fromCharCode(" + (int) character + ")";
+    return quote(String.valueOf(value));
   }
 
   private static String fieldInitializer(FieldModel field, boolean useConstant) {

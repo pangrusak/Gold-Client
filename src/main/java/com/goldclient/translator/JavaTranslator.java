@@ -255,6 +255,14 @@ public final class JavaTranslator {
             continue;
           }
         }
+        ConditionalRender valueDag = renderBranchValueDag(
+            operations, i, end, indent, context, labels);
+        if (valueDag != null) {
+          source.append(valueDag.source());
+          complete &= valueDag.complete();
+          i = valueDag.lastIndex();
+          continue;
+        }
         ConditionalRender booleanReturn = renderBooleanReturnChain(
             operations, i, end, indent, context, labels);
         if (booleanReturn != null) {
@@ -293,6 +301,14 @@ public final class JavaTranslator {
           source.append(branchChain.source());
           complete &= branchChain.complete();
           i = branchChain.lastIndex();
+          continue;
+        }
+        ConditionalRender decisionBlocks = renderTwoBlockDecisionChain(
+            operations, i, end, indent, context, labels);
+        if (decisionBlocks != null) {
+          source.append(decisionBlocks.source());
+          complete &= decisionBlocks.complete();
+          i = decisionBlocks.lastIndex();
           continue;
         }
         ConditionalRender chainIfElse = renderChainIfElse(
@@ -2476,6 +2492,438 @@ public final class JavaTranslator {
    * Every condition folds into one guard expression that preserves evaluation
    * order, and both blocks render once as an if/else pair.
    */
+  /**
+   * Structures a condition chain that selects between two shared blocks.
+   * javac can route several short-circuit conditions through intermediate
+   * labels before converging on one "then" block and one "else" block; the
+   * first condition does not have to target the then block directly (as
+   * {@link #renderChainIfElse} assumes). Every path in the chain is reduced to
+   * an explicit boolean expression over the two block entries, and both blocks
+   * are rendered once. The blocks must rejoin at one tail label, so a jump
+   * leaving either block is still observable as the end of the if/else.
+   */
+  private static ConditionalRender renderTwoBlockDecisionChain(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    if (!"CONDITIONAL_BRANCH".equals(operations.get(branchIndex).kind())
+        || operations.get(branchIndex).operands().size() < 2) {
+      return null;
+    }
+
+    // Walk the contiguous condition work. It may contain labels and pure
+    // expressions; any jump, return, throw, switch, try marker, or effectful
+    // operation ends the chain work.
+    List<Integer> conditionals = new java.util.ArrayList<>();
+    int scan = branchIndex;
+    while (scan < end) {
+      IrOperationModel operation = operations.get(scan);
+      if ("LABEL".equals(operation.kind())) {
+        scan++;
+        continue;
+      }
+      if ("CONDITIONAL_BRANCH".equals(operation.kind())) {
+        if (operation.operands().size() < 2) return null;
+        conditionals.add(scan);
+        scan++;
+        continue;
+      }
+      if (isExpressionOnly(operation) && !"DROP".equals(operation.kind())
+          && !"DUP".equals(operation.kind()) && !"SWAP".equals(operation.kind())
+          && !"STACK_OPERATION".equals(operation.kind())) {
+        scan++;
+        continue;
+      }
+      break;
+    }
+    if (conditionals.isEmpty() || conditionals.get(0) != branchIndex) return null;
+    // The chain has to fall through into its "then" block, so it cannot end in
+    // a control transfer of its own.
+    if (scan >= end) return null;
+    if (List.of("JUMP", "RETURN", "THROW", "TABLE_SWITCH", "LOOKUP_SWITCH",
+        "TRY_BEGIN", "TRY_END", "CATCH_BEGIN").contains(operations.get(scan).kind())) {
+      return null;
+    }
+
+    int thenIndex = scan - 1;
+    while (thenIndex > branchIndex
+        && !"LABEL".equals(operations.get(thenIndex).kind())) {
+      thenIndex--;
+    }
+    if (thenIndex <= branchIndex || !"LABEL".equals(operations.get(thenIndex).kind())) {
+      return null;
+    }
+
+    Integer elseIndex = null;
+    for (int conditional : conditionals) {
+      Integer target = labels.get(labelKey(
+          operations.get(conditional).operands().get(1)));
+      if (target == null || target <= branchIndex || target >= end) return null;
+      if (target < thenIndex) continue;
+      if (target == thenIndex) continue;
+      if (elseIndex == null) elseIndex = target;
+      else if (!elseIndex.equals(target)) return null;
+    }
+    if (elseIndex == null || elseIndex <= thenIndex || elseIndex >= end) return null;
+
+    // A TRY_BEGIN marker is emitted before the label whose block it protects.
+    // Both arms have to start at the marker, otherwise a try/catch that begins
+    // the arm is rendered as plain code and its handler becomes unreachable.
+    int thenStart = inlinedBlockStart(operations, thenIndex, labels);
+    int elseStart = inlinedBlockStart(operations, elseIndex, labels);
+
+    // The then block ends in a jump to the common join, or terminates. The
+    // join must be past the else block so both blocks are rendered once.
+    int thenTailIndex = -1;
+    for (int i = thenStart; i < elseStart; i++) {
+      if (!isBranchValueMetadata(operations.get(i))) thenTailIndex = i;
+    }
+    if (thenTailIndex < 0) return null;
+    IrOperationModel thenTail = operations.get(thenTailIndex);
+    int joinIndex;
+    boolean thenTailJump;
+    if ("JUMP".equals(thenTail.kind()) && !thenTail.operands().isEmpty()) {
+      Integer target = labels.get(labelKey(thenTail.operands().get(0)));
+      if (target == null || target <= elseIndex) return null;
+      joinIndex = target;
+      thenTailJump = true;
+    } else if ("RETURN".equals(thenTail.kind()) || "THROW".equals(thenTail.kind())) {
+      joinIndex = end;
+      thenTailJump = false;
+    } else {
+      return null;
+    }
+
+    // The join may sit past this render range when the enclosing structure owns
+    // the code between the two arms' exits. In that case both arms have to end
+    // in a jump to the same join, and only the portion up to the range end is
+    // rendered here.
+    int consumedEnd = Math.min(joinIndex, end);
+    boolean joinBeyondRange = joinIndex > end;
+    int elseTailIndex = -1;
+    boolean elseJumpAtRangeEnd = false;
+    if (joinBeyondRange) {
+      if (!thenTailJump) return null;
+      for (int i = elseStart; i < end; i++) {
+        if (!isBranchValueMetadata(operations.get(i))) elseTailIndex = i;
+      }
+      if (elseTailIndex < 0) return null;
+      IrOperationModel elseTail = operations.get(elseTailIndex);
+      Integer elseTarget = "JUMP".equals(elseTail.kind()) && !elseTail.operands().isEmpty()
+          ? labels.get(labelKey(elseTail.operands().get(0))) : null;
+      if (elseTarget != null && elseTarget.equals(joinIndex)) {
+        // The else arm ends with its own jump to the join inside this range.
+      } else {
+        // The enclosing structure may have chosen `end` as the exclusive end
+        // of this arm, leaving the arm's joining jump just past the range. It
+        // owns that jump, so render only up to the range end.
+        if (end >= operations.size()) return null;
+        IrOperationModel rangeEnd = operations.get(end);
+        if (!"JUMP".equals(rangeEnd.kind()) || rangeEnd.operands().isEmpty()) return null;
+        Integer rangeEndTarget = labels.get(labelKey(rangeEnd.operands().get(0)));
+        if (rangeEndTarget == null || !rangeEndTarget.equals(joinIndex)) return null;
+        elseJumpAtRangeEnd = true;
+      }
+    }
+
+    // Neither block may enter the chain or the other block; both may only jump
+    // to the join or stay inside themselves.
+    for (int i = branchIndex; i < elseStart; i++) {
+      if (i == thenTailIndex && thenTailJump) continue;
+      String target = branchTarget(operations.get(i));
+      if (target == null) continue;
+      Integer targetIndex = labels.get(labelKey(target));
+      if (targetIndex == null) return null;
+      if (i < thenIndex) {
+        if (targetIndex != thenIndex && targetIndex != elseIndex
+            && (targetIndex < branchIndex || targetIndex >= thenIndex)) return null;
+      } else if (targetIndex < thenIndex || targetIndex >= elseIndex) {
+        // The then block may only leave to the join; the join tail jump is
+        // handled above.
+        if (!(i >= thenIndex && targetIndex == joinIndex && joinIndex > elseIndex)) {
+          return null;
+        }
+      }
+    }
+    for (int i = elseStart; i < consumedEnd; i++) {
+      if (joinBeyondRange && i == elseTailIndex) continue;
+      String target = branchTarget(operations.get(i));
+      if (target == null) continue;
+      Integer targetIndex = labels.get(labelKey(target));
+      if (targetIndex == null) return null;
+      if (targetIndex < elseIndex && targetIndex >= branchIndex) return null;
+      if (targetIndex > joinIndex) return null;
+    }
+    // No instruction outside the consumed region may enter it.
+    for (int i = 0; i < operations.size(); i++) {
+      if (i >= branchIndex && i < consumedEnd) continue;
+      String target = branchTarget(operations.get(i));
+      if (target == null) continue;
+      Integer targetIndex = labels.get(labelKey(target));
+      if (targetIndex != null && targetIndex >= branchIndex
+          && targetIndex < consumedEnd) return null;
+    }
+
+    Map<Integer, String> memo = new java.util.HashMap<>();
+    String reachesThen = decisionChainReach(
+        operations, branchIndex, thenIndex, elseIndex,
+        labels, memo, new java.util.HashSet<>(), 0);
+    if (reachesThen == null) return null;
+
+    RenderResult thenBody = renderRange(
+        operations, thenStart, thenTailJump ? thenTailIndex : elseStart,
+        indent + 1, context, labels);
+    RenderResult elseBody = renderRange(
+        operations, elseStart,
+        joinBeyondRange ? (elseJumpAtRangeEnd ? end : elseTailIndex) : joinIndex,
+        indent + 1, context, labels);
+    if (thenBody.complete() && elseBody.complete()
+        && thenBody.source().isBlank() && elseBody.source().isBlank()) {
+      return null;
+    }
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("if (").append(reachesThen).append(") {\n")
+        .append(thenBody.source())
+        .append(indent(indent)).append("} else {\n")
+        .append(elseBody.source())
+        .append(indent(indent)).append("}\n");
+    return new ConditionalRender(source.toString(),
+        thenBody.complete() && elseBody.complete(),
+        joinBeyondRange ? end - 1 : joinIndex - 1);
+  }
+
+  private static String decisionChainReach(
+      List<IrOperationModel> operations,
+      int index,
+      int thenIndex,
+      int elseIndex,
+      Map<String, Integer> labels,
+      Map<Integer, String> memo,
+      java.util.Set<Integer> active,
+      int depth) {
+    if (depth > 32) return null;
+    if (index >= thenIndex) return "true";
+    String cached = memo.get(index);
+    if (cached != null) return cached;
+    if (!active.add(index)) return null;
+    IrOperationModel operation = operations.get(index);
+    String reach;
+    if ("LABEL".equals(operation.kind())
+        || (isExpressionOnly(operation) && !"DROP".equals(operation.kind())
+            && !"DUP".equals(operation.kind()) && !"SWAP".equals(operation.kind())
+            && !"STACK_OPERATION".equals(operation.kind()))) {
+      reach = decisionChainReach(
+          operations, index + 1, thenIndex, elseIndex, labels, memo, active, depth + 1);
+    } else if ("CONDITIONAL_BRANCH".equals(operation.kind())
+        && operation.operands().size() >= 2) {
+      Integer targetIndex = labels.get(labelKey(operation.operands().get(1)));
+      if (targetIndex == null) return null;
+      String taken;
+      if (targetIndex == thenIndex) {
+        taken = "true";
+      } else if (targetIndex == elseIndex) {
+        taken = "false";
+      } else if (targetIndex > index && targetIndex < thenIndex) {
+        taken = decisionChainReach(
+            operations, targetIndex, thenIndex, elseIndex, labels, memo, active, depth + 1);
+      } else {
+        taken = null;
+      }
+      String fallthrough = decisionChainReach(
+          operations, index + 1, thenIndex, elseIndex, labels, memo, active, depth + 1);
+      if (taken == null || fallthrough == null) return null;
+      String condition = normalizeCondition(operation.operands().get(0));
+      if (taken.equals(fallthrough)) {
+        reach = taken;
+      } else if ("true".equals(taken) && "false".equals(fallthrough)) {
+        reach = "(" + condition + ")";
+      } else if ("false".equals(taken) && "true".equals(fallthrough)) {
+        reach = "!(" + condition + ")";
+      } else {
+        reach = "(" + condition + " ? " + taken + " : " + fallthrough + ")";
+      }
+    } else {
+      return null;
+    }
+    active.remove(index);
+    memo.put(index, reach);
+    return reach;
+  }
+
+  private record ValueRegionResult(List<String> values, String lastExpression, int stopIndex) {}
+
+  /**
+   * Structures a stack value that is materialized by several nested branch
+   * merges. javac lowers compound boolean expressions such as
+   * {@code a || (b == c)} into a chain of guards whose arms push constants and
+   * whose intermediate results feed a later condition. The IR records those
+   * intermediate stack values as {@code <unknown>} placeholders, so a
+   * single-ternary fold cannot rebuild the expression. This walk evaluates the
+   * whole value region, turning every branch into a ternary and substituting
+   * the pending merge values into the conditions that consume them in stack
+   * order. It only fires when the earlier, cheaper renderers could not resolve
+   * the shape, and it rejects any region that is not a pure value DAG.
+   */
+  private static ConditionalRender renderBranchValueDag(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    boolean[] consumedConditionValue = {false};
+    ValueRegionResult region = evaluateValueRegion(
+        operations, branchIndex, end, labels, new ArrayList<>(),
+        consumedConditionValue, 0);
+    if (region == null) return null;
+    // Only take this route when a merge value actually feeds a later condition.
+    // Simple constant chains already have dedicated guard renderers, and those
+    // shapes are intentionally lowered as early-return guards.
+    if (!consumedConditionValue[0] || region.values().isEmpty()) return null;
+    int sinkIndex = region.stopIndex();
+    if (sinkIndex <= branchIndex || sinkIndex >= end) return null;
+    IrOperationModel sink = operations.get(sinkIndex);
+    // Return merges keep the existing guard-style lowering, which is easier to
+    // read and already covers simple chains; this route is for stack values
+    // that feed a field/local write or another condition.
+    if ("RETURN".equals(sink.kind())) return null;
+    if (!List.of("FIELD_WRITE", "LOCAL_WRITE", "METHOD_CALL", "CALL_VALUE",
+        "CONDITIONAL_BRANCH").contains(sink.kind())) return null;
+    long unknownCount = sink.operands().stream()
+        .mapToLong(value -> occurrences(value, "<unknown>")).sum();
+    if (unknownCount != region.values().size()) return null;
+    List<String> replaced = substituteUnknowns(sink.operands(), region.values());
+    if (replaced == null) return null;
+    if ("CONDITIONAL_BRANCH".equals(sink.kind())) {
+      if (replaced.isEmpty()) return null;
+      return renderConditional(
+          operations, sinkIndex, end, indent, context, labels, replaced.get(0));
+    }
+    String lowered = translateOperation(new IrOperationModel(
+        sink.kind(), replaced, sink.sourceInstruction()), context);
+    if (lowered == null || lowered.isBlank()) return null;
+    return new ConditionalRender(
+        indent(indent) + lowered + "\n", true, sinkIndex);
+  }
+
+  private static ValueRegionResult evaluateValueRegion(
+      List<IrOperationModel> operations,
+      int start,
+      int end,
+      Map<String, Integer> labels,
+      List<String> pending,
+      boolean[] consumedConditionValue,
+      int depth) {
+    if (depth > 64) return null;
+    String lastExpression = null;
+    int index = start;
+    while (index < end) {
+      IrOperationModel operation = operations.get(index);
+      String kind = operation.kind();
+      if ("LABEL".equals(kind)) {
+        index++;
+        continue;
+      }
+      if ("JUMP".equals(kind)) {
+        // A jump that ends this arm at its join is fine; anything else leaves
+        // the value region and cannot be folded into an expression.
+        if (operation.operands().isEmpty()) return null;
+        Integer target = labels.get(labelKey(operation.operands().get(0)));
+        if (target == null || target != end) return null;
+        return new ValueRegionResult(List.copyOf(pending), lastExpression, index);
+      }
+      if ("CONDITIONAL_BRANCH".equals(kind)) {
+        if (operation.operands().size() < 2) return null;
+        Integer taken = labels.get(labelKey(operation.operands().get(1)));
+        if (taken == null || taken <= index || taken >= end) return null;
+        int join = findBranchJoin(operations, index, taken, end, labels);
+        if (join <= index || join > end) return null;
+        String condition = operation.operands().get(0);
+        int needed = occurrences(condition, "<unknown>");
+        if (needed > 0) {
+          consumedConditionValue[0] = true;
+          if (needed > pending.size()) return null;
+          List<String> used = new ArrayList<>(pending.subList(0, needed));
+          List<String> substituted = substituteUnknowns(
+              List.of(condition), used);
+          if (substituted == null) return null;
+          condition = substituted.get(0);
+          pending.subList(0, needed).clear();
+        }
+        String fallthroughValue = evaluateArmValue(
+            operations, index + 1, join, labels, consumedConditionValue, depth + 1);
+        String takenValue = evaluateArmValue(
+            operations, taken, join, labels, consumedConditionValue, depth + 1);
+        if (fallthroughValue == null || takenValue == null) return null;
+        pending.add("(" + normalizeCondition(condition) + " ? "
+            + takenValue + " : " + fallthroughValue + ")");
+        index = join;
+        continue;
+      }
+      if (isExpressionOnly(operation) && !"DROP".equals(kind)
+          && !"STACK_OPERATION".equals(kind) && !"DUP".equals(kind)
+          && !"SWAP".equals(kind)) {
+        String expression = expressionFromOperation(operation);
+        if (expression != null) lastExpression = expression;
+        index++;
+        continue;
+      }
+      return new ValueRegionResult(List.copyOf(pending), lastExpression, index);
+    }
+    return new ValueRegionResult(List.copyOf(pending), lastExpression, index);
+  }
+
+  private static String evaluateArmValue(
+      List<IrOperationModel> operations,
+      int start,
+      int join,
+      Map<String, Integer> labels,
+      boolean[] consumedConditionValue,
+      int depth) {
+    if (start >= join) return null;
+    ValueRegionResult result = evaluateValueRegion(
+        operations, start, join, labels, new ArrayList<>(), consumedConditionValue, depth);
+    if (result == null || result.stopIndex() > join) return null;
+    if (!result.values().isEmpty()) {
+      return result.values().get(result.values().size() - 1);
+    }
+    return result.lastExpression();
+  }
+
+  /**
+   * Finds where the two arms of a conditional rejoin. javac emits either the
+   * fall-through arm or the taken arm with the joining jump, so try the
+   * backward jump scan first and then look inside the taken block.
+   */
+  private static int findBranchJoin(
+      List<IrOperationModel> operations,
+      int branchIndex,
+      int takenIndex,
+      int end,
+      Map<String, Integer> labels) {
+    int jumpIndex = findForwardJoinJump(
+        operations, branchIndex + 1, takenIndex, end, labels);
+    if (jumpIndex >= 0) {
+      Integer join = labels.get(labelKey(operations.get(jumpIndex).operands().get(0)));
+      if (join != null && join > takenIndex && join <= end) return join;
+    }
+    for (int i = takenIndex; i < end; i++) {
+      IrOperationModel operation = operations.get(i);
+      if ("JUMP".equals(operation.kind())) {
+        if (operation.operands().isEmpty()) return -1;
+        Integer join = labels.get(labelKey(operation.operands().get(0)));
+        return join != null && join > takenIndex && join <= end ? join : -1;
+      }
+      if ("RETURN".equals(operation.kind()) || "THROW".equals(operation.kind())
+          || "TABLE_SWITCH".equals(operation.kind())
+          || "LOOKUP_SWITCH".equals(operation.kind())) return -1;
+    }
+    return -1;
+  }
+
   private static ConditionalRender renderChainIfElse(
       List<IrOperationModel> operations,
       int branchIndex,
@@ -5415,6 +5863,30 @@ public final class JavaTranslator {
     return "!(" + trimmed + ")";
   }
 
+  private static int matchingParenthesis(String source, int open) {
+    if (open < 0 || open >= source.length() || source.charAt(open) != '(') return -1;
+    int depth = 0;
+    char quote = 0;
+    boolean escaped = false;
+    for (int i = open; i < source.length(); i++) {
+      char c = source.charAt(i);
+      if (quote != 0) {
+        if (escaped) escaped = false;
+        else if (c == '\\') escaped = true;
+        else if (c == quote) quote = 0;
+        continue;
+      }
+      if (c == '"' || c == '\'') {
+        quote = c;
+      } else if (c == '(') {
+        depth++;
+      } else if (c == ')' && --depth == 0) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   private static String normalizeExpression(String expression) {
     if (expression == null)
       return null;
@@ -5429,9 +5901,16 @@ public final class JavaTranslator {
 
     if (trimmed.startsWith("new ") && trimmed.endsWith(")")) {
       int open = trimmed.indexOf('(');
-      if (open > 0 && open < trimmed.length() - 1) {
+      int close = matchingParenthesis(trimmed, open);
+      // A chained expression such as
+      //   new java.lang.StringBuilder().append(value).toString()
+      // also starts with `new ` and ends with `)`. Only treat the text as a
+      // constructor call when the first argument list owns the final
+      // parenthesis; otherwise the chain would be collapsed into one bogus
+      // constructor argument.
+      if (open > 0 && close == trimmed.length() - 1) {
         String type = trimmed.substring(4, open);
-        String argument = trimmed.substring(open + 1, trimmed.length() - 1);
+        String argument = trimmed.substring(open + 1, close);
         if (!argument.isBlank() && !isQuoted(argument) && !isJavaLiteral(argument)
             && argument.indexOf(',') < 0 && !argument.contains("\"")
             && !looksLikeExpression(argument)) {

@@ -158,6 +158,35 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void lowersTypeSwitchBootstrapIntoRuntimeIndexComputation() {
+    MethodModel method = method(
+        "scale", "(Ljava/lang/Object;I)I", List.of(
+            instruction(25, "ALOAD", "0"),
+            instruction(21, "ILOAD", "1"),
+            instruction(186, "INVOKEDYNAMIC", "typeSwitch",
+                "(Ljava/lang/Object;I)I",
+                "Handle(6,java/lang/runtime/SwitchBootstraps,typeSwitch,"
+                    + "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+                    + "Ljava/lang/invoke/MethodType;[Ljava/lang/Object;)"
+                    + "Ljava/lang/invoke/CallSite;,false)",
+                "Type(Lexample/Shape$Tile;)",
+                "Type(Lexample/Shape$NineSlice;)"),
+            instruction(172, "IRETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().get(0).equals(
+                "GoldClientRuntime.switchType(local0, local1, "
+                    + "[GoldClientRuntime.classLiteral(\"example.Shape$Tile\"), "
+                    + "GoldClientRuntime.classLiteral(\"example.Shape$NineSlice\")])")),
+        ir.operations().toString());
+    assertFalse(ir.operations().stream().anyMatch(operation ->
+        "UNSUPPORTED_DYNAMIC".equals(operation.kind())), ir.operations().toString());
+  }
+
+  @Test
   void lowersRecordObjectMethodsEqualsIntoRuntimeRecordEquals() {
     MethodModel method = method("equals", "(Lexample/Point;Ljava/lang/Object;)Z", List.of(
         instruction(25, "ALOAD", "0"),
@@ -494,6 +523,23 @@ class IntermediateRepresentationAnalyzerTest {
         ir.operations().toString());
     assertFalse(ir.operations().stream().anyMatch(operation ->
         operation.operands().stream().anyMatch(operand -> operand.contains("<unknown>"))),
+        ir.operations().toString());
+  }
+
+  @Test
+  void routesJavaStringInstanceMethodsThroughRuntime() {
+    List<InstructionModel> instructions = List.of(
+        instruction(42, "ALOAD", "1"),
+        instruction(182, "INVOKEVIRTUAL", "java/lang/String", "isEmpty", "()Z"),
+        instruction(172, "IRETURN"));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(
+        method("empty", "(Ljava/lang/String;)Z", instructions));
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().equals(
+                List.of("GoldClientRuntime.invokeString(local1, \"isEmpty\")"))),
         ir.operations().toString());
   }
 

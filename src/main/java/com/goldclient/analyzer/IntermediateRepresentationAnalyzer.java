@@ -533,6 +533,98 @@ public final class IntermediateRepresentationAnalyzer {
     // this();. The receiver has already been consumed from the symbolic stack.
     if ("<init>".equals(name) && "java/lang/Object".equals(owner)) return;
 
+    // Interface calls may target a default method declared by the interface
+    // rather than a method on the receiver's class. Route them through the
+    // runtime so default-method resolution and adapter dispatch are applied
+    // instead of calling a missing JavaScript prototype member directly.
+    if (receiver != null && "INVOKEINTERFACE".equals(opcode)) {
+      StringBuilder call = new StringBuilder("GoldClientRuntime.invokeInstance(")
+          .append(receiver).append(", ").append(quoteJs(name));
+      for (String argument : args) call.append(", ").append(argument);
+      call.append(")");
+      if (returnsVoid(descriptor)) {
+        operations.add(op("METHOD_CALL", List.of(call.toString()), sourceInstruction));
+      } else {
+        stack.push(call.toString());
+        operations.add(op("CALL_VALUE", List.of(call.toString()), sourceInstruction));
+      }
+      return;
+    }
+
+    // Object's methods are not emitted as JavaScript prototypes on translated
+    // classes. Route them through the runtime so getClass/hashCode/equals/
+    // toString work for translated instances, adapters, primitives and arrays
+    // using Java semantics instead of failing on a missing JS member.
+    if (receiver != null && "java/lang/Object".equals(owner)
+        && ("getClass".equals(name) || "hashCode".equals(name)
+            || "equals".equals(name) || "toString".equals(name))) {
+      StringBuilder call = new StringBuilder("GoldClientRuntime.invokeInstance(")
+          .append(receiver).append(", ").append(quoteJs(name));
+      for (String argument : args) call.append(", ").append(argument);
+      call.append(")");
+      if (returnsVoid(descriptor)) {
+        operations.add(op("METHOD_CALL", List.of(call.toString()), sourceInstruction));
+      } else {
+        stack.push(call.toString());
+        operations.add(op("CALL_VALUE", List.of(call.toString()), sourceInstruction));
+      }
+      return;
+    }
+
+    // java.lang.Enum methods such as name()/ordinal() are final and their data
+    // fields are plain JavaScript properties, so a direct `.name()` call would
+    // try to invoke the string field. Route them through the runtime's enum
+    // dispatch instead.
+    if (receiver != null && "java/lang/Enum".equals(owner) && !"<init>".equals(name)) {
+      StringBuilder call = new StringBuilder("GoldClientRuntime.invokeInstance(")
+          .append(receiver).append(", ").append(quoteJs(name));
+      for (String argument : args) call.append(", ").append(argument);
+      call.append(")");
+      if (returnsVoid(descriptor)) {
+        operations.add(op("METHOD_CALL", List.of(call.toString()), sourceInstruction));
+      } else {
+        stack.push(call.toString());
+        operations.add(op("CALL_VALUE", List.of(call.toString()), sourceInstruction));
+      }
+      return;
+    }
+
+    // Primitive wrapper unboxing methods are no-ops on JavaScript primitives,
+    // but a direct `.intValue()` on a translated Number would fail. Route them
+    // through the runtime, which understands both primitives and boxed adapters.
+    if (receiver != null && isPrimitiveWrapperOwner(owner)
+        && PRIMITIVE_UNBOX_METHODS.contains(name)) {
+      StringBuilder call = new StringBuilder("GoldClientRuntime.invokeInstance(")
+          .append(receiver).append(", ").append(quoteJs(name));
+      for (String argument : args) call.append(", ").append(argument);
+      call.append(")");
+      if (returnsVoid(descriptor)) {
+        operations.add(op("METHOD_CALL", List.of(call.toString()), sourceInstruction));
+      } else {
+        stack.push(call.toString());
+        operations.add(op("CALL_VALUE", List.of(call.toString()), sourceInstruction));
+      }
+      return;
+    }
+
+    // java.lang.String values are represented as JavaScript strings. Route
+    // their instance methods through the runtime so Java semantics (isEmpty,
+    // equals, compareTo, length, Java-style replace/split) are preserved.
+    if (receiver != null
+        && ("java/lang/String".equals(owner) || "java/lang/CharSequence".equals(owner))) {
+      StringBuilder call = new StringBuilder("GoldClientRuntime.invokeString(")
+          .append(receiver).append(", ").append(quoteJs(name));
+      for (String argument : args) call.append(", ").append(argument);
+      call.append(")");
+      if (returnsVoid(descriptor)) {
+        operations.add(op("METHOD_CALL", List.of(call.toString()), sourceInstruction));
+      } else {
+        stack.push(call.toString());
+        operations.add(op("CALL_VALUE", List.of(call.toString()), sourceInstruction));
+      }
+      return;
+    }
+
     String call;
     boolean retainedConstructorReference = false;
     if ("<init>".equals(name) && receiver != null && !receiver.trim().startsWith("new ")) {
@@ -605,6 +697,21 @@ public final class IntermediateRepresentationAnalyzer {
       if (recordCall != null) {
         stack.push(recordCall);
         operations.add(op("CALL_VALUE", List.of(recordCall), sourceInstruction));
+        return;
+      }
+    }
+
+    if (bootstrap.contains("java/lang/runtime/SwitchBootstraps")
+        && bootstrap.contains(",typeSwitch,")) {
+      // Pattern switches over reference types compile to a typeSwitch
+      // invokedynamic whose bootstrap arguments are the Class labels. The
+      // returned int index is consumed by the LOOKUP_SWITCH that follows, so
+      // lowering the call site to an index computation is enough to keep the
+      // switch structure intact.
+      String typeSwitch = translateTypeSwitch(captured, operands);
+      if (typeSwitch != null) {
+        stack.push(typeSwitch);
+        operations.add(op("CALL_VALUE", List.of(typeSwitch), sourceInstruction));
         return;
       }
     }
@@ -722,6 +829,37 @@ public final class IntermediateRepresentationAnalyzer {
     }
     stack.push(lambda);
     operations.add(op("CALL_VALUE", List.of(lambda), sourceInstruction));
+  }
+
+  /**
+   * Lowers {@code SwitchBootstraps.typeSwitch} to a runtime index computation.
+   * Only Class labels are accepted; String/Integer labels (constant switches on
+   * Object) and EnumDesc labels still fall back to the explicit unsupported
+   * dynamic call rather than being approximated.
+   */
+  private static String translateTypeSwitch(List<String> captured, List<String> operands) {
+    if (captured.size() != 2 || operands.size() < 4) return null;
+    List<String> labels = new ArrayList<>();
+    for (int i = 3; i < operands.size(); i++) {
+      String operand = operands.get(i);
+      if (operand == null || !operand.startsWith("Type(") || !operand.endsWith(")")) {
+        return null;
+      }
+      String descriptor = operand.substring("Type(".length(), operand.length() - 1);
+      try {
+        org.objectweb.asm.Type type = org.objectweb.asm.Type.getType(descriptor);
+        int sort = type.getSort();
+        if (sort != org.objectweb.asm.Type.OBJECT && sort != org.objectweb.asm.Type.ARRAY) {
+          return null;
+        }
+        labels.add("GoldClientRuntime.classLiteral(" + quoteJs(type.getClassName()) + ")");
+      } catch (IllegalArgumentException exception) {
+        return null;
+      }
+    }
+    if (labels.isEmpty()) return null;
+    return "GoldClientRuntime.switchType(" + captured.get(0) + ", " + captured.get(1)
+        + ", [" + String.join(", ", labels) + "])";
   }
 
   private static final java.util.regex.Pattern HANDLE_TEXT = java.util.regex.Pattern
@@ -1160,6 +1298,19 @@ public final class IntermediateRepresentationAnalyzer {
       }
     }
     return count;
+  }
+
+  private static final Set<String> PRIMITIVE_WRAPPER_OWNERS = Set.of(
+      "java/lang/Number", "java/lang/Byte", "java/lang/Short", "java/lang/Integer",
+      "java/lang/Long", "java/lang/Float", "java/lang/Double", "java/lang/Boolean",
+      "java/lang/Character");
+
+  private static final Set<String> PRIMITIVE_UNBOX_METHODS = Set.of(
+      "intValue", "longValue", "shortValue", "byteValue", "floatValue",
+      "doubleValue", "booleanValue", "charValue");
+
+  private static boolean isPrimitiveWrapperOwner(String owner) {
+    return PRIMITIVE_WRAPPER_OWNERS.contains(owner);
   }
 
   private static boolean returnsVoid(String descriptor) {
