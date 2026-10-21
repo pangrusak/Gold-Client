@@ -162,10 +162,19 @@ class GoldClientJavaThrowable extends Error {
 
 function goldClientJavaClassName(value) {
   if (value === null || value === undefined) return null;
+  // Native proxies expose the FQCN from their TeaVM class metadata. Accept
+  // that before probing translated-class metadata, so overload selection can
+  // distinguish e.g. an ItemStack from a Collection.
+  if (value.isModProxy === true) {
+    const nativeName = value.javaClassName;
+    return typeof nativeName === "string" ? nativeName : null;
+  }
   if (typeof value.javaClassName === "string") return value.javaClassName;
   if (typeof value.__goldClassName === "string") return value.__goldClassName;
   const constructorName = value.constructor?.__goldClassName;
   if (typeof constructorName === "string") return constructorName;
+  const metaName = value.constructor?.$meta?.name;
+  if (typeof metaName === "string") return metaName;
   if (value instanceof Error) {
     const message = String(value.message ?? "");
     const match = /^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)(?::|$)/.exec(message);
@@ -533,6 +542,11 @@ class GoldClientJavaStopwatch {
   }
   toString() { return this.elapsed(GoldClientJavaTimeUnit.named("MILLISECONDS")) + " ms"; }
 }
+
+// Cycle protection for descriptor scoring: hostInstanceOf/nativeInstanceOf
+// can re-enter bestMethod->descriptorScore for the same receiver/method while
+// scoring a lambda/sam argument. Bail out of that branch rather than loop.
+const descriptorScoringStack = new Set();
 
 class GoldClientJavaLoadingCache {
   constructor(loader = null) { this.loader = loader; this.entries = new GoldClientJavaMap(); }
@@ -3210,6 +3224,27 @@ export const GoldClientRuntime = Object.freeze({
   javaClassName(value) {
     return goldClientJavaClassName(value);
   },
+  adaptHostValue(value) {
+    if (value === null || value === undefined) return value;
+    if (value.isModProxy === true || value.constructor?.__goldClassName
+        || typeof value.__goldClassName === "string") return value;
+    const bindings = globalThis.window?.goldClientForgeBindings
+      ?? globalThis.goldClientForgeBindings;
+    return typeof bindings?.adapt === "function" ? bindings.adapt(value) : value;
+  },
+  isHostObject(value) {
+    if (value === null || value === undefined) return false;
+    if (value.isModProxy === true) return true;
+    if (value.constructor?.__goldClassName) return false;
+    const className = this.javaClassName(value);
+    return className != null && !this.classes.has(className);
+  },
+  hostInstanceOf(value, className) {
+    const bindings = globalThis.window?.goldClientForgeBindings
+      ?? globalThis.goldClientForgeBindings;
+    return typeof bindings?.instanceOf === "function"
+      ? bindings.instanceOf(value, className) === true : false;
+  },
   javaAssignable(actual, target) {
     if (!actual || !target) return false;
     if (target === "java.lang.Object") return true;
@@ -3519,6 +3554,17 @@ export const GoldClientRuntime = Object.freeze({
   // object. Used by the JavaScript translator for `new java.*Exception(...)`.
   javaException(className, ...args) {
     return new GoldClientJavaThrowable(className, ...args);
+  },
+  lambda(fn, interfaceName, samName) {
+    if (typeof fn !== "function") return fn;
+    const callable = (...args) => fn(...args);
+    callable.__goldClassName = interfaceName;
+    callable.__goldInterfaces = [interfaceName];
+    if (typeof samName === "string" && samName.length > 0
+        && !Object.prototype.hasOwnProperty.call(callable, samName)) {
+      callable[samName] = (...args) => fn(...args);
+    }
+    return callable;
   },
   create(name, ...args) {
     const adapter = GoldClientMinecraftAdapters.get(name);
@@ -4124,6 +4170,9 @@ export const GoldClientRuntime = Object.freeze({
         && (methodName === "getLogger" || methodName === "getFormatterLogger")) {
       return GoldClientLog4jLogger.get(args[0]);
     }
+    if (methodName === "lambda$registerItemSubtypes$0" || methodName === "lambda$registerItemSubtypes$1") {
+      console.log("[ISC_LOG] "+className+"."+methodName+" args="+JSON.stringify(args.map(String)));
+    }
     if (className === "com.google.common.base.Preconditions") {
       const message = args[1] == null ? null : this.javaString(args[1]);
       if (methodName === "checkNotNull") {
@@ -4484,19 +4533,37 @@ export const GoldClientRuntime = Object.freeze({
       if (methodName === "doubleValue" || methodName === "floatValue") return Number(receiver);
       if (methodName === "booleanValue") return Boolean(receiver);
     }
+    // A lowered lambda callable (GoldClientRuntime.lambda) implements a SAM
+    // interface directly. Forward interface method calls to the lambda body
+    // before the generic member lookup, because Function.prototype members
+    // like "apply"/"call"/"bind" would otherwise double-apply and mangle the
+    // argument array (e.g. an ItemStack argument arriving as undefined).
+    if (receiver && typeof receiver === "function" && receiver.__goldClassName) {
+      return receiver(...args);
+    }
     const method = receiver[methodName];
-    if (typeof method === "function") return method.apply(receiver, args);
+    if (typeof method === "function") {
+      const result = method.call(receiver, ...args);
+      return this.isHostObject(receiver) ? this.adaptHostValue(result) : result;
+    }
     const className = this.javaClassName(receiver)
       ?? (receiver?.isModProxy ? null : receiver?.constructor?.__goldClassName);
     const resolved = className == null ? null
       : this.resolveClassMethod(className, methodName, args, false);
-    if (resolved) return resolved.fn.apply(receiver, args);
+    if (resolved) {
+      const result = resolved.fn.apply(receiver, args);
+      return this.isHostObject(receiver) ? this.adaptHostValue(result) : result;
+    }
     return this.unsupported("missing-instance-method", methodName + " on " + String(receiver));
   },
   descriptorScore(descriptor, args) {
     if (typeof descriptor !== "string" || descriptor[0] !== "(") return -1;
-    const parameters = [];
-    let index = 1;
+    const marker = descriptor + "#" + args.length;
+    if (descriptorScoringStack.has(marker)) return -1;
+    descriptorScoringStack.add(marker);
+    try {
+      const parameters = [];
+      let index = 1;
     while (index < descriptor.length && descriptor[index] !== ")") {
       const start = index;
       while (descriptor[index] === "[") index++;
@@ -4534,12 +4601,11 @@ export const GoldClientRuntime = Object.freeze({
         } else if (className === "java/lang/Object") {
           score += 2;
         } else {
-          if (value?.isModProxy === true) {
-            score += 2;
-            continue;
-          }
-          const actualName = value?.constructor?.__goldClassName;
-          if (actualName === className.split("/").join(".")) score += 10;
+          const actualName = this.javaClassName(value);
+          const targetName = className.split("/").join(".");
+          if (actualName === targetName) score += 10;
+          else if (actualName && this.javaAssignable(actualName, targetName)) score += 9;
+          else if (this.isHostObject(value) && this.hostInstanceOf(value, targetName)) score += 9;
           else if (typeof value === "object" || typeof value === "function") score += 2;
           else return -1;
         }
@@ -4548,25 +4614,33 @@ export const GoldClientRuntime = Object.freeze({
       if (type === "Z") {
         if (typeof value !== "boolean") return -1;
         score += 8;
-      } else if (type === "C") {
+        continue;
+      }
+      if (type === "C") {
         if (typeof value === "string" && value.length === 1) score += 8;
         else if (typeof value === "number") score += 3;
         else return -1;
-      } else if ("BSIJFD".includes(type)) {
+        continue;
+      }
+      if ("BSIJFD".includes(type)) {
         if (typeof value !== "number") return -1;
         score += 6;
-      } else {
-        return -1;
+        continue;
       }
+      return -1;
     }
     return score;
-  },
+  } finally {
+    descriptorScoringStack.delete(marker);
+  }
+},
+
   bestMethod(candidates, args, isStatic) {
     let best = null;
     let bestScore = -1;
     let bestIsBridge = true;
     for (const method of candidates) {
-      if (method.isAbstract || method.isStatic !== isStatic
+      if (method.isAbstract || method.isAdapterRequired || method.isStatic !== isStatic
           || method.arity !== args.length) continue;
       const score = this.descriptorScore(method.descriptor, args);
       if (score < 0) continue;

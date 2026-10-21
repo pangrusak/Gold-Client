@@ -827,8 +827,35 @@ public final class IntermediateRepresentationAnalyzer {
       lambda = "((" + String.join(", ", capturedNames) + ") => " + lambda + ")("
           + String.join(", ", captured) + ")";
     }
+    // Tag the callable so runtime overload selection can recognize which SAM
+    // interface a translated lambda implements (e.g. IIngredientType vs Class).
+    // The call site descriptor is the functional-interface type being
+    // implemented (e.g. ()Lmezz/jei/api/ingredients/IIngredientType;), whose
+    // return type is the SAM interface name.
+    String interfaceName = interfaceNameFromCallSite(callSiteDescriptor);
+    if (interfaceName != null) {
+      lambda = "GoldClientRuntime.lambda(" + lambda + ", " + quoteJs(interfaceName) + ", null)";
+    }
     stack.push(lambda);
     operations.add(op("CALL_VALUE", List.of(lambda), sourceInstruction));
+  }
+
+  /**
+   * Extracts the SAM interface name from an invokedynamic call-site descriptor
+   * like {@code ()Lmezz/jei/api/ingredients/IIngredientType;}. Returns null
+   * when the descriptor does not name a concrete functional interface (e.g.
+   * {@code ()Ljava/lang/Object;}), so the runtime can still fall back to
+   * generic object scoring.
+   */
+  private static String interfaceNameFromCallSite(String callSiteDescriptor) {
+    if (callSiteDescriptor == null || !callSiteDescriptor.startsWith("(")) return null;
+    int end = callSiteDescriptor.indexOf(')');
+    if (end < 0 || end + 1 >= callSiteDescriptor.length()) return null;
+    String rest = callSiteDescriptor.substring(end + 1);
+    if (rest.isEmpty() || rest.charAt(0) != 'L') return null;
+    int semi = rest.indexOf(';');
+    if (semi < 0) return null;
+    return rest.substring(1, semi).replace('/', '.');
   }
 
   /**

@@ -60,6 +60,16 @@
         if (forward && !values.includes(forward)) values.push(forward);
         const reverse = memberReverse.get(name);
         if (reverse && !values.includes(reverse)) values.push(reverse);
+        // Forge/vanilla names that have no SRG/MCP pair in the supplied table.
+        const aliasTable = {
+            "func_82582_d": ["hasNoTags"],
+            "isEmpty": ["hasNoTags"]
+        };
+        const aliases = Object.prototype.hasOwnProperty.call(aliasTable, name)
+            ? aliasTable[name] : [];
+        for (const alias of aliases) {
+            if (!values.includes(alias)) values.push(alias);
+        }
         return values;
     }
 
@@ -92,6 +102,7 @@
             || typeof value === "boolean" || typeof value === "bigint") {
             return value;
         }
+        if (isProxy(value)) return value;
         if (isJavaString(value)) {
             return api().util.ustr(value);
         }
@@ -182,6 +193,19 @@
         const proxy = new Proxy(target, {
             get(raw, property) {
                 if (property === "isModProxy") return true;
+                // Runtime metadata probes must not be treated as missing
+                // native members. Native objects intentionally have no
+                // translated class name; return their real property (usually
+                // undefined) instead of throwing from the binding layer.
+                if (property === "javaClassName" || property === "__goldClassName") {
+                    return raw?.constructor?.$meta?.name
+                        ?? raw?.$meta?.name
+                        ?? Reflect.get(raw, property, raw);
+                }
+                if (property === "javaThrowable" || property === "constructor"
+                    || property === "$meta") {
+                    return Reflect.get(raw, property, raw);
+                }
                 if (property === "getRef") return () => raw;
                 if (property === "getCorrective") return () => proxy;
                 if (property === "then") return undefined;
@@ -250,6 +274,44 @@
                         return (capability, facing) =>
                             adaptNative(stackGetCapability(raw, capability, facing));
                     }
+                    if (property === "serializeNBT") {
+                        return () => {
+                            const compound = constructNative(
+                                "net.minecraft.nbt.NBTTagCompound", []);
+                            const rawCompound = isProxy(compound)
+                                ? compound.getRef() : compound;
+                            const write = raw.$writeToNBT ?? raw.writeToNBT;
+                            if (typeof write !== "function") {
+                                fail("missing-native-member",
+                                    "ItemStack cannot write its NBT");
+                            }
+                            write.call(raw, rawCompound);
+                            return adaptNative(compound);
+                        };
+                    }
+                }
+                if (property === "getRegistryName") {
+                    return () => {
+                        const registryName = nativeRegistryName(raw);
+                        return registryName === undefined ? undefined : registryName;
+                    };
+                }
+                if (property === "getCreativeTabs"
+                    && ("$tabToDisplayOn" in raw || "tabToDisplayOn" in raw)) {
+                    // Forge adds getCreativeTabs() to Item; Eaglercraft keeps
+                    // the vanilla single tabToDisplayOn field. Forge's default
+                    // implementation is a one-element array of that tab.
+                    return () => {
+                        const tab = raw.$tabToDisplayOn ?? raw.tabToDisplayOn;
+                        return tab === null || tab === undefined ? [] : [adaptNative(tab)];
+                    };
+                }
+                if (property === "getCreativeTab"
+                    && ("$tabToDisplayOn" in raw || "tabToDisplayOn" in raw)) {
+                    return () => adaptNative(raw.$tabToDisplayOn ?? raw.tabToDisplayOn);
+                }
+                if (property === "iterator" && isNativeListLike(raw)) {
+                    return () => nativeListIterator(raw);
                 }
                 fail("missing-native-member", (classNameOf(raw)
                     || raw?.constructor?.name || "<unknown>") + "." + property
@@ -286,6 +348,100 @@
             if (name in raw && typeof raw[name] === "function") return (...args) => raw[name](...args);
         }
         return null;
+    }
+
+    /**
+     * Forge 1.12 adds `RegistryEntry.getRegistryName()`. Eaglercraft's native
+     * Item/Block classes predate that convenience method but expose the same
+     * information through `Item.REGISTRY` / `Block.REGISTRY`. Use the real
+     * native registry lookup instead of inventing a name.
+     *
+     * Returns undefined when the receiver is not known to either registry, so
+     * the caller still reports a genuine missing member.
+     */
+    /**
+     * Structural/native type check used by overload selection. Eaglercraft
+     * classes are plain TeaVM classes, so their native prototype chain answers
+     * class tests; iterable/collection/map interfaces are structural because
+     * TeaVM does not materialize an interface prototype chain.
+     */
+    function nativeInstanceOf(value, className) {
+        if (value === null || value === undefined) return false;
+        const raw = isProxy(value) ? value.getRef() : value;
+        let entry = null;
+        try {
+            entry = api().reflect.getClassById(className);
+        } catch (error) {
+            entry = null;
+        }
+        if (!entry) {
+            try {
+                entry = api().reflect.getClassByName(
+                    String(className).slice(String(className).lastIndexOf(".") + 1));
+            } catch (error) {
+                entry = null;
+            }
+        }
+        if (entry?.class?.prototype?.isPrototypeOf?.(raw)) return true;
+        if (className === "java.lang.Iterable") {
+            return typeof raw.$iterator === "function" || typeof raw.iterator === "function";
+        }
+        if (className === "java.util.Collection") {
+            return typeof raw.$size === "function"
+                && (typeof raw.$iterator === "function" || typeof raw.iterator === "function");
+        }
+        if (className === "java.util.Map") {
+            return typeof raw.$entrySet === "function" || typeof raw.entrySet === "function";
+        }
+        return false;
+    }
+
+    function nativeRegistryName(raw) {        let lookedUp = false;
+        for (const owner of ["net.minecraft.item.Item", "net.minecraft.block.Block"]) {
+            let entry = null;
+            try {
+                entry = api().reflect.getClassById(owner);
+            } catch (error) {
+                entry = null;
+            }
+            const registry = entry?.staticVariables?.REGISTRY;
+            if (!registry) continue;
+            const lookup = registry.$getNameForObject ?? registry.getNameForObject;
+            if (typeof lookup !== "function") continue;
+            lookedUp = true;
+            const found = lookup.call(registry, raw);
+            if (found !== null && found !== undefined) return adaptNative(found);
+        }
+        return lookedUp ? null : undefined;
+    }
+
+    /** Returns true when a native object behaves like a java.util.List (size/get). */
+    function isNativeListLike(raw) {
+        if (raw == null) return false;
+        try {
+            const hasGet = typeof raw.$get === "function" || typeof raw.get === "function";
+            const size = raw.$tagCount ?? raw.tagCount ?? raw.$size ?? raw.size;
+            const hasSize = typeof size === "number" || typeof size === "function";
+            return hasGet && hasSize;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    /** Builds a java.util.Iterator adapter over a native list-like (NBTTagList, etc.). */
+    function nativeListIterator(raw) {
+        const sizeFn = typeof raw.$tagCount === "function" ? raw.$tagCount
+            : typeof raw.tagCount === "function" ? raw.tagCount
+            : () => raw.$tagCount ?? raw.tagCount;
+        const getFn = typeof raw.$get === "function" ? raw.$get : raw.get;
+        let index = 0;
+        return {
+            hasNext: () => index < sizeFn.call(raw),
+            next: () => {
+                if (index >= sizeFn.call(raw)) throw new Error("NoSuchElementException");
+                return adaptNative(getFn.call(raw, index++));
+            }
+        };
     }
 
     const callbackProxies = new WeakMap();
@@ -537,6 +693,7 @@
                 fail("unsupported-platform-superclass", "native super initializer for " + owner
                     + " failed on a translated receiver: " + describe(error));
             }
+            restoreTextureMapFramebufferState(owner, receiver);
             return receiver;
         }
 
@@ -563,7 +720,36 @@
             fail("unsupported-platform-superclass", "native constructor for " + owner
                 + " could not initialize a translated receiver: " + describe(error));
         }
+        restoreTextureMapFramebufferState(owner, receiver);
         return receiver;
+    }
+
+    /**
+     * Eaglercraft's TeaVM `TextureMap.tick()` dereferences
+     * `copyColorFramebuffer.data` unconditionally. Forge's TextureMap leaves
+     * that field null when a subclass replaces `loadTextureAtlas` without
+     * allocating mipmap framebuffers (JEI's JeiTextureMap does exactly that).
+     * A translated subclass therefore needs the field to be a real empty native
+     * array so the native tick treats the framebuffer copy pass as absent,
+     * instead of failing on a null dereference. Existing arrays are never
+     * replaced, so maps that do allocate mipmaps keep the native behavior.
+     */
+    function restoreTextureMapFramebufferState(owner, receiver) {
+        if (owner !== "net.minecraft.client.renderer.texture.TextureMap"
+            || receiver === null || receiver === undefined) return;
+        const createArray = api().hooks?._teavm?.$rt_createArray;
+        if (typeof createArray !== "function") return;
+        const objectEntry = api().reflect.getClassByName("Object")
+            ?? api().reflect.getClassById("java.lang.Object");
+        const elementClass = objectEntry?.class;
+        if (typeof elementClass !== "function") return;
+        for (const field of ["copyColorFramebuffer", "copyMaterialFramebuffer"]) {
+            for (const key of [field, "$" + field]) {
+                if (receiver[key] === null || receiver[key] === undefined) {
+                    receiver[key] = createArray(elementClass, 0);
+                }
+            }
+        }
     }
 
     function describe(error) {
@@ -572,6 +758,16 @@
 
 
     function getStaticField(owner, field) {
+        // ForgeRegistries is a Forge-only class not present in Eaglercraft.
+        // Map its ITEMS/BLOCKS views onto the corresponding native registries.
+        if (owner === "net.minecraftforge.fml.common.registry.ForgeRegistries") {
+            const names = memberNames(field);
+            if (names.includes("ITEMS") || names.includes("BLOCKS")) {
+                const nativeOwner = names.includes("ITEMS")
+                    ? "net.minecraft.item.Item" : "net.minecraft.block.Block";
+                return getStaticField(nativeOwner, "REGISTRY");
+            }
+        }
         const entry = reflection(owner);
         const names = memberNames(field);
         const slots = entry.staticVariables;
@@ -1607,6 +1803,27 @@
                 pop: () => PROGRESS_MANAGER.pop()
             }
         }],
+        // Eaglercraft does not carry Forge's FluidRegistry. JEI references it for
+        // water/lava fluid stacks and fluid lookups. Provide a minimal facade so
+        // translated code does not crash; fluid stacks built with null fluids are
+        // tolerated downstream as "no fluid" rather than failing the whole mod.
+        ["net.minecraftforge.fluids.FluidRegistry", {
+            staticFields: { WATER: null, LAVA: null },
+            staticMethods: {
+                getRegisteredFluids: () => {
+                    const emptyIterator = {
+                        hasNext: () => false,
+                        next: () => { throw new Error("NoSuchElementException"); }
+                    };
+                    return {
+                        values: () => ({ iterator: () => emptyIterator })
+                    };
+                },
+                isUniversalBucketEnabled: () => 0,
+                getDefaultFluidName: () => null,
+                lookupFluidForBlock: () => null
+            }
+        }],
         ["net.minecraftforge.fml.common.FMLCommonHandler", {
             staticMethods: { instance: () => FML_COMMON_HANDLER }
         }],
@@ -1700,6 +1917,17 @@
     }
 
     function forgeGet(owner, field) {
+        if (owner === "net.minecraftforge.fml.common.registry.ForgeRegistries") {
+            const names = memberNames(field);
+            if (names.includes("ITEMS") || names.includes("BLOCKS")) {
+                const nativeOwner = names.includes("ITEMS")
+                    ? "net.minecraft.item.Item" : "net.minecraft.block.Block";
+                // ForgeRegistries entries are iterable IForgeRegistry views.
+                // Eaglercraft exposes the corresponding native registry, whose
+                // $iterator/$getNameForObject members provide the real data.
+                return getStaticField(nativeOwner, "REGISTRY");
+            }
+        }
         const facade = FACADES.get(owner);
         if (facade?.staticFields && Object.prototype.hasOwnProperty.call(facade.staticFields, field)) {
             return facade.staticFields[field];
@@ -1782,6 +2010,11 @@
             get: (owner, field) => getStaticField(owner, field),
             set: (owner, field, value) => setStaticField(owner, field, value)
         }),
+        adapt: value => (isProxy(value)
+            || (value !== null && typeof value === "object"
+                && value.constructor?.__goldClassName)
+            ? value : adaptNative(value)),
+        instanceOf: (value, className) => nativeInstanceOf(value, className),
         forge: Object.freeze({
             call: (owner, method, args) => forgeCall(owner, method, args),
             construct: (owner, args, receiver = null) => forgeConstruct(owner, args, receiver),
