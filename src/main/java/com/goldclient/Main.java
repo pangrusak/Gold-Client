@@ -42,6 +42,7 @@ public final class Main {
     boolean translate = false;
     String toJsDir = null;
     String translateJsDir = null;
+    boolean translateJsCompact = false;
     String outputDir = null;
     String mainClass = null;
 
@@ -62,6 +63,7 @@ public final class Main {
           }
           translateJsDir = args[i];
         }
+        case "--compact" -> translateJsCompact = true;
         case "--to-js" -> {
           if (++i >= args.length) {
             printUsage();
@@ -159,6 +161,19 @@ public final class Main {
         System.out.println("Report: " + Path.of(translateJsDir).resolve("javascript-report.txt"));
         System.out.println("Note: Minecraft/Forge APIs and loader behavior still require adapters.");
         System.out.println("Note: Mixin, access-transformer, and coremod execution is not implemented by this exporter.");
+
+        if (translateJsCompact) {
+          com.goldclient.translator.JavaScriptBundleExporter.BundleSummary bs =
+              com.goldclient.translator.JavaScriptBundleExporter.write(
+                  Path.of(translateJsDir),
+                  Path.of(translateJsDir, "gold-client-forge.js"),
+                  true);
+          System.out.println();
+          System.out.println("Single-file bundle: " + Path.of(translateJsDir, "gold-client-forge.js").toAbsolutePath().normalize());
+          System.out.println("Single-file modules: " + bs.moduleCount());
+          System.out.println("Single-file bytes: " + bs.bytes());
+          System.out.println("Single-file entry module: " + bs.entryModule());
+        }
       }
 
       if (toJsDir != null) {
@@ -204,7 +219,7 @@ public final class Main {
   }
 
   private static void printUsage() {
-    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate [--class <class> --method <method> | --output-dir <dir>]] [--translate-js <output_dir>] [--to-js <output_dir> --main-class <class>]");
+    System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate [--class <class> --method <method> | --output-dir <dir>]] [--translate-js <output_dir> [--compact]] [--to-js <output_dir> --main-class <class>]");
     System.err.println("       java -jar gold-client.jar loader --input <mod.jar> [--input <dependency.jar> ...] --output <dir>");
     System.err.println("       java -jar gold-client.jar pipeline --input <jar> --root <class> --report <file>");
   }
