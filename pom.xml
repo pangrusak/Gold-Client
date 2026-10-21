@@ -58,6 +58,26 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>EaglerForgeInjector/core</directory>
+                <targetPath>com/goldclient/client/eaglerforge/core</targetPath>
+                <includes>
+                    <include>*.js</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>client-profiles/shared</directory>
+                <targetPath>com/goldclient/client/shared</targetPath>
+                <includes>
+                    <include>mcp-1.12.2-members.json.gz</include>
+                    <include>eaglerforge-bindings.js</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

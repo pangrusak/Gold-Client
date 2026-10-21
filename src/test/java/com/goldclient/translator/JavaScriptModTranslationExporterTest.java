@@ -1536,8 +1536,7 @@ class JavaScriptModTranslationExporterTest {
     new JavaScriptModTranslationExporter().export(List.of(clazz), output);
     String module = Files.readString(output.resolve("example/Escaping.translated.js"));
     assertTrue(module.contains("__goldMethods.get(\"<clinit>\") ?? [])"));
-    assertTrue(module.contains("], methods: __goldMethods, annotations: [] });"
-        + System.lineSeparator()));
+    assertTrue(module.contains("], methods: __goldMethods, annotations: [] });\n"));
     assertFalse(module.contains("__goldMethods.get(\\\"<clinit>\\\")"));
     assertFalse(module.contains("methods: __goldMethods });\\n"));
   }

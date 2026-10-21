@@ -8,3 +8,5 @@ output/*
 .gold-client-jre
 translated-js/
 unminified-clients/
+cache/
+clients/

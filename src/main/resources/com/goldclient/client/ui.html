@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gold Client - Create Eaglercraft Client</title>
+<style>
+  :root { color-scheme: dark; --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --muted:#8b949e; --gold:#d6a84b; --bad:#f85149; --good:#3fb950; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; background:radial-gradient(circle at 20% 0%, #1d2530, var(--bg) 55%); color:var(--text); font:15px/1.5 system-ui, Segoe UI, Arial, sans-serif; }
+  main { width:min(920px, calc(100% - 32px)); margin:48px auto; }
+  h1 { margin:0 0 6px; font-size:30px; letter-spacing:-.4px; }
+  h1 span { color:var(--gold); }
+  .sub { color:var(--muted); margin:0 0 28px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:22px; box-shadow:0 18px 60px #0006; }
+  .drop { border:2px dashed #3d4652; border-radius:10px; padding:34px 20px; text-align:center; transition:.15s; cursor:pointer; }
+  .drop:hover, .drop.over { border-color:var(--gold); background:#d6a84b10; }
+  .drop strong { display:block; font-size:18px; margin-bottom:4px; }
+  .drop small { color:var(--muted); }
+  input[type=file] { display:none; }
+  .files { list-style:none; margin:16px 0 0; padding:0; display:grid; gap:8px; }
+  .files li { display:flex; justify-content:space-between; gap:12px; background:#0f141b; border:1px solid var(--line); border-radius:8px; padding:9px 12px; }
+  .files .size { color:var(--muted); white-space:nowrap; }
+  .row { display:flex; gap:10px; align-items:center; margin-top:18px; flex-wrap:wrap; }
+  button { border:0; border-radius:8px; padding:11px 18px; font:inherit; font-weight:650; cursor:pointer; background:var(--gold); color:#1b160b; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.secondary { background:#21262d; color:var(--text); border:1px solid var(--line); }
+  .status { margin-top:18px; padding:13px 14px; border-radius:8px; border:1px solid var(--line); background:#0f141b; display:none; white-space:pre-wrap; }
+  .status.show { display:block; }
+  .status.error { border-color:#6e2b2b; color:#ffb4ae; }
+  .status.good { border-color:#2b5c37; }
+  .status.bad { border-color:#6e4d1f; }
+  .blocked { margin-top:14px; }
+  .blocked h3 { margin:0 0 8px; font-size:15px; color:var(--bad); }
+  .blocked ul { margin:0; padding-left:18px; }
+  .blocked li { margin:4px 0; color:#ffd7d3; }
+  a.download { display:inline-block; margin-top:8px; color:var(--gold); font-weight:700; }
+  .hint { color:var(--muted); font-size:13px; margin-top:14px; }
+  code { color:#ffd58a; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gold <span>Client</span></h1>
+  <p class="sub">Drop Forge 1.12.2 mod JARs. Get one self-contained Eaglercraft client HTML.</p>
+  <section class="panel">
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose mod JARs">
+      <strong>Drop mod JARs here</strong>
+      <small>or click to choose files. Dependencies can be added too.</small>
+    </div>
+    <input type="file" id="picker" accept=".jar,application/java-archive" multiple>
+    <ul class="files" id="files"></ul>
+    <div class="row">
+      <button id="build" disabled>Create client</button>
+      <button class="secondary" id="clear" type="button">Clear</button>
+      <span id="count" class="hint"></span>
+    </div>
+    <div class="status" id="status"></div>
+    <div class="blocked" id="blocked"></div>
+    <p class="hint">Builds are one-shot. To change mods, create a new client. ADD ALL OF YOUR MODS BEFORE BUILDING. (If y'all request me, I'll add a feature to allow for dynamic mod updates! :) </p>
+  </section>
+</main>
+<script>
+(() => {
+  const drop = document.getElementById("drop");
+  const picker = document.getElementById("picker");
+  const list = document.getElementById("files");
+  const build = document.getElementById("build");
+  const clear = document.getElementById("clear");
+  const count = document.getElementById("count");
+  const status = document.getElementById("status");
+  const blocked = document.getElementById("blocked");
+  let selected = [];
+
+  function render() {
+    list.innerHTML = "";
+    for (const file of selected) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = file.name;
+      const size = document.createElement("span");
+      size.className = "size";
+      size.textContent = formatBytes(file.size);
+      li.append(name, size);
+      list.append(li);
+    }
+    build.disabled = selected.length === 0;
+    count.textContent = selected.length
+      ? selected.length + " file" + (selected.length === 1 ? "" : "s") + " selected"
+      : "No files selected";
+  }
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
+  function addFiles(fileList) {
+    for (const file of fileList) {
+      if (!file.name.toLowerCase().endsWith(".jar")) continue;
+      if (selected.some(existing => existing.name === file.name && existing.size === file.size)) continue;
+      selected.push(file);
+    }
+    render();
+  }
+
+  function showStatus(text, kind) {
+    status.className = "status show" + (kind ? " " + kind : "");
+    status.textContent = text;
+  }
+
+  function hideResult() {
+    status.className = "status";
+    status.textContent = "";
+    blocked.innerHTML = "";
+  }
+
+  async function toBase64(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  async function createClient() {
+    if (!selected.length) return;
+    build.disabled = true;
+    clear.disabled = true;
+    hideResult();
+    showStatus("Uploading " + selected.length + " file(s) and translating. This can take a few minutes...");
+    try {
+      const files = [];
+      for (const file of selected) {
+        files.push({ name: file.name, data: await toBase64(file) });
+      }
+      const response = await fetch("/api/create-client", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files })
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        showStatus(result.error || ("Build failed with HTTP " + response.status), "error");
+        return;
+      }
+      const complete = result.complete === true;
+      let text = complete
+        ? "Client created successfully."
+        : "Client created with blockers. It was written for diagnostics.";
+      text += "\n\nOutput: " + result.output;
+      if (typeof result.classCount === "number") {
+        text += "\nClasses: " + result.classCount
+          + " | Methods: " + result.methodCount
+          + " | Incomplete: " + result.incompleteCount;
+      }
+      status.className = "status show " + (complete ? "good" : "bad");
+      status.textContent = text;
+      const link = document.createElement("a");
+      link.className = "download";
+      link.href = result.downloadUrl;
+      link.textContent = "Download gold-client.html";
+      status.append(document.createElement("br"), link);
+
+      const classes = Array.isArray(result.blockedClasses) ? result.blockedClasses : [];
+      const blockerList = Array.isArray(result.blockers) ? result.blockers : [];
+      if (classes.length || blockerList.length) {
+        blocked.innerHTML = "";
+        const heading = document.createElement("h3");
+        heading.textContent = "Not functional in this build";
+        blocked.append(heading);
+        const ul = document.createElement("ul");
+        for (const entry of classes) {
+          const li = document.createElement("li");
+          li.textContent = entry.className + (entry.methods?.length ? " - " + entry.methods.join("; ") : "");
+          ul.append(li);
+        }
+        for (const blocker of blockerList) {
+          const li = document.createElement("li");
+          li.textContent = blocker;
+          ul.append(li);
+        }
+        blocked.append(ul);
+      }
+    } catch (error) {
+      showStatus("Request failed: " + error, "error");
+    } finally {
+      build.disabled = selected.length === 0;
+      clear.disabled = false;
+    }
+  }
+
+  drop.addEventListener("click", () => picker.click());
+  drop.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") picker.click();
+  });
+  picker.addEventListener("change", () => { addFiles(picker.files); picker.value = ""; });
+  for (const eventName of ["dragenter", "dragover"]) {
+    drop.addEventListener(eventName, event => {
+      event.preventDefault();
+      drop.classList.add("over");
+    });
+  }
+  for (const eventName of ["dragleave", "drop"]) {
+    drop.addEventListener(eventName, event => {
+      event.preventDefault();
+      drop.classList.remove("over");
+    });
+  }
+  drop.addEventListener("drop", event => addFiles(event.dataTransfer.files));
+  build.addEventListener("click", createClient);
+  clear.addEventListener("click", () => {
+    selected = [];
+    render();
+    hideResult();
+  });
+  render();
+})();
+</script>
+</body>
+</html>

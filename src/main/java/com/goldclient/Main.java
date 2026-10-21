@@ -17,6 +17,20 @@ import org.objectweb.asm.Opcodes;
 
 public final class Main {
   public static void main(String[] args) {
+    if (args.length > 0 && args[0].equals("--create-client")) {
+      int code = com.goldclient.client.CreateClientCommand.run(
+          java.util.Arrays.copyOfRange(args, 1, args.length),
+          System.out, System.err);
+      if (code != 0) System.exit(code);
+      return;
+    }
+    if (args.length > 0 && args[0].equals("--ui")) {
+      int code = com.goldclient.client.UiCommand.run(
+          java.util.Arrays.copyOfRange(args, 1, args.length),
+          System.out, System.err);
+      if (code != 0) System.exit(code);
+      return;
+    }
     if (args.length > 0 && args[0].equals("pipeline")) {
       int code = com.goldclient.planner.PipelineCommand.run(
           java.util.Arrays.copyOfRange(args, 1, args.length),
@@ -222,6 +236,8 @@ public final class Main {
     System.err.println("Usage: java -jar gold-client.jar <mod.jar> [--translate [--class <class> --method <method> | --output-dir <dir>]] [--translate-js <output_dir> [--compact]] [--to-js <output_dir> --main-class <class>]");
     System.err.println("       java -jar gold-client.jar loader --input <mod.jar> [--input <dependency.jar> ...] --output <dir>");
     System.err.println("       java -jar gold-client.jar pipeline --input <jar> --root <class> --report <file>");
+    System.err.println("       java -jar gold-client.jar --create-client [mod.jar ...] [--output <client.html>]");
+    System.err.println("       java -jar gold-client.jar --ui [--port <port>] [--open]");
   }
 
   private static void printTranslationSummary(ModAnalysis analysis) {

@@ -5,6 +5,26 @@
   <artifactId>gold-client</artifactId>
   <version>1</version>
   <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <resource>
+        <targetPath>com/goldclient/client/eaglerforge/core</targetPath>
+        <directory>EaglerForgeInjector/core</directory>
+        <includes>
+          <include>*.js</include>
+        </includes>
+      </resource>
+      <resource>
+        <targetPath>com/goldclient/client/shared</targetPath>
+        <directory>client-profiles/shared</directory>
+        <includes>
+          <include>mcp-1.12.2-members.json.gz</include>
+          <include>eaglerforge-bindings.js</include>
+        </includes>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <artifactId>maven-compiler-plugin</artifactId>
