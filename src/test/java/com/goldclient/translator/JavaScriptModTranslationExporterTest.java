@@ -588,6 +588,15 @@ class JavaScriptModTranslationExporterTest {
           throw new Error("Collections.replaceAll should use Java equals");
         }
         const list = r.createJava("java.util.ArrayList", [0, 1, 2, 3, 4]);
+        const listIterator = list.iterator();
+        if (!listIterator.hasNext() || listIterator.next() !== 0) {
+          throw new Error("ArrayList.iterator should expose Java hasNext/next");
+        }
+        const set = r.createJava("java.util.LinkedHashSet", ["x", "y"]);
+        const setIterator = set.iterator();
+        if (!setIterator.hasNext() || setIterator.next() !== "x") {
+          throw new Error("LinkedHashSet.iterator should expose Java hasNext/next");
+        }
         r.invokeJavaStatic("java.util.Collections", "shuffle", list, r.createJava("java.util.Random", 0));
         if (list.items.join(",") !== "4,2,1,3,0") {
           throw new Error("Collections.shuffle should use the supplied seeded Random: " + list.items);
@@ -920,6 +929,14 @@ class JavaScriptModTranslationExporterTest {
         }
         if (!resource.equals(r.create("net.minecraft.util.ResourceLocation", "examplemod", "textures/block.png"))) {
           throw new Error("ResourceLocation equality");
+        }
+        const sameResource = r.create("net.minecraft.util.ResourceLocation", "examplemod", "textures/block.png");
+        if (resource.$hashCode0() !== sameResource.$hashCode0()) {
+          throw new Error("TeaVM protocol hashCode mismatch for equal resources");
+        }
+        if (resource.$equals(sameResource) !== 1
+            || resource.$equals(r.create("net.minecraft.util.ResourceLocation", "examplemod", "other.png")) !== 0) {
+          throw new Error("TeaVM protocol equals mismatch");
         }
         const defaultNamespace = r.create("net.minecraft.util.ResourceLocation", "stone");
         if (defaultNamespace.toString() !== "minecraft:stone") throw new Error("ResourceLocation default namespace");
@@ -1269,6 +1286,45 @@ class JavaScriptModTranslationExporterTest {
         if (!atomic.compareAndSet(8, 10) || atomic.get() !== 10) throw new Error("AtomicInteger compareAndSet");
         const queue = r.createJava("java.util.PriorityQueue", [8, 2, 5]);
         if (queue.poll() !== 2 || queue.peek() !== 5) throw new Error("PriorityQueue ordering");
+        const enumOne = { name: "ONE", ordinal: () => 1 };
+        const enumTwo = { name: "TWO", ordinal: () => 2 };
+        const enumMap = r.createJava("java.util.EnumMap", null);
+        enumMap.put(enumTwo, "two");
+        enumMap.put(enumOne, "one");
+        if (enumMap.get(enumTwo) !== "two" || enumMap.get(enumOne) !== "one") throw new Error("EnumMap lookup");
+        if (enumMap.keySet().toArray()[0] !== enumOne) throw new Error("EnumMap ordinal order");
+        if (enumMap.values().toArray().join(",") !== "one,two") throw new Error("EnumMap values");
+        if (enumMap.entrySet().toArray()[1].getKey() !== enumTwo) throw new Error("EnumMap entrySet");
+        let enumMapNullRejected = false;
+        try { enumMap.put(null, "bad"); } catch (error) { enumMapNullRejected = true; }
+        if (!enumMapNullRejected) throw new Error("EnumMap null key");
+        const enumReceiver = {};
+        r.invokeNamedConstructor(enumReceiver, "java.lang.Enum", "CONST", 3);
+        if (enumReceiver.name !== "CONST" || enumReceiver.ordinal !== 3) throw new Error("Enum super constructor");
+        if (r.resolveClassMethod("java.lang.Enum", "name", [], false).fn.call(enumReceiver) !== "CONST") throw new Error("Enum name");
+        if (r.invokeInstance(enumReceiver, "name") !== "CONST") throw new Error("Enum name via invokeInstance");
+        if (r.invokeInstance(enumReceiver, "ordinal") !== 3) throw new Error("Enum ordinal via invokeInstance");
+        if (r.resolveClassMethod("java.lang.Enum", "ordinal", [], false).fn.call(enumReceiver) !== 3) throw new Error("Enum ordinal");
+        const enumType = function () {};
+        enumType.VALUES = [enumOne, enumTwo];
+        if (r.invokeJavaStatic("java.lang.Enum", "valueOf", enumType, "TWO") !== enumTwo) throw new Error("Enum valueOf");
+        const allFormats = r.invokeJavaStatic("java.util.EnumSet", "allOf",
+            r.classLiteral("net.minecraft.util.text.TextFormatting"));
+        const resetFormat = r.getStaticField("net.minecraft.util.text.TextFormatting", "RESET");
+        if (allFormats.size() < 2 || !allFormats.contains(resetFormat)) throw new Error("EnumSet.allOf");
+        if (!allFormats.remove(resetFormat) || allFormats.contains(resetFormat)) throw new Error("EnumSet.remove");
+        const cloneSource = r.newArray("int", 3);
+        cloneSource[0] = 7;
+        const cloneCopy = cloneSource.clone();
+        if (cloneCopy.length !== 3 || cloneCopy[0] !== 7 || cloneCopy === cloneSource) throw new Error("array clone");
+        if (Object.keys(cloneSource).includes("clone")) throw new Error("array clone enumerable");
+        if (r.invokeString("", "isEmpty") !== true || r.invokeString("abc", "length") !== 3) throw new Error("String length/isEmpty");
+        if (r.invokeString("abc", "equals", "abc") !== true || r.invokeString("abc", "equals", "ab") !== false) throw new Error("String equals");
+        if (r.invokeString("a-b-c", "replace", "-", "_") !== "a_b_c") throw new Error("String replace all");
+        if (r.invokeString("a,b,", "split", ",").length !== 2) throw new Error("String split trailing empty");
+        if (r.invokeString("hello", "charAt", 1) !== "e") throw new Error("String charAt");
+        if (r.invokeString("ab", "compareTo", "ac") >= 0) throw new Error("String compareTo");
+        if (r.invokeString("abc", "matches", "a.c") !== true) throw new Error("String matches");
         const deque = r.createJava("java.util.ArrayDeque");
         deque.addFirst("first"); deque.addLast("last");
         if (deque.pollFirst() !== "first" || deque.pollLast() !== "last") throw new Error("ArrayDeque endpoints");
@@ -1480,9 +1536,122 @@ class JavaScriptModTranslationExporterTest {
     new JavaScriptModTranslationExporter().export(List.of(clazz), output);
     String module = Files.readString(output.resolve("example/Escaping.translated.js"));
     assertTrue(module.contains("__goldMethods.get(\"<clinit>\") ?? [])"));
-    assertTrue(module.contains("], methods: __goldMethods });" + System.lineSeparator()));
+    assertTrue(module.contains("], methods: __goldMethods, annotations: [] });"
+        + System.lineSeparator()));
     assertFalse(module.contains("__goldMethods.get(\\\"<clinit>\\\")"));
     assertFalse(module.contains("methods: __goldMethods });\\n"));
+  }
+
+  @Test
+  void adaptsCommonGuavaUtilitiesAndJavaStaticConstants() throws Exception {
+    Path output = tempDir.resolve("guava-runtime");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("guava-runtime-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+        const list = r.invokeStaticClass("com.google.common.collect.ImmutableList", "of", 1, 2, 3);
+        if (list.items.join(",") !== "1,2,3") throw new Error("ImmutableList.of");
+        const built = r.invokeStaticClass("com.google.common.collect.ImmutableList", "builder");
+        built.add(4).addAll([5, 6]);
+        if (built.build().items.join(",") !== "4,5,6") throw new Error("ImmutableList.builder");
+        const map = r.invokeStaticClass("com.google.common.collect.ImmutableMap", "of", "a", 1);
+        if (map.get("a") !== 1) throw new Error("ImmutableMap.of");
+        const multimap = r.invokeStaticClass("com.google.common.collect.ImmutableMultimap", "builder");
+        multimap.put("a", 1).put("a", 2).put("b", 3);
+        if (multimap.build().get("a").items.join(",") !== "1,2") throw new Error("ImmutableMultimap");
+        const table = r.invokeStaticClass("com.google.common.collect.ImmutableTable", "builder");
+        table.put("r", "c", 7);
+        if (table.build().get("r", "c") !== 7) throw new Error("ImmutableTable");
+        const ordered = r.invokeStaticClass("com.google.common.collect.Ordering", "natural")
+          .sortedCopy([3, 1, 2]);
+        if (ordered.items.join(",") !== "1,2,3") throw new Error("Ordering.sortedCopy");
+        const text = r.invokeStaticClass("com.google.common.base.MoreObjects", "toStringHelper",
+          r.classLiteral("example.X")).add("a", 1).toString();
+        if (text !== "example.X{a=1}") throw new Error("MoreObjects: " + text);
+        const cache = r.invokeStaticClass("com.google.common.cache.CacheBuilder", "newBuilder")
+          .maximumSize(25).build({ load: key => key * 2 });
+        if (cache.getUnchecked(3) !== 6) throw new Error("CacheBuilder");
+        const ms = r.getStaticField("java.util.concurrent.TimeUnit", "MILLISECONDS");
+        const stopwatch = r.invokeStaticClass("com.google.common.base.Stopwatch", "createUnstarted");
+        if (typeof stopwatch.elapsed(ms) !== "number") throw new Error("Stopwatch elapsed");
+        const english = r.getStaticField("java.util.Locale", "ENGLISH");
+        if (english.getLanguage() !== "en") throw new Error("Locale.ENGLISH");
+        const red = r.getStaticField("java.awt.Color", "RED");
+        if (red.getRGB() !== -65536) throw new Error("Color.RED " + red.getRGB());
+        console.log("guava-runtime-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "Guava runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("guava-runtime-ok", outputText);
+  }
+
+  @Test
+  void exportsAnnotationValuesAndClassLiteralHelpersForAsmData() throws Exception {
+    ClassModel clazz = new ClassModel("example/Plugin", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of("example.PluginAnnotation"),
+        List.of(new FieldModel("NAME", "Ljava/lang/String;", null, Opcodes.ACC_STATIC,
+            List.of("example.Name"), "demo")),
+        List.of(method("run", "()V", Opcodes.ACC_PUBLIC, List.of(op("RETURN", "null")))),
+        List.of(),
+        List.of(new com.goldclient.model.AnnotationData(
+            "example.PluginAnnotation", true,
+            java.util.Map.of("priority", 3,
+                "kind", new com.goldclient.model.AnnotationData.EnumValue(
+                    "Lexample/Kind;", "HIGH"),
+                "type", new com.goldclient.model.AnnotationData.ClassValue(
+                    "Lexample/Plugin;")))));
+    Path output = tempDir.resolve("annotations");
+    new JavaScriptModTranslationExporter().export(List.of(clazz), output);
+
+    String module = Files.readString(output.resolve("example/Plugin.translated.js"));
+    assertTrue(module.contains("annotations: [{ target: \"class\""));
+    assertTrue(module.contains("name: \"example.PluginAnnotation\""));
+    assertTrue(module.contains("\"priority\": 3"));
+    assertTrue(module.contains("$goldEnum: { descriptor: \"Lexample/Kind;\""));
+    assertTrue(module.contains("$goldClass: \"Lexample/Plugin;\""));
+
+    Path runner = output.resolve("annotation-runtime-test.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime } from "./gold-client-runtime.js";
+        import "./example/Plugin.translated.js";
+        const records = GoldClientRuntime.annotationData();
+        const plugin = records.find(item => item.className === "example.Plugin"
+          && item.name === "example.PluginAnnotation");
+        if (!plugin || plugin.target !== "class") throw new Error("class annotation missing");
+        const literal = GoldClientRuntime.classLiteral("example.Plugin");
+        if (literal.getCanonicalName() !== "example.Plugin") throw new Error("canonical name");
+        literal.asSubclass(GoldClientRuntime.classLiteral("java.lang.Object"));
+        try {
+          literal.asSubclass(GoldClientRuntime.classLiteral("java.lang.String"));
+          throw new Error("asSubclass accepted an unrelated type");
+        } catch (error) {
+          if (error.javaClassName !== "java.lang.ClassCastException") throw error;
+        }
+        const instance = literal.newInstance();
+        if (instance?.constructor?.__goldClassName !== "example.Plugin") {
+          throw new Error("newInstance");
+        }
+        console.log("annotation-runtime-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "annotation runtime test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("annotation-runtime-ok", outputText);
   }
 
 }

@@ -103,6 +103,7 @@ public final class JavaScriptBundleExporter {
     output.append("    entry: __goldEntry,\n");
     output.append("    runtime: __goldRuntime.GoldClientRuntime,\n");
     output.append("    classes: __goldClasses.classes,\n");
+    output.append("    annotations: __goldRuntime.GoldClientRuntime.annotationData(),\n");
     output.append("    getClass: function (name) {\n");
     output.append("      return __goldRuntime.GoldClientRuntime.resolveClass(name);\n");
     output.append("    },\n");

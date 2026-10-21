@@ -50,6 +50,26 @@ function installFixture() {
         ]
     };
 
+    function KeyBinding(description, keyCode, category) {
+        this.description = description;
+        this.keyCode = keyCode;
+        this.category = category;
+    }
+
+    const keyBindingEntry = {
+        id: "net.minecraft.client.settings.KeyBinding",
+        compiledName: "nmcs_KeyBinding",
+        class: KeyBinding,
+        methods: {},
+        staticMethods: {},
+        staticVariables: {},
+        constructors: [
+            function KeyBindingConstructor(description, keyCode, category) {
+                return new KeyBinding(description, keyCode, category);
+            }
+        ]
+    };
+
     const minecraft = {
         $theWorld: world,
         $getItemColors: function () { return 7; },
@@ -89,11 +109,13 @@ function installFixture() {
             getClassById(id) {
                 if (id === "net.minecraft.client.Minecraft") return minecraftEntry;
                 if (id === "net.minecraft.client.renderer.texture.TextureMap") return textureMapEntry;
+                if (id === "net.minecraft.client.settings.KeyBinding") return keyBindingEntry;
                 return null;
             },
             getClassByName(name) {
                 if (name === "Minecraft") return minecraftEntry;
                 if (name === "TextureMap") return textureMapEntry;
+                if (name === "KeyBinding") return keyBindingEntry;
                 return null;
             }
         },
@@ -121,6 +143,45 @@ function installFixture() {
                     return field === "SERVER" ? sideServer : sideClient;
                 }
                 throw new Error("unexpected field " + owner + "." + field);
+            },
+            classLiteral(name) {
+                return { __goldClassName: name, getName() { return name; } };
+            },
+            createJava(name) {
+                if (/Set$/.test(name)) {
+                    const values = [];
+                    return {
+                        values,
+                        add(value) { if (!values.includes(value)) values.push(value); },
+                        iterator() { return values[Symbol.iterator](); },
+                        [Symbol.iterator]() { return values[Symbol.iterator](); }
+                    };
+                }
+                if (/List$/.test(name)) {
+                    const values = [];
+                    return { values, add(value) { values.push(value); },
+                        iterator() { return values[Symbol.iterator](); } };
+                }
+                if (/Map$/.test(name)) {
+                    const values = new Map();
+                    return { values, put(key, value) { values.set(key, value); },
+                        get(key) { return values.get(key) ?? null; } };
+                }
+                throw new Error("unexpected createJava " + name);
+            },
+            annotationData() {
+                return [
+                    {
+                        className: "example.Plugin", target: "class", member: null,
+                        descriptor: null, name: "example.PluginAnnotation",
+                        runtimeVisible: true, values: { pluginName: "demo" }
+                    },
+                    {
+                        className: "example.Other", target: "field", member: "FIELD",
+                        descriptor: "Ljava/lang/String;", name: "example.FieldAnnotation",
+                        runtimeVisible: true, values: {}
+                    }
+                ];
             }
         },
         goldClientForgeMemberMap: {
@@ -234,6 +295,30 @@ test("converts JS strings and booleans at the native boundary", () => {
     assert.equal(context.ModAPI.util.ustr(observed[0]), "hello");
 });
 
+test("adapts JavaScript lambdas to TeaVM interface method calls", () => {
+    const { bindings, context } = installFixture();
+    let observed;
+    context.ModAPI.reflect.getClassById = id => ({
+        id,
+        compiledName: "nmi_Listener",
+        class: function Listener() {},
+        methods: {},
+        staticMethods: {
+            probe: {
+                method: function probe(callback) {
+                    return callback.$onResourceManagerReload(41);
+                }
+            }
+        },
+        staticVariables: {},
+        constructors: []
+    });
+    const result = bindings.minecraft.call("net.minecraft.item.Listener", "probe",
+        [value => { observed = value; return value + 1; }]);
+    assert.equal(observed, 41);
+    assert.equal(result, 42);
+});
+
 test("creates lifecycle events with a real side, metadata, and config path", () => {
     const { bindings, sideClient } = installFixture();
     const event = bindings.events.createLifecycleEvent(
@@ -247,8 +332,30 @@ test("creates lifecycle events with a real side, metadata, and config path", () 
     assert.equal(event.getSuggestedModMetadata().getName(), "AppleSkin");
     assert.equal(event.getSuggestedConfigurationFile().getPath(), "/config/appleskin.cfg");
     assert.equal(event.getModConfigurationDirectory().isDirectory(), true);
-    assert.throws(() => event.getAsmData(), /unsupported-asm-data/);
+    assert.equal(typeof event.getAsmData().getAll, "function");
     assert.equal(event.isCancelable(), false);
+});
+
+test("reconstructs Forge ASMDataTable entries from translated annotations", () => {
+    const { bindings } = installFixture();
+    const event = bindings.events.createLifecycleEvent(
+        { modId: "example", className: "example.Plugin" },
+        { name: "preInit", eventType: "net.minecraftforge.fml.common.event.FMLPreInitializationEvent" },
+        { metadata: { modId: "example", name: "Example", version: "1.0" } },
+        "CLIENT"
+    );
+    const table = event.getAsmData();
+    const plugins = table.getAll("example.PluginAnnotation");
+    const entries = Array.from(plugins).map(data => data.getClassName());
+    assert.deepEqual(entries, ["example.Plugin"]);
+    const data = table.getASMData("example.Plugin", "example.PluginAnnotation");
+    assert.equal(data.getAnnotationName(), "example.PluginAnnotation");
+    assert.equal(data.getMethodName(), null);
+    assert.equal(data.getFieldName(), null);
+    assert.equal(data.getObject().get("pluginName"), "demo");
+    assert.deepEqual(Array.from(table.getForClass("example.Other")).map(item =>
+        item.getFieldName()), ["FIELD"]);
+    assert.equal(table.getAll("example.MissingAnnotation").values.length, 0);
 });
 
 test("supports a persistent Forge-style Configuration object", () => {
@@ -265,6 +372,64 @@ test("supports a persistent Forge-style Configuration object", () => {
         "net.minecraftforge.common.config.Configuration", [file, "1.0.0"]);
     assert.equal(reloaded.get("client", "enabled", true, "toggle").getBoolean(true), false);
     assert.equal(reloaded.hasChanged(), false);
+});
+
+test("supports Forge Configuration category lifecycle", () => {
+    const { bindings } = installFixture();
+    const file = new bindings.virtualFileClass("config", "categories.cfg");
+    const config = bindings.forge.construct(
+        "net.minecraftforge.common.config.Configuration", [file, "1.0.0"]);
+    assert.equal(config.getCategory("mode"), null);
+    const search = config.addCategory("search");
+    assert.equal(search.getName(), "search");
+    assert.equal(config.getCategory("search").getName(), "search");
+    const removed = config.addCategory("mode");
+    config.removeCategory(removed);
+    assert.equal(config.getCategory("mode"), null);
+    assert.equal(config.hasCategory("mode"), false);
+    assert.deepEqual(Array.from(config.getCategoryNames()), ["search"]);
+});
+
+test("preserves translated Configuration subclass overrides", () => {
+    const { bindings } = installFixture();
+    const file = new bindings.virtualFileClass("config", "subclass.cfg");
+    const receiver = {
+        getString() { return "subclass-result"; }
+    };
+    const result = bindings.forge.construct(
+        "net.minecraftforge.common.config.Configuration", [file, "1.0.0"], receiver);
+    assert.equal(result, receiver);
+    assert.equal(receiver.getString("name", "category", "default"), "subclass-result");
+    // Base accessors remain available through the initialized receiver.
+    assert.equal(receiver.getBoolean("category", "enabled", true), true);
+});
+
+test("supports Forge Configuration typed accessors and versions", () => {
+    const { bindings } = installFixture();
+    const file = new bindings.virtualFileClass("config", "typed.cfg");
+    const config = bindings.forge.construct(
+        "net.minecraftforge.common.config.Configuration", [file, "2.0.0"]);
+    assert.equal(config.getLoadedConfigVersion(), null);
+    assert.equal(config.getInt("columns", "advanced", 9, 4, 16), 9);
+    config.get("advanced", "columns", 9, "columns").setValue(99);
+    assert.equal(config.getInt("columns", "advanced", 9, 4, 16), 16);
+    const property = config.get("advanced", "mode", "A");
+    property.setValidValues(["a", "b"]);
+    assert.deepEqual(property.getValidValues(), ["a", "b"]);
+    const modes = [
+        { name: "A", ordinal: 0 },
+        { name: "B", ordinal: 1 }
+    ];
+    assert.equal(config.getEnum("mode", "advanced", modes[0], modes), modes[0]);
+    config.setEnum("mode", "advanced", modes[1], modes);
+    assert.equal(config.getEnum("mode", "advanced", modes[0], modes), modes[1]);
+    assert.equal(config.getCategory("advanced").hasChanged(), true);
+    config.save();
+    assert.equal(config.getLoadedConfigVersion(), "2.0.0");
+    const reloaded = bindings.forge.construct(
+        "net.minecraftforge.common.config.Configuration", [file, "2.0.0"]);
+    assert.equal(reloaded.getEnum("mode", "advanced", modes[0], modes), modes[1]);
+    assert.equal(reloaded.getLoadedConfigVersion(), "2.0.0");
 });
 
 test("initializes a translated Event subclass receiver in place", () => {
@@ -302,6 +467,70 @@ test("keeps Forge channel registration virtual and rejects real network sends", 
     assert.equal(channel.registrations.length, 1);
     assert.throws(() => channel.sendToServer({}), /unsupported-network/);
     assert.throws(() => registry.registerGuiHandler({}, {}), /unsupported-gui/);
+    const eventChannel = registry.newEventDrivenChannel("jei");
+    eventChannel.register({ onPacket() {} });
+    assert.equal(eventChannel.getChannelName(), "jei");
+    assert.equal(eventChannel.registrations.length, 1);
+    assert.throws(() => eventChannel.sendToServer({}), /unsupported-network/);
+});
+
+test("exposes Forge client key-setting enum constants but rejects conflict logic", () => {
+    const { bindings } = installFixture();
+    const gui = bindings.forge.get(
+        "net.minecraftforge.client.settings.KeyConflictContext", "GUI");
+    assert.equal(gui.name, "GUI");
+    assert.equal(gui.ordinal, 1);
+    assert.equal(bindings.forge.call(
+        "net.minecraftforge.client.settings.KeyConflictContext", "valueOf", ["GUI"]), gui);
+    const control = bindings.forge.get(
+        "net.minecraftforge.client.settings.KeyModifier", "CONTROL");
+    assert.equal(control.name, "CONTROL");
+    assert.equal(bindings.forge.call(
+        "net.minecraftforge.client.settings.KeyModifier", "values", []).length, 4);
+    assert.throws(() => gui.isActive(), /isActive/);
+    assert.throws(() => control.matches({}), /matches/);
+});
+
+test("adapts Forge KeyBinding constructors to the vanilla three-argument form", () => {
+    const { bindings } = installFixture();
+    const gui = bindings.forge.get(
+        "net.minecraftforge.client.settings.KeyConflictContext", "GUI");
+    const control = bindings.forge.get(
+        "net.minecraftforge.client.settings.KeyModifier", "CONTROL");
+    const result = bindings.minecraft.construct(
+        "net.minecraft.client.settings.KeyBinding",
+        ["key.jei.showRecipe", gui, control, 19, "jei"]);
+    const raw = result.getRef();
+    assert.equal(raw.description.toString(), "key.jei.showRecipe");
+    assert.equal(raw.keyCode, 19);
+    assert.equal(raw.category.toString(), "jei");
+    assert.equal(raw.$goldKeyConflictContext, gui);
+    assert.equal(raw.$goldKeyModifier, control);
+});
+
+test("records Forge ClientRegistry key bindings with explicit non-integration warning", () => {
+    const { bindings } = installFixture();
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = message => warnings.push(String(message));
+    try {
+        bindings.forge.call("net.minecraftforge.fml.client.registry.ClientRegistry",
+            "registerKeyBinding", [{ name: "key.jei.test" }]);
+    } finally {
+        console.warn = originalWarn;
+    }
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /not attached to the Eaglercraft input loop/);
+    assert.equal(bindings.forge.call("net.minecraftforge.fml.client.registry.ClientRegistry",
+        "getKeyBinding", []), null);
+});
+
+test("reports undelivered Forge inter-mod messages instead of throwing", () => {
+    const { bindings } = installFixture();
+    const delivered = bindings.forge.call(
+        "net.minecraftforge.fml.common.event.FMLInterModComms", "sendRuntimeMessage",
+        ["jei", "VersionChecker", "addCurseCheck", {}]);
+    assert.equal(delivered, false);
 });
 
 test("unimplemented services fail explicitly instead of returning fake success", () => {
