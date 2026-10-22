@@ -428,6 +428,7 @@ public final class IntermediateRepresentationAnalyzer {
         case "I2S" -> "GoldClientRuntime.toShort(" + value + ")";
         case "I2C" -> "GoldClientRuntime.toChar(" + value + ")";
         case "L2I" -> "GoldClientRuntime.toInt32(" + value + ")";
+        case "I2L" -> "GoldClientRuntime.toLong(" + value + ")";
         case "F2I", "D2I" -> "GoldClientRuntime.floatToInt(" + value + ")";
         case "F2L", "D2L" -> "GoldClientRuntime.floatToLong(" + value + ")";
         default -> value;
@@ -614,6 +615,25 @@ public final class IntermediateRepresentationAnalyzer {
         && ("java/lang/String".equals(owner) || "java/lang/CharSequence".equals(owner))) {
       StringBuilder call = new StringBuilder("GoldClientRuntime.invokeString(")
           .append(receiver).append(", ").append(quoteJs(name));
+      for (String argument : args) call.append(", ").append(argument);
+      call.append(")");
+      if (returnsVoid(descriptor)) {
+        operations.add(op("METHOD_CALL", List.of(call.toString()), sourceInstruction));
+      } else {
+        stack.push(call.toString());
+        operations.add(op("CALL_VALUE", List.of(call.toString()), sourceInstruction));
+      }
+      return;
+    }
+
+    // INVOKESPECIAL is non-virtual dispatch: super calls must resolve starting
+    // at the symbolic owner class, not the receiver's runtime class. Lowering
+    // it to `receiver.name(...)` re-enters the override and recurses forever
+    // (e.g. `(ClientFoo) super.build()` becomes `this.build()`).
+    if (receiver != null && "INVOKESPECIAL".equals(opcode) && !"<init>".equals(name)) {
+      StringBuilder call = new StringBuilder("GoldClientRuntime.invokeSuper(")
+          .append(receiver).append(", ").append(quoteJs(owner.replace('/', '.')))
+          .append(", ").append(quoteJs(name));
       for (String argument : args) call.append(", ").append(argument);
       call.append(")");
       if (returnsVoid(descriptor)) {
@@ -1199,7 +1219,9 @@ public final class IntermediateRepresentationAnalyzer {
     String expression = value.trim();
     return expression.matches(".*(?:[0-9]+[lL]|[0-9]+\\.[0-9]+[dD]?|[0-9]+[dD])$")
         || expression.startsWith("long ") || expression.startsWith("double ")
-        || expression.contains("Long.valueOf(") || expression.contains("Double.valueOf(");
+        || expression.contains("Long.valueOf(") || expression.contains("Double.valueOf(")
+        || expression.contains("GoldClientRuntime.toLong(")
+        || expression.contains("GoldClientRuntime.floatToLong(");
   }
 
   private static boolean isConstant(String opcode) {

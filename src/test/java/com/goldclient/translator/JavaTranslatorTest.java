@@ -597,6 +597,39 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void keepsLoopExitJumpAfterTryThatHasARetryingCatch() {
+    IrMethodModel method = new IrMethodModel(
+        "retryUntilMoved",
+        "()V",
+        List.of(
+            new IrOperationModel("CONDITIONAL_BRANCH", List.of("flag == 0", "L6"), 0),
+            new IrOperationModel(
+                "TRY_BEGIN", List.of("L0", "L1", "L2", "java.io.IOException", "false"), 1),
+            new IrOperationModel("LABEL", List.of("L0"), 1),
+            new IrOperationModel("LOCAL_WRITE", List.of("local4", "move()"), 2),
+            new IrOperationModel(
+                "TRY_END", List.of("L0", "L1", "L2", "java.io.IOException", "false"), 3),
+            new IrOperationModel("LABEL", List.of("L1"), 3),
+            new IrOperationModel("JUMP", List.of("L7"), 4),
+            new IrOperationModel(
+                "CATCH_BEGIN", List.of("L0", "L1", "L2", "java.io.IOException", "false"), 5),
+            new IrOperationModel("LABEL", List.of("L2"), 5),
+            new IrOperationModel("LOCAL_WRITE", List.of("local5", "<exception>"), 6),
+            new IrOperationModel("METHOD_CALL", List.of("sleep()"), 7),
+            new IrOperationModel("LABEL", List.of("L8"), 8),
+            new IrOperationModel("JUMP", List.of("L0"), 9),
+            new IrOperationModel("LABEL", List.of("L6"), 10),
+            new IrOperationModel("LABEL", List.of("L7"), 10),
+            new IrOperationModel("RETURN", List.of(), 11)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.source().contains("while (true)"), result.source());
+    assertTrue(result.source().contains("break;"), result.source());
+    assertTrue(result.source().contains("sleep();"), result.source());
+  }
+
+  @Test
   void leavesTryAtRangeBoundaryWhenCatchOnlyCodePrecedesNormalJoin() {
     IrMethodModel method = new IrMethodModel(
         "conditionalTry",

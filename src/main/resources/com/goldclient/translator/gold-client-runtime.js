@@ -82,6 +82,8 @@ const GOLD_JAVA_SUPERCLASSES = new Map([
   ["java.lang.TypeNotPresentException", "java.lang.RuntimeException"],
   ["java.lang.UnsupportedOperationException", "java.lang.RuntimeException"],
   ["java.util.NoSuchElementException", "java.lang.RuntimeException"],
+  ["com.google.gson.JsonParseException", "java.lang.RuntimeException"],
+  ["com.google.gson.JsonSyntaxException", "com.google.gson.JsonParseException"],
   ["java.util.ConcurrentModificationException", "java.lang.RuntimeException"],
   ["java.util.InputMismatchException", "java.util.NoSuchElementException"],
   ["java.util.EmptyStackException", "java.lang.RuntimeException"],
@@ -283,10 +285,10 @@ class GoldClientJavaList {
     this.items = this.items.filter(item => candidates.some(value => GoldClientRuntime.javaEquals(item, value)));
     return before !== this.items.length;
   }
-  replaceAll(callback) { this.items = this.items.map((value, index) => callback(value, index)); }
+  replaceAll(callback) { this.items = this.items.map((value, index) => callFunctional(callback, "apply", value, index)); }
   removeIf(predicate) {
     const before = this.items.length;
-    this.items = this.items.filter((value, index) => !predicate(value, index));
+    this.items = this.items.filter((value, index) => !callFunctional(predicate, "test", value, index));
     return before !== this.items.length;
   }
   subList(from, to) {
@@ -312,7 +314,7 @@ class GoldClientJavaList {
       add: value => owner.items.splice(cursor++, 0, value)
     };
   }
-  forEach(callback) { this.items.forEach(callback); }
+  forEach(callback) { this.items.forEach((value, index) => callFunctional(callback, "accept", value, index)); }
   stream() { return new GoldClientJavaStream(this.items); }
   toString() { return "[" + this.items.map(value => value == null ? "null" : String(value)).join(", ") + "]"; }
   #checkIndex(index) {
@@ -358,11 +360,18 @@ class GoldClientJavaSet {
   }
   clear() { this.items.clear(); }
   toArray() { return Array.from(this.items); }
-  forEach(callback) { this.items.forEach(callback); }
+  forEach(callback) { this.items.forEach((value, index) => callFunctional(callback, "accept", value, index)); }
   iterator() { return goldClientJavaIterator(this); }
   stream() { return new GoldClientJavaStream(this.items); }
   [Symbol.iterator]() { return this.items[Symbol.iterator](); }
 }
+function callFunctional(value, method, ...args) {
+  if (typeof value === "function") return value(...args);
+  const callable = value?.[method];
+  if (typeof callable === "function") return callable.apply(value, args);
+  return GoldClientRuntime.invokeInstance(value, method, ...args);
+}
+
 class GoldClientJavaMap {
   constructor(initial = []) {
     const entries = initial?.items instanceof Map ? initial.items : (initial instanceof Map ? initial : (initial?.items ?? initial ?? []));
@@ -421,19 +430,19 @@ class GoldClientJavaMap {
   }
   computeIfAbsent(key, fn) {
     let value = this.get(key);
-    if (value == null) { value = fn(key); if (value != null) this.put(key, value); }
+    if (value == null) { value = callFunctional(fn, "apply", key); if (value != null) this.put(key, value); }
     return value ?? null;
   }
   computeIfPresent(key, fn) {
     const match = this.#lookup(key);
     if (!match.found || this.items.get(match.key) == null) return null;
-    const value = fn(key, this.items.get(match.key));
+    const value = callFunctional(fn, "apply", key, this.items.get(match.key));
     if (value == null) this.items.delete(match.key); else this.items.set(match.key, value);
     return value ?? null;
   }
   compute(key, fn) {
     const match = this.#lookup(key);
-    const value = fn(key, match.found ? this.items.get(match.key) : null);
+    const value = callFunctional(fn, "apply", key, match.found ? this.items.get(match.key) : null);
     if (value == null) { if (match.found) this.items.delete(match.key); }
     else this.put(key, value);
     return value ?? null;
@@ -441,7 +450,7 @@ class GoldClientJavaMap {
   merge(key, value, fn) {
     const match = this.#lookup(key);
     const old = match.found ? this.items.get(match.key) : null;
-    const next = old == null ? value : fn(old, value);
+    const next = old == null ? value : callFunctional(fn, "apply", old, value);
     if (next == null) { if (match.found) this.items.delete(match.key); }
     else this.put(key, next);
     return next ?? null;
@@ -451,7 +460,7 @@ class GoldClientJavaMap {
   keySet() { return new GoldClientJavaSet(this.items.keys()); }
   values() { return new GoldClientJavaList(Array.from(this.items.values())); }
   entrySet() { return new GoldClientJavaSet(Array.from(this.items.entries()).map(([key, value]) => ({ key, value, getKey() { return this.key; }, getValue() { return this.value; }, setValue(next) { const old = this.value; this.value = next; return old; } }))); }
-  forEach(callback) { this.items.forEach((value, key) => callback(key, value)); }
+  forEach(callback) { this.items.forEach((value, key) => callFunctional(callback, "accept", key, value)); }
   toObject() { return Object.fromEntries(this.items); }
   [Symbol.iterator]() { return this.items[Symbol.iterator](); }
 }
@@ -606,7 +615,7 @@ class GoldClientJavaEnumMap extends GoldClientJavaMap {
       setValue(next) { const old = this.value; this.value = next; return old; }
     })));
   }
-  forEach(callback) { for (const [key, value] of this.#orderedEntries()) callback(value, key); }
+  forEach(callback) { for (const [key, value] of this.#orderedEntries()) callFunctional(callback, "accept", key, value); }
   [Symbol.iterator]() { return this.#orderedEntries()[Symbol.iterator](); }
 }
 class GoldClientJavaUuid {
@@ -999,6 +1008,62 @@ class GoldClientJavaAtomic {
   toString() { return String(this.value); }
 }
 
+class GoldClientResourceInputStream {
+  constructor(bytes) {
+    this.bytes = bytes;
+    this.position = 0;
+    this.markPosition = 0;
+    this.closed = false;
+  }
+  #check() {
+    if (this.closed) throw new GoldClientJavaThrowable(
+        "java.io.IOException", "stream is closed");
+  }
+  read(target, offset = 0, length = null) {
+    this.#check();
+    if (!(target instanceof Uint8Array)) {
+      if (this.position >= this.bytes.length) return -1;
+      return this.bytes[this.position++];
+    }
+    if (this.position >= this.bytes.length) return -1;
+    const count = length == null ? target.length - offset : Number(length);
+    if (count <= 0) return 0;
+    const available = Math.min(count, this.bytes.length - this.position);
+    target.set(this.bytes.subarray(this.position, this.position + available), offset);
+    this.position += available;
+    return available;
+  }
+  readAllBytes() {
+    this.#check();
+    const remaining = this.bytes.slice(this.position);
+    this.position = this.bytes.length;
+    return remaining;
+  }
+  skip(count) {
+    this.#check();
+    const skipped = Math.min(Math.max(0, Number(count)), this.bytes.length - this.position);
+    this.position += skipped;
+    return skipped;
+  }
+  available() { this.#check(); return this.bytes.length - this.position; }
+  mark() { this.markPosition = this.position; }
+  reset() { this.#check(); this.position = this.markPosition; }
+  markSupported() { return true; }
+  close() { this.closed = true; }
+}
+
+class GoldClientResourceUrl {
+  constructor(path) { this.path = path; }
+  getPath() { return "/" + this.path; }
+  toString() { return "gold-client-resource:" + this.path; }
+  openStream() {
+    const bytes = GoldClientRuntime.getResourceBytes(this.path);
+    if (bytes === null) throw new GoldClientJavaThrowable(
+        "java.io.FileNotFoundException", this.path);
+    return new GoldClientResourceInputStream(bytes);
+  }
+}
+
 class GoldClientJavaPriorityQueue extends GoldClientJavaList {
   constructor(initial = [], comparator = null) {
     super(initial?.items ?? initial ?? []);
@@ -1037,18 +1102,28 @@ class GoldClientJavaStream {
   }
   #assertOpen() { if (this.closed) throw new Error("IllegalStateException: stream has already been operated upon or closed"); }
   #next(values) { this.#assertOpen(); return new GoldClientJavaStream(values); }
-  map(mapper) { this.#assertOpen(); return this.#next(this.values.map(mapper)); }
-  filter(predicate) { this.#assertOpen(); return this.#next(this.values.filter(predicate)); }
+  map(mapper) {
+    this.#assertOpen();
+    return this.#next(this.values.map(value => callFunctional(mapper, "apply", value)));
+  }
+  filter(predicate) {
+    this.#assertOpen();
+    return this.#next(this.values.filter(value => callFunctional(predicate, "test", value)));
+  }
   flatMap(mapper) {
     this.#assertOpen();
     const flattened = [];
     for (const value of this.values) {
-      const mapped = mapper(value);
+      const mapped = callFunctional(mapper, "apply", value);
       flattened.push(...Array.from(mapped?.values ?? mapped?.items ?? mapped ?? []));
     }
     return this.#next(flattened);
   }
-  peek(action) { this.#assertOpen(); this.values.forEach(action); return this; }
+  peek(action) {
+    this.#assertOpen();
+    this.values.forEach(value => callFunctional(action, "accept", value));
+    return this;
+  }
   distinct() { this.#assertOpen(); return this.#next(Array.from(new Set(this.values))); }
   sorted(comparator) {
     this.#assertOpen();
@@ -1063,19 +1138,37 @@ class GoldClientJavaStream {
   unordered() { this.#assertOpen(); return this; }
   onClose(callback) { this.closeCallback = callback; return this; }
   close() { if (!this.closed) { this.closed = true; this.closeCallback?.(); } }
-  forEach(action) { this.#assertOpen(); this.values.forEach(action); this.close(); }
+  forEach(action) {
+    this.#assertOpen();
+    this.values.forEach(value => callFunctional(action, "accept", value));
+    this.close();
+  }
   forEachOrdered(action) { return this.forEach(action); }
   toArray(generator) { this.#assertOpen(); return generator ? generator(this.values.length).map((_, i) => this.values[i]) : this.values.slice(); }
   count() { this.#assertOpen(); return this.values.length; }
-  anyMatch(predicate) { this.#assertOpen(); return this.values.some(predicate); }
-  allMatch(predicate) { this.#assertOpen(); return this.values.every(predicate); }
-  noneMatch(predicate) { this.#assertOpen(); return !this.values.some(predicate); }
+  anyMatch(predicate) {
+    this.#assertOpen();
+    return this.values.some(value => callFunctional(predicate, "test", value));
+  }
+  allMatch(predicate) {
+    this.#assertOpen();
+    return this.values.every(value => callFunctional(predicate, "test", value));
+  }
+  noneMatch(predicate) {
+    this.#assertOpen();
+    return !this.values.some(value => callFunctional(predicate, "test", value));
+  }
   findFirst() { this.#assertOpen(); return this.values.length ? new GoldClientJavaOptional(this.values[0]) : GoldClientJavaOptional.empty(); }
   findAny() { return this.findFirst(); }
   reduce(...args) {
     this.#assertOpen();
-    if (args.length > 1) return this.values.reduce(args[1], args[0]);
-    return this.values.length ? new GoldClientJavaOptional(this.values.reduce(args[0])) : GoldClientJavaOptional.empty();
+    if (args.length > 1) {
+      return this.values.reduce((acc, value) => callFunctional(args[1], "apply", acc, value), args[0]);
+    }
+    return this.values.length
+      ? new GoldClientJavaOptional(this.values.reduce(
+          (acc, value) => callFunctional(args[0], "apply", acc, value)))
+      : GoldClientJavaOptional.empty();
   }
   min(comparator) {
     this.#assertOpen();
@@ -1099,11 +1192,11 @@ class GoldClientJavaStream {
     if (collector?.kind === "toMap") {
       const map = new GoldClientJavaMap();
       for (const value of this.values) {
-        const key = collector.keyMapper(value);
-        const mapped = collector.valueMapper(value);
+        const key = callFunctional(collector.keyMapper, "apply", value);
+        const mapped = callFunctional(collector.valueMapper, "apply", value);
         if (map.containsKey(key)) {
           if (!collector.mergeFunction) throw new Error("IllegalStateException: duplicate key " + key);
-          map.put(key, collector.mergeFunction(map.get(key), mapped));
+          map.put(key, callFunctional(collector.mergeFunction, "apply", map.get(key), mapped));
         } else map.put(key, mapped);
       }
       return map;
@@ -1113,6 +1206,173 @@ class GoldClientJavaStream {
   toList() { this.#assertOpen(); return new GoldClientJavaList(this.values); }
   iterator() { this.#assertOpen(); return goldClientJavaIterator(this); }
   [Symbol.iterator]() { this.#assertOpen(); return this.values[Symbol.iterator](); }
+}
+
+// Minimal Gson facade for translated mods. It mirrors Gson's reflective
+// POJO/collection/map shape using the JS properties the translator emits.
+// Field annotations harvested from bytecode drive @Expose filtering.
+class GoldClientJavaGsonBuilder {
+  constructor() {
+    this.pretty = false;
+    this.exposeOnly = false;
+    this.serializeNulls = false;
+  }
+  setPrettyPrinting() { this.pretty = true; return this; }
+  excludeFieldsWithoutExposeAnnotation() { this.exposeOnly = true; return this; }
+  serializeNulls() { this.serializeNulls = true; return this; }
+  disableHtmlEscaping() { return this; }
+  enableComplexMapKeySerialization() { return this; }
+  setLenient() { return this; }
+  setDateFormat() { return this; }
+  create() {
+    return new GoldClientJavaGson(this.pretty, this.exposeOnly, this.serializeNulls);
+  }
+}
+
+class GoldClientJavaGson {
+  constructor(pretty = false, exposeOnly = false, serializeNulls = false) {
+    this.pretty = pretty;
+    this.exposeOnly = exposeOnly;
+    this.serializeNulls = serializeNulls;
+  }
+  #exposedFields(className) {
+    const names = new Set();
+    const records = typeof GoldClientRuntime.annotationData === "function"
+      ? GoldClientRuntime.annotationData() : [];
+    let current = className;
+    const visited = new Set();
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      for (const record of records) {
+        if (record.className !== current || record.target !== "field") continue;
+        if (record.name !== "com.google.gson.annotations.Expose") continue;
+        names.add(String(record.member).replace(/\$field$/, ""));
+      }
+      current = GoldClientRuntime.classes.get(current)?.__goldSuperName ?? null;
+    }
+    return names;
+  }
+  #toPlain(value, seen) {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    if (typeof value === "bigint") return Number(value);
+    if (typeof value === "function") return null;
+    if (seen.has(value)) return null;
+    if (Array.isArray(value)) {
+      seen.add(value);
+      const result = value.map(item => this.#toPlain(item, seen));
+      seen.delete(value);
+      return result;
+    }
+    if (value instanceof GoldClientJavaList || value instanceof GoldClientJavaSet) {
+      return Array.from(value.items ?? []).map(item => this.#toPlain(item, seen));
+    }
+    if (value instanceof GoldClientJavaMap) {
+      const result = {};
+      for (const [key, item] of value.items ?? []) result[String(key)] = this.#toPlain(item, seen);
+      return result;
+    }
+    const className = value.constructor?.__goldClassName ?? value.__goldClassName;
+    if (className && (className.startsWith("java.") || className.startsWith("javax."))) {
+      return String(value);
+    }
+    seen.add(value);
+    const exposed = this.exposeOnly && className ? this.#exposedFields(className) : null;
+    const result = {};
+    for (const key of Object.keys(value)) {
+      if (key.startsWith("__") || key === "constructor") continue;
+      const fieldName = key.replace(/\$field$/, "");
+      if (exposed && !exposed.has(fieldName)) continue;
+      const item = value[key];
+      if (typeof item === "function") continue;
+      if (item === undefined && !this.serializeNulls) continue;
+      result[fieldName] = this.#toPlain(item, seen);
+    }
+    seen.delete(value);
+    return result;
+  }
+  #fromPlain(json, targetClass) {
+    const constructor = GoldClientRuntime.classes.get(targetClass);
+    let target;
+    if (constructor) {
+      target = Reflect.construct(constructor, []);
+    } else {
+      target = {};
+    }
+    this.#applyJson(target, json);
+    return target;
+  }
+  #applyJson(target, json) {
+    if (json === null || typeof json !== "object" || Array.isArray(json)) return;
+    for (const [key, item] of Object.entries(json)) {
+      let property = key;
+      if (!Object.prototype.hasOwnProperty.call(target, property)
+          && Object.prototype.hasOwnProperty.call(target, key + "$field")) {
+        property = key + "$field";
+      }
+      const current = target[property];
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        const nestedClass = current?.constructor?.__goldClassName;
+        if (nestedClass && !nestedClass.startsWith("java.")) {
+          if (current === undefined) {
+            target[property] = item;
+          } else {
+            this.#applyJson(current, item);
+          }
+          continue;
+        }
+        target[property] = item;
+        continue;
+      }
+      if (Array.isArray(item)) {
+        const element = Array.isArray(current) ? current[0] : undefined;
+        const converted = item.map(value => {
+          if (value && typeof value === "object" && !Array.isArray(value)
+              && element?.constructor?.__goldClassName) {
+            return this.#fromPlain(value, element.constructor.__goldClassName);
+          }
+          return value;
+        });
+        if (current instanceof GoldClientJavaList) {
+          current.clear();
+          for (const value of converted) current.add(value);
+        } else {
+          target[property] = converted;
+        }
+        continue;
+      }
+      target[property] = item;
+    }
+  }
+  toJson(value) {
+    const json = this.#toPlain(value, new Set());
+    return this.pretty ? JSON.stringify(json, null, 2) : JSON.stringify(json);
+  }
+  fromJson(source, classOrName) {
+    let text;
+    if (typeof source === "string") {
+      text = source;
+    } else if (typeof source?.readText === "function") {
+      text = source.readText();
+    } else if (typeof source?.toString === "function") {
+      text = source.toString();
+    } else {
+      throw GoldClientRuntime.javaException("com.google.gson.JsonSyntaxException",
+          "unsupported JSON source");
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(String(text));
+    } catch (error) {
+      throw GoldClientRuntime.javaException("com.google.gson.JsonSyntaxException", error?.message ?? String(error));
+    }
+    const className = typeof classOrName === "string"
+      ? classOrName.replace(/\//g, ".")
+      : (classOrName?.__goldClassName ?? classOrName?.getName?.());
+    if (!className) return parsed;
+    return this.#fromPlain(parsed, className);
+  }
 }
 
 class GoldClientJavaMatcher {
@@ -1220,6 +1480,78 @@ class GoldClientJavaOptional {
     return new GoldClientJavaOptional(value);
   }
   static ofNullable(value) { return new GoldClientJavaOptional(value); }
+}
+
+class GoldClientJavaFileOutputStream {
+  constructor(file) { this.file = file; this.buffer = ""; this.closed = false; }
+  write(value) { this.buffer += GoldClientRuntime.javaString(value); }
+  flush() { this.persist(); }
+  close() { this.persist(); }
+  persist() {
+    if (this.closed) return;
+    this.closed = true;
+    if (typeof this.file?.writeText === "function") this.file.writeText(this.buffer);
+  }
+}
+
+class GoldClientJavaOutputStreamWriter {
+  constructor(stream) { this.stream = stream; this.buffer = ""; this.closed = false; }
+  write(value) { this.buffer += GoldClientRuntime.javaString(value); }
+  flush() {
+    if (this.buffer && typeof this.stream?.write === "function") this.stream.write(this.buffer);
+    this.buffer = "";
+  }
+  close() {
+    if (this.closed) return;
+    this.flush();
+    this.stream?.close?.();
+    this.closed = true;
+  }
+}
+
+class GoldClientJavaBufferedWriter {
+  constructor(writer) { this.writer = writer; this.buffer = ""; this.closed = false; }
+  write(value) { this.buffer += GoldClientRuntime.javaString(value); }
+  newLine() { this.buffer += "\n"; }
+  flush() {
+    if (this.buffer && typeof this.writer?.write === "function") this.writer.write(this.buffer);
+    this.buffer = "";
+  }
+  close() {
+    if (this.closed) return;
+    this.flush();
+    this.writer?.close?.();
+    this.closed = true;
+  }
+}
+
+class GoldClientJavaBufferedReader {
+  constructor(reader) {
+    this.reader = reader;
+    this.file = reader?.file ?? reader?.stream?.file ?? null;
+  }
+  lines() {
+    const file = this.file;
+    const text = typeof file?.readText === "function" ? (file.readText() ?? "") : "";
+    const lines = text.length === 0 ? [] : text.split(/\r?\n/);
+    if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+    return {
+      forEach(consumer) {
+        for (const line of lines) callFunctional(consumer, "accept", line);
+      },
+      iterator() {
+        let index = 0;
+        return {
+          hasNext: () => index < lines.length,
+          next: () => lines[index++],
+          remove: () => { throw new Error("UnsupportedOperationException"); }
+        };
+      },
+      count: () => lines.length,
+      close() {}
+    };
+  }
+  close() { this.reader?.close?.(); }
 }
 
 class GoldClientJavaStringBuilder {
@@ -2925,6 +3257,67 @@ const GoldClientForgeEventBusInstance = new GoldClientForgeEventBus();
 const goldClientClassLiterals = new Map();
 
 export const GoldClientRuntime = Object.freeze({
+  resourceStore() {
+    const files = globalThis.GoldClientResources?.files;
+    return files && typeof files === "object" ? files : Object.create(null);
+  },
+  normalizeResourcePath(path) {
+    let normalized = String(path ?? "").replace(/\\/g, "/");
+    while (normalized.startsWith("/")) normalized = normalized.slice(1);
+    if (!normalized || normalized.split("/").includes("..")) {
+      throw new GoldClientJavaThrowable("java.lang.IllegalArgumentException",
+          "invalid resource path: " + String(path));
+    }
+    return normalized;
+  },
+  hasResource(path) {
+    return Object.prototype.hasOwnProperty.call(
+        this.resourceStore(), this.normalizeResourcePath(path));
+  },
+  classResourcePath(className, name) {
+    if (name == null) return null;
+    let value = String(name).replace(/\\/g, "/");
+    if (value.startsWith("/")) return this.normalizeResourcePath(value);
+    const owningClass = String(className).replace(/\[\]$/, "");
+    const lastDot = owningClass.lastIndexOf(".");
+    const packagePath = lastDot < 0 ? "" : owningClass.slice(0, lastDot).replace(/\./g, "/");
+    value = (packagePath ? packagePath + "/" : "") + value;
+    const normalized = this.normalizeResourcePath(value);
+    return this.hasResource(normalized) ? normalized : null;
+  },
+  listResources(prefix = "") {
+    const normalized = prefix ? this.normalizeResourcePath(prefix) : "";
+    return Object.keys(this.resourceStore())
+        .filter(name => name.startsWith(normalized))
+        .sort();
+  },
+  getResourceBase64(path) {
+    return this.hasResource(path) ? this.resourceStore()[this.normalizeResourcePath(path)] : null;
+  },
+  getResourceBytes(path) {
+    const value = this.getResourceBase64(path);
+    if (value === null) return null;
+    let binary;
+    if (typeof globalThis.atob === "function") {
+      binary = globalThis.atob(value);
+    } else if (typeof Buffer === "function") {
+      binary = Buffer.from(value, "base64").toString("binary");
+    } else {
+      throw new GoldClientJavaThrowable("java.lang.IllegalStateException",
+          "no base64 decoder is available");
+    }
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  },
+  getResourceText(path) {
+    const bytes = this.getResourceBytes(path);
+    if (bytes === null) return null;
+    if (typeof TextDecoder === "function") return new TextDecoder().decode(bytes);
+    let text = "";
+    for (const byte of bytes) text += String.fromCharCode(byte);
+    return text;
+  },
   intDiv(a, b) {
     if (b === 0) throw new Error("ArithmeticException: / by zero");
     // JVM IDIV truncates toward zero. Integer.MIN_VALUE / -1 wraps in 32-bit arithmetic.
@@ -3184,6 +3577,9 @@ export const GoldClientRuntime = Object.freeze({
   toInt32(value) {
     return Number(value) | 0;
   },
+  toLong(value) {
+    return Number(value) | 0;
+  },
   toByte(value) {
     const number = Number(value) | 0;
     return (number << 24) >> 24;
@@ -3293,6 +3689,29 @@ export const GoldClientRuntime = Object.freeze({
     const literal = Object.freeze({
       __goldClassName: className,
       getName() { return className; },
+      getResource(name) {
+        const path = runtime.classResourcePath(className, name);
+        return path === null ? null : new GoldClientResourceUrl(path);
+      },
+      getResourceAsStream(name) {
+        const path = runtime.classResourcePath(className, name);
+        if (path === null) return null;
+        const bytes = runtime.getResourceBytes(path);
+        return bytes === null ? null : new GoldClientResourceInputStream(bytes);
+      },
+      getClassLoader() {
+        return Object.freeze({
+          getResource(name) {
+            const path = runtime.normalizeResourcePath(name);
+            return runtime.hasResource(path) ? new GoldClientResourceUrl(path) : null;
+          },
+          getResourceAsStream(name) {
+            const path = runtime.normalizeResourcePath(name);
+            const bytes = runtime.getResourceBytes(path);
+            return bytes === null ? null : new GoldClientResourceInputStream(bytes);
+          }
+        });
+      },
       getCanonicalName() {
         if (!className.endsWith("[]")) return className;
         return className.replace(/\[\]/g, "[]");
@@ -3378,7 +3797,33 @@ export const GoldClientRuntime = Object.freeze({
     constructor.__goldAnnotationData = Array.from(metadata.annotations ?? []);
     if (constructor.prototype) installTeaVMProtocolAliases(constructor.prototype);
     this.classes.set(name, constructor);
+    this.linkClassHierarchy(name, constructor);
     return constructor;
+  },
+  /**
+   * Connects a translated class prototype to its translated superclass so
+   * inherited instance methods are reachable through plain property access,
+   * which is how the translator lowers direct calls on a value returned from a
+   * static/instance invocation. Classes may register in either order, so this
+   * also re-parents already registered subclasses and links an already
+   * registered superclass.
+   */
+  linkClassHierarchy(name, constructor) {
+    const superName = constructor.__goldSuperName;
+    if (superName) {
+      const parent = this.classes.get(superName);
+      if (parent?.prototype && constructor.prototype
+          && Object.getPrototypeOf(constructor.prototype) !== parent.prototype) {
+        Object.setPrototypeOf(constructor.prototype, parent.prototype);
+      }
+    }
+    for (const candidate of this.classes.values()) {
+      if (candidate === constructor || candidate.__goldSuperName !== name) continue;
+      if (constructor.prototype && candidate.prototype
+          && Object.getPrototypeOf(candidate.prototype) !== constructor.prototype) {
+        Object.setPrototypeOf(candidate.prototype, constructor.prototype);
+      }
+    }
   },
   /**
    * Returns every annotation harvested from the translated class files. Forge's
@@ -3442,12 +3887,29 @@ export const GoldClientRuntime = Object.freeze({
         if (!target || typeof target.get !== "function") {
           return this.unsupported("missing-platform-field-binding", className + "." + fieldName);
         }
-        return target.get(className, fieldName);
+        try {
+          return target.get(className, fieldName);
+        } catch (error) {
+          this.rethrowMissingPlatformMember(error, className, fieldName);
+        }
       }
-      return this.unsupported("missing-static-field-class", className);
+      // JVM getstatic on an absent class throws NoClassDefFoundError; mods
+      // probe optional integrations by catching exactly that linkage error.
+      throw this.javaException("java.lang.NoClassDefFoundError", className);
     }
     this.ensureInitialized(constructor);
     return this.staticFieldValue(constructor, fieldName);
+  },
+  rethrowMissingPlatformMember(error, className, fieldName) {
+    if (error?.name !== "GoldClientForgeBindingError") throw error;
+    const message = String(error.message ?? "");
+    if (message.includes("unknown-class")) {
+      throw this.javaException("java.lang.NoClassDefFoundError", className);
+    }
+    if (message.includes("missing-static-field")) {
+      throw this.javaException("java.lang.NoSuchFieldError", className + "." + fieldName);
+    }
+    throw error;
   },
   setStaticField(className, fieldName, value) {
     const constructor = this.classes.get(className);
@@ -3459,10 +3921,14 @@ export const GoldClientRuntime = Object.freeze({
         if (!target || typeof target.set !== "function") {
           return this.unsupported("missing-platform-field-binding", className + "." + fieldName);
         }
-        target.set(className, fieldName, value);
-        return value;
+        try {
+          target.set(className, fieldName, value);
+          return value;
+        } catch (error) {
+          this.rethrowMissingPlatformMember(error, className, fieldName);
+        }
       }
-      return this.unsupported("missing-static-field-class", className);
+      throw this.javaException("java.lang.NoClassDefFoundError", className);
     }
     this.ensureInitialized(constructor);
     return this.defineStaticField(constructor, fieldName, value);
@@ -3571,6 +4037,12 @@ export const GoldClientRuntime = Object.freeze({
     if (adapter?.construct) return installAdapterFieldAliases(adapter.construct(args));
     const constructor = this.classes.get(name);
     if (!constructor) {
+      // Runtime-provided JDK/Gson shims are also reachable through create(),
+      // which is how translated bytecode instantiates them.
+      if (name.startsWith("java.") || name.startsWith("javax.")
+          || name.startsWith("com.google.gson.")) {
+        return this.createJava(name, ...args);
+      }
       const service = this.platformService(name);
       if (service) {
         const bindings = globalThis.window?.goldClientForgeBindings ?? globalThis.goldClientForgeBindings;
@@ -3584,6 +4056,8 @@ export const GoldClientRuntime = Object.freeze({
   },
   createJava(name, ...args) {
     switch (name) {
+      case "java.lang.Object":
+        return {};
       case "java.io.File": {
         const FileClass = globalThis.goldClientForgeBindings?.virtualFileClass;
         if (typeof FileClass !== "function") {
@@ -3614,6 +4088,26 @@ export const GoldClientRuntime = Object.freeze({
       case "java.lang.StringBuilder":
       case "java.lang.StringBuffer":
         return new GoldClientJavaStringBuilder(args[0] ?? "");
+      case "java.io.FileInputStream": {
+        const file = args[0];
+        return { file, close() {} };
+      }
+      case "java.io.InputStreamReader": {
+        const stream = args[0];
+        return { stream, file: stream?.file ?? stream, close() { stream?.close?.(); } };
+      }
+      case "java.io.BufferedReader":
+        return new GoldClientJavaBufferedReader(args[0]);
+      case "java.io.FileOutputStream":
+        return new GoldClientJavaFileOutputStream(args[0]);
+      case "java.io.OutputStreamWriter":
+        return new GoldClientJavaOutputStreamWriter(args[0]);
+      case "java.io.BufferedWriter":
+        return new GoldClientJavaBufferedWriter(args[0]);
+      case "com.google.gson.GsonBuilder":
+        return new GoldClientJavaGsonBuilder();
+      case "com.google.gson.Gson":
+        return new GoldClientJavaGson();
       case "java.util.Optional":
         return new GoldClientJavaOptional(args[0]);
       case "java.util.Date":
@@ -3658,6 +4152,81 @@ export const GoldClientRuntime = Object.freeze({
     }
   },
   invokeJavaStatic(owner, method, ...args) {
+    if (owner === "java.nio.file.Paths" && method === "get") {
+      const PathClass = globalThis.goldClientForgeBindings?.virtualPathClass;
+      if (typeof PathClass !== "function") {
+        return this.unsupported("missing-path-adapter",
+            "java.nio.file.Paths requires the EaglerForge bindings adapter");
+      }
+      return new PathClass(args.length === 1 ? args[0] : args.join("/"));
+    }
+    if (owner === "java.nio.file.Files") {
+      const path = args[0];
+      const file = typeof path?.toFile === "function" ? path.toFile() : path;
+      const exists = () => typeof file?.exists === "function" ? file.exists() : false;
+      switch (method) {
+        case "exists": return exists();
+        case "notExists": return !exists();
+        case "isDirectory": return typeof file?.isDirectory === "function" && file.isDirectory();
+        case "isRegularFile": return typeof file?.isFile === "function" && file.isFile();
+        case "isSymbolicLink": return false;
+        case "createDirectories":
+          if (!(typeof file?.isDirectory === "function" && file.isDirectory())) file?.mkdirs?.();
+          return path;
+        case "createDirectory":
+          if (!file?.mkdir?.()) {
+            throw this.javaException("java.nio.file.FileAlreadyExistsException", String(path));
+          }
+          return path;
+        case "createFile":
+          if (!file?.createNewFile?.()) {
+            throw this.javaException("java.nio.file.FileAlreadyExistsException", String(path));
+          }
+          return path;
+        case "delete":
+          if (!file?.delete?.()) throw this.javaException("java.io.IOException", "Unable to delete " + path);
+          return undefined;
+        case "deleteIfExists": return Boolean(file?.delete?.());
+        case "size": return typeof file?.length === "function" ? file.length() : 0;
+        case "copy": {
+          const target = args[1];
+          const targetFile = typeof target?.toFile === "function" ? target.toFile() : target;
+          const text = typeof file?.readText === "function" ? (file.readText() ?? "") : "";
+          if (typeof targetFile?.writeText === "function") targetFile.writeText(text);
+          return target;
+        }
+        case "move": {
+          const target = args[1];
+          const targetFile = typeof target?.toFile === "function" ? target.toFile() : target;
+          if (!file?.renameTo?.(targetFile)) {
+            throw this.javaException("java.io.IOException", "Unable to move " + path + " to " + target);
+          }
+          return target;
+        }
+        case "list": {
+          const entries = typeof file?.listFiles === "function" ? file.listFiles() ?? [] : [];
+          const paths = entries.map(entry => typeof entry.toPath === "function" ? entry.toPath() : entry);
+          return {
+            forEach: consumer => {
+              for (const entry of paths) callFunctional(consumer, "accept", entry);
+            },
+            iterator: () => {
+              let index = 0;
+              return {
+                hasNext: () => index < paths.length,
+                next: () => paths[index++],
+                remove: () => { throw new Error("UnsupportedOperationException"); }
+              };
+            },
+            count: () => paths.length,
+            close() {}
+          };
+        }
+        default:
+          break;
+      }
+      return this.unsupported("missing-java-static-adapter", "java.nio.file.Files." + method);
+    }
     if (owner === "java.util.EnumSet") {
       const enumValues = (classLiteral) => {
         const name = classLiteral?.__goldClassName ?? classLiteral?.getName?.();
@@ -3705,6 +4274,28 @@ export const GoldClientRuntime = Object.freeze({
         return this.newMultiArray(kind, dimensions, dimensions.length);
       }
     }
+    if (owner === "java.lang.Thread") {
+      if (method === "sleep") {
+        if (!globalThis.__goldClientThreadSleepWarned) {
+          globalThis.__goldClientThreadSleepWarned = true;
+          console.warn("[GoldClient] Thread.sleep is a non-blocking no-op in the "
+              + "single-threaded browser runtime.");
+        }
+        return undefined;
+      }
+      if (method === "yield") return undefined;
+      if (method === "currentThread") {
+        return {
+          getName: () => "main",
+          getId: () => 1,
+          isAlive: () => true,
+          interrupt: () => undefined,
+          isInterrupted: () => false,
+          setPriority: () => undefined,
+          getPriority: () => 5
+        };
+      }
+    }
     if (owner === "java.lang.System") {
       if (method === "identityHashCode") return this.javaHashCode(args[0]);
       if (method === "currentTimeMillis") return Date.now();
@@ -3734,7 +4325,20 @@ export const GoldClientRuntime = Object.freeze({
       }
     }
     if (owner === "java.lang.Class" && method === "forName") {
-      return this.classLiteral(String(args[0]).replace(/\//g, "."));
+      const className = String(args[0]).replace(/\//g, ".");
+      // Class.forName is commonly used to probe for optional mods. Only
+      // classes the bundle can actually resolve may succeed; anything else
+      // must throw so the probing code takes its absence branch.
+      const known = this.classes.has(className)
+          || GOLD_JAVA_SUPERCLASSES.has(className)
+          || GoldClientMinecraftAdapters.get(className) != null
+          || className.startsWith("java.")
+          || className.startsWith("javax.")
+          || className.startsWith("com.google.gson.");
+      if (!known) {
+        throw this.javaException("java.lang.ClassNotFoundException", className);
+      }
+      return this.classLiteral(className);
     }
     if (owner === "java.lang.String") {
       if (method === "valueOf") return args[0] == null ? "null" : this.javaString(args[0]);
@@ -4023,6 +4627,7 @@ export const GoldClientRuntime = Object.freeze({
       if (method === "toLowerCase") return value.toLowerCase().charAt(0);
       if (method === "getNumericValue") return Number.isNaN(Number(value)) ? -1 : Number(value);
       if (method === "charCount") return String.fromCodePoint(Number(args[0])).length;
+      if (method === "valueOf") return value;
       if (method === "toString") return value;
       if (method === "compare") return String(args[0]).localeCompare(String(args[1]));
     }
@@ -4600,6 +5205,24 @@ export const GoldClientRuntime = Object.freeze({
           score += 8;
         } else if (className === "java/lang/Object") {
           score += 2;
+        } else if (className === "java/lang/Boolean") {
+          // Boxed primitives are lowered to JavaScript primitives; requiring an
+          // object here silently dropped matching constructors/overloads.
+          if (typeof value === "boolean") score += 8;
+          else if (value === 0 || value === 1) score += 5;
+          else if (typeof value === "object") score += 2;
+          else return -1;
+        } else if (className === "java/lang/Character") {
+          if (typeof value === "string" && value.length === 1) score += 8;
+          else if (typeof value === "number") score += 5;
+          else if (typeof value === "object") score += 2;
+          else return -1;
+        } else if (className === "java/lang/Byte" || className === "java/lang/Short"
+            || className === "java/lang/Integer" || className === "java/lang/Long"
+            || className === "java/lang/Float" || className === "java/lang/Double") {
+          if (typeof value === "number") score += 8;
+          else if (typeof value === "object") score += 2;
+          else return -1;
         } else {
           const actualName = this.javaClassName(value);
           const targetName = className.split("/").join(".");
@@ -4612,8 +5235,16 @@ export const GoldClientRuntime = Object.freeze({
         continue;
       }
       if (type === "Z") {
-        if (typeof value !== "boolean") return -1;
-        score += 8;
+        // The JVM represents booleans as int 0/1, and lowered ICONST_0/ICONST_1
+        // constants stay numeric. Accept them at a lower score than a real
+        // boolean so an actual override overload still wins.
+        if (typeof value === "boolean") {
+          score += 8;
+        } else if (value === 0 || value === 1) {
+          score += 5;
+        } else {
+          return -1;
+        }
         continue;
       }
       if (type === "C") {
@@ -4908,6 +5539,21 @@ export const GoldClientRuntime = Object.freeze({
       ? Array.from(methods.keys()).join(",") : "<none>";
     return this.unsupported("missing-instance-method",
       name + "/" + args.length + " on " + receiverClass + " (declared: " + declared + ")");
+  },
+  // Non-virtual INVOKESPECIAL dispatch. Resolution starts at the symbolic
+  // owner so a super method call reaches the superclass implementation instead
+  // of re-entering the receiver's override.
+  invokeSuper(receiver, owner, name, ...args) {
+    if (receiver === null || receiver === undefined) {
+      throw new TypeError("NullPointerException: " + name);
+    }
+    if (owner === "java.lang.Object") return this.invokeInstance(receiver, name, ...args);
+    const target = this.resolveClassMethod(owner, name, args, false);
+    if (target) return target.fn.apply(receiver, args);
+    if (typeof receiver[name] === "function" && receiver.isModProxy) {
+      return receiver[name](...args);
+    }
+    return this.unsupported("missing-super-method", owner + "." + name + "/" + args.length);
   },
   invokeStatic(receiver, methods, name, args) {
     this.ensureInitialized(receiver);

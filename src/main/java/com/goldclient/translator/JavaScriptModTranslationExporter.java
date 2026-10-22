@@ -78,6 +78,7 @@ public final class JavaScriptModTranslationExporter {
           .append(";\n")
           .append("void GoldClientRuntime; // Runtime is available to lowered helpers.\n\n");
 
+      java.util.Map<String, String> fieldRenames = collidingFieldRenames(clazz, classes);
       for (MethodModel method : clazz.methods().stream()
           .sorted(Comparator.comparing(MethodModel::name).thenComparing(MethodModel::descriptor))
           .toList()) {
@@ -103,7 +104,7 @@ public final class JavaScriptModTranslationExporter {
           reason = why;
         } else {
           result = translator.translate(method.intermediateRepresentation(),
-              (method.access() & Opcodes.ACC_STATIC) != 0);
+              (method.access() & Opcodes.ACC_STATIC) != 0, fieldRenames);
           status = result.complete() ? "complete" : "incomplete";
           reason = result.complete() ? null : incompleteReason(result.source(), method.intermediateRepresentation());
         }
@@ -253,11 +254,39 @@ public final class JavaScriptModTranslationExporter {
     module.append("export class ").append(className).append(" {\n")
         .append("  constructor(...args) {\n")
         .append("    GoldClientRuntime.ensureInitialized(").append(className).append(");\n");
+    java.util.Map<String, String> fieldRenames = collidingFieldRenames(clazz, allClasses);
+    java.util.Set<String> initializedFields = new java.util.HashSet<>();
     for (var field : clazz.fields()) {
       if ((field.access() & Opcodes.ACC_STATIC) == 0) {
-        module.append("    this.").append(field.name()).append(" = ")
+        initializedFields.add(field.name());
+        module.append("    this.").append(javascriptFieldName(field.name(), fieldRenames)).append(" = ")
             .append(defaultValue(field.descriptor())).append(";\n");
       }
+    }
+    // Superclass constructors are invoked through invokeNamedConstructor on the
+    // same receiver, so their JavaScript `new` initializers never run. Apply
+    // inherited instance-field defaults here or subclass instances silently
+    // miss base fields (e.g. ConfigOptionManager.frozen).
+    java.util.Map<String, ClassModel> ancestorByName = new java.util.HashMap<>();
+    for (ClassModel candidate : allClasses) {
+      ancestorByName.put(candidate.name(), candidate);
+      ancestorByName.put(candidate.name().replace('/', '.'), candidate);
+      ancestorByName.put(candidate.name().replace('.', '/'), candidate);
+    }
+    java.util.Set<String> visitedAncestors = new java.util.HashSet<>();
+    String ancestorName = clazz.superName();
+    while (ancestorName != null && visitedAncestors.add(ancestorName)) {
+      ClassModel parent = ancestorByName.get(ancestorName);
+      if (parent == null) parent = ancestorByName.get(ancestorName.replace('/', '.'));
+      if (parent == null) parent = ancestorByName.get(ancestorName.replace('.', '/'));
+      if (parent == null) break;
+      for (var field : parent.fields()) {
+        if ((field.access() & Opcodes.ACC_STATIC) != 0) continue;
+        if (!initializedFields.add(field.name())) continue;
+        module.append("    this.").append(javascriptFieldName(field.name(), fieldRenames)).append(" = ")
+            .append(defaultValue(field.descriptor())).append(";\n");
+      }
+      ancestorName = parent.superName();
     }
     module.append("    GoldClientRuntime.invoke(this, __goldMethods, \"<init>\", args, true);\n")
         .append("  }\n");
@@ -419,6 +448,47 @@ public final class JavaScriptModTranslationExporter {
       return number.toString();
     }
     return defaultValue(descriptor);
+  }
+
+  /**
+   * Java allows a field and a method with the same name; JavaScript objects do
+   * not. Instance fields that collide with an instance method (in this class or
+   * an ancestor) are emitted as {@code name$field} so the method stays callable.
+   */
+  private static java.util.Map<String, String> collidingFieldRenames(
+      ClassModel clazz, List<ClassModel> allClasses) {
+    java.util.Map<String, ClassModel> classByName = new java.util.HashMap<>();
+    for (ClassModel candidate : allClasses) {
+      classByName.put(candidate.name(), candidate);
+      classByName.put(candidate.name().replace('/', '.'), candidate);
+      classByName.put(candidate.name().replace('.', '/'), candidate);
+    }
+    java.util.Map<String, String> renames = new java.util.LinkedHashMap<>();
+    java.util.Set<String> visited = new java.util.HashSet<>();
+    String current = clazz.name();
+    while (current != null && visited.add(current)) {
+      ClassModel type = classByName.get(current);
+      if (type == null) type = classByName.get(current.replace('/', '.'));
+      if (type == null) type = classByName.get(current.replace('.', '/'));
+      if (type == null) break;
+      java.util.Set<String> methodNames = type.methods().stream()
+          .filter(method -> (method.access() & Opcodes.ACC_STATIC) == 0)
+          .map(MethodModel::name)
+          .filter(name -> !"<init>".equals(name) && !"<clinit>".equals(name))
+          .collect(java.util.stream.Collectors.toSet());
+      for (FieldModel field : type.fields()) {
+        if ((field.access() & Opcodes.ACC_STATIC) != 0) continue;
+        if (methodNames.contains(field.name())) {
+          renames.putIfAbsent(field.name(), field.name() + "$field");
+        }
+      }
+      current = type.superName();
+    }
+    return renames;
+  }
+
+  private static String javascriptFieldName(String name, java.util.Map<String, String> renames) {
+    return renames.getOrDefault(name, name);
   }
 
   private static String defaultValue(String descriptor) {

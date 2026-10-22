@@ -86,9 +86,12 @@
     }
 
     function isTeaVMArray(value) {
+        // TeaVM array classes expose `.type` as a class object (older builds
+        // exposed a function), so accept both shapes.
         return value !== null && typeof value === "object"
             && value.data && typeof value.data.length === "number"
-            && typeof value.type === "function";
+            && (typeof value.type === "function"
+                || (value.type !== null && typeof value.type === "object"));
     }
 
     function isProxy(value) {
@@ -310,6 +313,12 @@
                     && ("$tabToDisplayOn" in raw || "tabToDisplayOn" in raw)) {
                     return () => adaptNative(raw.$tabToDisplayOn ?? raw.tabToDisplayOn);
                 }
+                if (names.includes("gameDir")) {
+                    return new GoldClientVirtualFile("/");
+                }
+                if (names.includes("configDir") || names.includes("mcDataDir")) {
+                    return new GoldClientVirtualFile("/config");
+                }
                 if (property === "iterator" && isNativeListLike(raw)) {
                     return () => nativeListIterator(raw);
                 }
@@ -473,6 +482,27 @@
         return proxy;
     }
 
+    let objectArrayClass = null;
+    function teaVMObjectArrayClass() {
+        if (objectArrayClass) return objectArrayClass;
+        const teavm = api().hooks?._teavm;
+        const entry = api().reflect.getClassByName("Object");
+        if (!teavm || typeof teavm.$rt_arraycls !== "function" || !entry?.class) {
+            fail("array-adapter", "TeaVM array construction is unavailable");
+        }
+        objectArrayClass = teavm.$rt_arraycls(entry.class);
+        return objectArrayClass;
+    }
+
+    function wrapArrayArgument(value) {
+        const elements = value.map(unwrapArgument);
+        const teavm = api().hooks?._teavm;
+        if (typeof teavm?.$rt_createArrayFromData !== "function") {
+            fail("array-adapter", "TeaVM array construction is unavailable");
+        }
+        return teavm.$rt_createArrayFromData(teaVMObjectArrayClass(), elements);
+    }
+
     function unwrapArgument(value) {
         if (isProxy(value)) return value.getRef();
         if (value === null || value === undefined) return value;
@@ -483,8 +513,56 @@
         }
         if (typeof value === "boolean") return value ? 1 : 0;
         if (typeof value === "function") return adaptCallback(value);
-        if (Array.isArray(value)) return value.map(unwrapArgument);
+        if (Array.isArray(value)) return wrapArrayArgument(value);
         return value;
+    }
+
+    // Forge 1.12 event enum types that the translated mod only compares or
+    // stores. Eaglercraft's runtime does not load Forge's client event classes,
+    // so expose the same named constants with Java enum identity semantics.
+    const VIRTUAL_FORGE_ENUMS = new Map([
+        ["net.minecraftforge.client.event.RenderGameOverlayEvent$ElementType", [
+            "ALL", "HELMET", "PORTAL", "HOTBAR", "CROSSHAIRS", "BOSSHEALTH",
+            "BOSSINFO", "ARMOR", "HEALTH", "FOOD", "AIR", "TEXT", "HEALTHMOUNT",
+            "EXPERIENCE", "JUMPBAR", "CHAT", "PLAYER_LIST", "DEBUG",
+            "POTION_ICONS", "SUBTITLES", "FPS_GRAPH"]]
+    ]);
+    const virtualEnumClasses = new Map();
+
+    function virtualEnumEntry(className) {
+        const constants = VIRTUAL_FORGE_ENUMS.get(className);
+        if (!constants) return null;
+        let entry = virtualEnumClasses.get(className);
+        if (entry) return entry;
+        const EnumClass = function () {};
+        EnumClass.__goldVirtualEnum = className;
+        const byName = Object.create(null);
+        const values = constants.map((name, ordinal) => {
+            const constant = Object.freeze({
+                name,
+                ordinal,
+                javaClassName: className,
+                name() { return name; },
+                ordinal() { return ordinal; },
+                toString() { return name; },
+                compareTo(other) { return ordinal - Number(other?.ordinal ?? -1); }
+            });
+            byName[name] = constant;
+            EnumClass[name] = constant;
+            return constant;
+        });
+        EnumClass.values = () => values.slice();
+        EnumClass.valueOf = name => byName[String(name)] ?? null;
+        entry = Object.freeze({
+            class: EnumClass,
+            staticVariables: byName,
+            staticMethods: {
+                values: { method: EnumClass.values },
+                valueOf: { method: EnumClass.valueOf }
+            }
+        });
+        virtualEnumClasses.set(className, entry);
+        return entry;
     }
 
     function reflection(owner) {
@@ -495,6 +573,7 @@
             const simple = normalized.slice(normalized.lastIndexOf(".") + 1);
             entry = modApi.reflect.getClassByName(simple);
         }
+        if (!entry) entry = virtualEnumEntry(normalized);
         if (!entry) fail("unknown-class", normalized);
         return entry;
     }
@@ -955,8 +1034,74 @@
             fs.set(this.path, { type: "file", content: String(content), lastModified: Date.now() });
             persistFileSystem();
         }
+        toPath() { return new GoldClientVirtualPath(this.path); }
         toString() { return this.path; }
         equals(other) { return other instanceof GoldClientVirtualFile && other.path === this.path; }
+        hashCode() {
+            let hash = 0;
+            for (let i = 0; i < this.path.length; i++) {
+                hash = ((hash << 5) - hash + this.path.charCodeAt(i)) | 0;
+            }
+            return hash;
+        }
+    }
+
+    // Minimal java.nio.file.Path view over the same virtual filesystem. Mods
+    // such as Xaero call Path.resolve/resolveSibling/toFile directly, so these
+    // must be real methods rather than adapter no-ops.
+    class GoldClientVirtualPath {
+        constructor(path) {
+            this.path = normalizePath(path);
+            this.javaClassName = "java.nio.file.Path";
+        }
+        getFileName() { return new GoldClientVirtualPath(this.path.slice(this.path.lastIndexOf("/") + 1)); }
+        getParent() {
+            if (this.path === "/") return null;
+            const index = this.path.lastIndexOf("/");
+            return new GoldClientVirtualPath(index <= 0 ? "/" : this.path.slice(0, index));
+        }
+        getRoot() { return new GoldClientVirtualPath("/"); }
+        getNameCount() { return this.path.split("/").filter(Boolean).length; }
+        getName(index) {
+            const parts = this.path.split("/").filter(Boolean);
+            if (index < 0 || index >= parts.length) {
+                fail("index-out-of-bounds",
+                    "Path.getName(" + index + ") out of range for " + this.path);
+            }
+            return new GoldClientVirtualPath(parts[index]);
+        }
+        subpath(begin, end) {
+            const parts = this.path.split("/").filter(Boolean).slice(begin, end);
+            return new GoldClientVirtualPath(parts.join("/"));
+        }
+        isAbsolute() { return true; }
+        normalize() { return new GoldClientVirtualPath(this.path); }
+        toAbsolutePath() { return new GoldClientVirtualPath(this.path); }
+        resolve(other) {
+            if (other instanceof GoldClientVirtualPath) return new GoldClientVirtualPath(this.path + "/" + other.path);
+            if (other instanceof GoldClientVirtualFile) return new GoldClientVirtualPath(this.path + "/" + other.path);
+            const text = String(other ?? "");
+            return new GoldClientVirtualPath(text.startsWith("/") ? text : this.path + "/" + text);
+        }
+        resolveSibling(other) {
+            const parent = this.getParent();
+            return (parent ?? new GoldClientVirtualPath("/")).resolve(other);
+        }
+        relativize(other) {
+            const target = other instanceof GoldClientVirtualPath
+                ? other.path : normalizePath(other?.path ?? other);
+            if (target === this.path) return new GoldClientVirtualPath("");
+            const prefix = this.path === "/" ? "/" : this.path + "/";
+            if (!target.startsWith(prefix)) {
+                fail("relativize-failed",
+                    "Cannot relativize " + target + " against " + this.path);
+            }
+            return new GoldClientVirtualPath(target.slice(prefix.length));
+        }
+        toFile() { return new GoldClientVirtualFile(this.path); }
+        toPath() { return this; }
+        toString() { return this.path; }
+        equals(other) { return other instanceof GoldClientVirtualPath && other.path === this.path; }
         hashCode() {
             let hash = 0;
             for (let i = 0; i < this.path.length; i++) {
@@ -1377,6 +1522,12 @@
         };
         event.getSuggestedConfigurationFile = () =>
             new GoldClientVirtualFile("config", mod.modId + ".cfg");
+        // FMLPreInitializationEvent.getSourceFile exposes the mod's own JAR.
+        // The browser host has no mounted mod JAR, so this is the virtual path
+        // the loader's provenance already records for the mod.
+        event.getSourceFile = () =>
+            new GoldClientVirtualFile("mods", mod.modId + ".jar");
+        event.getModSourceFile = () => event.getSourceFile();
         event.getAsmData = () => asmDataTable();
         // FMLConstructionEvent exposes the discovery/loader state. The browser
         // host has no Forge discovery table or loader-state list, so these fail
@@ -1578,7 +1729,9 @@
         activeModContainer() { return this.getModList()[0] ?? null; },
         isInitialized() { return true; },
         isLoading() { return false; },
-        getLoaderState() { return "AVAILABLE"; }
+        getLoaderState() { return "AVAILABLE"; },
+        getConfigDir() { return new GoldClientVirtualFile("/config"); },
+        getGameDir() { return new GoldClientVirtualFile("/"); }
     });
 
     const PROGRESS_STACK = [];
@@ -1758,6 +1911,22 @@
     }
 
     const FACADES = new Map([
+        // Forge's EntityEntry is a registry value wrapping an entity class and
+        // name. Eaglercraft has no Forge registry; the wrapper itself is plain
+        // data, so preserve the constructor arguments for subclasses that use
+        // it as a base (Xaero's placeholder entity type).
+        ["net.minecraftforge.fml.common.registry.EntityEntry", {
+            construct: (args, receiver = null) => {
+                const target = receiver ?? {};
+                target.entityClass = args[0] ?? null;
+                target.entityName = args[1] ?? null;
+                target.getEntityClass = () => target.entityClass;
+                target.getName = () => target.entityName;
+                target.toString = () => target.entityName == null
+                    ? "null" : String(target.entityName);
+                return target;
+            }
+        }],
         ["net.minecraftforge.common.capabilities.CapabilityManager", {
             staticFields: { INSTANCE: CAPABILITY_MANAGER },
             staticMethods: {
@@ -1943,6 +2112,79 @@
         return setStaticField(owner, field, value);
     }
 
+    function resourceFiles() {
+        const files = globalThis.GoldClientResources?.files;
+        return files && typeof files === "object" ? files : Object.create(null);
+    }
+
+    function resourcePath(value) {
+        if (value == null) fail("invalid-resource-path", "expected a resource path");
+        let normalized = String(value).replace(/\\/g, "/");
+        while (normalized.startsWith("/")) normalized = normalized.slice(1);
+        if (!normalized || normalized.split("/").includes("..")) {
+            fail("invalid-resource-path", String(value));
+        }
+        return normalized;
+    }
+
+    function resourceBase64(path) {
+        const files = resourceFiles();
+        const key = resourcePath(path);
+        return Object.prototype.hasOwnProperty.call(files, key) ? files[key] : null;
+    }
+
+    function decodeBase64(value) {
+        let binary;
+        if (typeof globalThis.atob === "function") {
+            binary = globalThis.atob(value);
+        } else if (typeof Buffer === "function") {
+            binary = Buffer.from(value, "base64").toString("binary");
+        } else {
+            fail("missing-base64-decoder", "the host must provide atob or Buffer");
+        }
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+    }
+
+    function resourceText(value) {
+        const bytes = decodeBase64(value);
+        if (typeof TextDecoder === "function") return new TextDecoder().decode(bytes);
+        let text = "";
+        for (const byte of bytes) text += String.fromCharCode(byte);
+        return text;
+    }
+
+    function resourceService() {
+        return Object.freeze({
+            call(operation, ...args) {
+                switch (operation) {
+                    case "has":
+                        return resourceBase64(args[0]) !== null;
+                    case "list": {
+                        const prefix = args[0] == null ? "" : resourcePath(args[0]);
+                        return Object.keys(resourceFiles())
+                            .filter(name => name.startsWith(prefix))
+                            .sort();
+                    }
+                    case "get":
+                        return resourceBase64(args[0]);
+                    case "getBytes": {
+                        const value = resourceBase64(args[0]);
+                        return value === null ? null : decodeBase64(value);
+                    }
+                    case "getText": {
+                        const value = resourceBase64(args[0]);
+                        return value === null ? null : resourceText(value);
+                    }
+                    default:
+                        return fail("unsupported-resource-operation",
+                            "resources." + operation + " is not implemented");
+                }
+            }
+        });
+    }
+
     function unsupportedService(service) {
         return Object.freeze({
             call(operation, ...args) {
@@ -2023,7 +2265,7 @@
         }),
         render: unsupportedService("render"),
         input: unsupportedService("input"),
-        resources: unsupportedService("resources"),
+        resources: resourceService(),
         network: unsupportedService("network"),
         config: unsupportedService("config"),
         registries: Object.freeze({
@@ -2052,6 +2294,7 @@
         }),
         configurationClass: GoldClientConfiguration,
         virtualFileClass: GoldClientVirtualFile,
+        virtualPathClass: GoldClientVirtualPath,
         eventClass: GoldClientForgeEvent
     });
 

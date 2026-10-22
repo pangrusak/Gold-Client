@@ -21,6 +21,35 @@ each input, and what remains explicitly unsupported.
 | Eaglercraft 1.12.2 with EaglerForge injected | The stripped EaglerForge injector, SRG-to-MCP table, binding adapter, client-candidate builder, transformation inspector, and self-contained value/NBT adapters are implemented. A headless-Firefox candidate run resolved real client members and completed AppleSkin's four client lifecycle phases. Translated subclasses of native classes use EaglerForge's internal super initializers when the host exposes them; JEI still needs real rendering/resource behavior, and rendering/network I/O remain unsupported. | Partial host adapter; AppleSkin lifecycle works, arbitrary mod support does not. |
 | Fabric Minecraft 1.16.2-1.16.5 client | No exact client build or Fabric loader supplied. | Unsupported. |
 
+## Self-contained client command
+
+`--create-client` and the local `--ui` server package the pinned Eaglercraft
+1.12.2 client, EaglerForge, the member map, the binding adapter, an optional
+translated loader bundle, input resources, and provenance into one HTML file.
+The build is one-shot and reports blockers instead of hiding them.
+
+Current evidence:
+
+- [x] A no-mod build writes a self-contained HTML and exits `0`.
+- [x] AppleSkin writes a self-contained HTML, translates 22 classes / 92
+  methods, and exits `0`.
+- [x] Xaero's Minimap alone exits `2` and reports the missing `xaerolib`
+  dependency.
+- [x] Xaero's Minimap + XaeroLib exits `2`, reports both coremod plugins, and
+  names the one incomplete `DropDownWidget.drawSlot` method.
+- [x] The generated HTML contains no external `<script src>` or non-`data:`
+  stylesheet link, and loads in a headless Chromium browser.
+- [x] Embedded files are readable through
+  `GoldClientRuntime.hasResource/getResourceBytes/getResourceText/listResources`
+  and the bindings `resources` service.
+- [x] Class-literal `getResource`, `getResourceAsStream`, and `getClassLoader()`
+  read embedded JAR files using Java's relative/absolute path rules.
+- [ ] `getClass().getResourceAsStream(...)`, Minecraft `IResourceManager`, and
+  Forge resource-pack calls.
+- [ ] Build-time coremod/ASM/Mixin execution. Mixins and coremods normally
+  rewrite Minecraft bytecode, but this pipeline never has the host Minecraft
+  bytecode; the current output keeps an explicit blocker rather than guessing.
+
 ## Multi-mod Forge loader bundle
 
 The `loader` subcommand translates several Forge 1.12.2 JARs into one shared

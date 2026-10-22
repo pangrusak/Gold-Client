@@ -37,19 +37,24 @@ public final class UiCommand {
   public static int run(String[] args, PrintStream out, PrintStream err) {
     int port = 8080;
     boolean open = false;
-    for (int i = 0; i < args.length; i++) {
-      switch (args[i]) {
-        case "--help" -> {
-          usage(out);
-          return 0;
+    try {
+      for (int i = 0; i < args.length; i++) {
+        switch (args[i]) {
+          case "--help" -> {
+            usage(out);
+            return 0;
+          }
+          case "--port" -> {
+            if (++i >= args.length) throw new IllegalArgumentException("Missing value for --port");
+            port = Integer.parseInt(args[i]);
+          }
+          case "--open" -> open = true;
+          default -> throw new IllegalArgumentException("Unknown option: " + args[i]);
         }
-        case "--port" -> {
-          if (++i >= args.length) throw new IllegalArgumentException("Missing value for --port");
-          port = Integer.parseInt(args[i]);
-        }
-        case "--open" -> open = true;
-        default -> throw new IllegalArgumentException("Unknown option: " + args[i]);
       }
+    } catch (RuntimeException exception) {
+      err.println("Could not start UI: " + exception.getMessage());
+      return 1;
     }
 
     try {

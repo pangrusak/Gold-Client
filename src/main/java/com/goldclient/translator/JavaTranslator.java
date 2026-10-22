@@ -46,6 +46,20 @@ public final class JavaTranslator {
     return new TranslationResult(source.toString(), complete);
   }
 
+  private static boolean endsWithLoopExit(String source) {
+    String[] lines = source.stripTrailing().split("\\R");
+    for (int i = lines.length - 1; i >= 0; i--) {
+      String trimmed = lines[i].strip();
+      if (trimmed.isEmpty()) continue;
+      // A closing brace ends a nested block (for example the catch clause of a
+      // try that succeeds normally); the loop still needs an explicit exit.
+      if (trimmed.endsWith("}")) return false;
+      return trimmed.endsWith("break;") || trimmed.endsWith("continue;")
+          || trimmed.startsWith("return") || trimmed.startsWith("throw");
+    }
+    return false;
+  }
+
   private static RenderResult renderRange(
       List<IrOperationModel> operations,
       int start,
@@ -88,8 +102,15 @@ public final class JavaTranslator {
             source.append(indent(indent));
             if (labeled) source.append(jsLabel(loopLabel)).append(": ");
             source.append("while (true) {\n")
-                .append(body.source())
-                .append(indent(indent)).append("}\n");
+                .append(body.source());
+            // The synthetic wrapper exists only because a try region's back
+            // edges target the loop header. Normal completion of the region
+            // leaves the loop in bytecode, so a fall-through body needs an
+            // explicit break; otherwise the generated loop never terminates.
+            if (!endsWithLoopExit(body.source())) {
+              source.append(indent(indent + 1)).append("break;\n");
+            }
+            source.append(indent(indent)).append("}\n");
             complete &= body.complete();
             i = end - 1;
             continue;
@@ -154,6 +175,20 @@ public final class JavaTranslator {
             i = loop.lastIndex();
             continue;
           }
+          // Prefer a loop with an observable exit jump over a plain infinite
+          // loop. A body that jumps to a label outside the loop is not
+          // infinite even when the back edge happens to be the last
+          // instruction of the current range.
+          LoopShape breakLoop = findBreakLoopBackEdge(
+              operations, i, end, operation.operands().get(0), labels);
+          if (breakLoop != null) {
+            ConditionalRender loop = renderBreakLoop(
+                operations, i, end, breakLoop, indent, context, labels);
+            source.append(loop.source());
+            complete &= loop.complete();
+            i = loop.lastIndex();
+            continue;
+          }
           LoopShape infiniteLoop = findInfiniteLoopBackEdge(
               operations, i, end, operation.operands().get(0), labels);
           if (infiniteLoop != null) {
@@ -184,16 +219,6 @@ public final class JavaTranslator {
               i = loop.lastIndex();
               continue;
             }
-          }
-          LoopShape breakLoop = findBreakLoopBackEdge(
-              operations, i, end, operation.operands().get(0), labels);
-          if (breakLoop != null) {
-            ConditionalRender loop = renderBreakLoop(
-                operations, i, end, breakLoop, indent, context, labels);
-            source.append(loop.source());
-            complete &= loop.complete();
-            i = loop.lastIndex();
-            continue;
           }
           // A switch or try can place a jump back to the header before later
           // switch arms, so the back edge is not the last instruction of the
@@ -5075,16 +5100,11 @@ public final class JavaTranslator {
       }
     }
     if (backEdgeIndex < 0) return null;
+    // The exit is the jump target inside the body that lies beyond the back
+    // edge, not necessarily the first label after the back edge (that can be
+    // a sibling branch such as an else block). Prefer the nearest such target.
     int exitIndex = -1;
-    for (int i = backEdgeIndex + 1; i < end; i++) {
-      if ("LABEL".equals(operations.get(i).kind())) {
-        exitIndex = i;
-        break;
-      }
-    }
-    if (exitIndex < 0) return null;
-    String exitLabel = labelKey(operations.get(exitIndex).operands().get(0));
-    boolean hasEarlyExit = false;
+    String exitLabel = null;
     for (int i = loopHeaderIndex + 1; i < backEdgeIndex; i++) {
       IrOperationModel operation = operations.get(i);
       String target = null;
@@ -5094,9 +5114,37 @@ public final class JavaTranslator {
           && operation.operands().size() >= 2) {
         target = operation.operands().get(1);
       }
-      if (target != null && exitLabel.equals(labelKey(target))) {
-        hasEarlyExit = true;
-        break;
+      if (target == null) continue;
+      Integer targetIndex = labels.get(labelKey(target));
+      if (targetIndex != null && targetIndex > backEdgeIndex
+          && (exitIndex < 0 || targetIndex < exitIndex)) {
+        exitIndex = targetIndex;
+        exitLabel = labelKey(target);
+      }
+    }
+    boolean hasEarlyExit = exitIndex >= 0;
+    if (!hasEarlyExit) {
+      for (int i = backEdgeIndex + 1; i < end; i++) {
+        if ("LABEL".equals(operations.get(i).kind())) {
+          exitIndex = i;
+          exitLabel = labelKey(operations.get(i).operands().get(0));
+          break;
+        }
+      }
+      if (exitIndex < 0) return null;
+      for (int i = loopHeaderIndex + 1; i < backEdgeIndex; i++) {
+        IrOperationModel operation = operations.get(i);
+        String target = null;
+        if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+          target = operation.operands().get(0);
+        } else if ("CONDITIONAL_BRANCH".equals(operation.kind())
+            && operation.operands().size() >= 2) {
+          target = operation.operands().get(1);
+        }
+        if (target != null && exitLabel.equals(labelKey(target))) {
+          hasEarlyExit = true;
+          break;
+        }
       }
     }
     if (!hasEarlyExit) return null;
@@ -5131,8 +5179,11 @@ public final class JavaTranslator {
     source.append(indent(indent));
     if (labeled) source.append(jsLabel(loopLabel)).append(": ");
     source.append("while (true) {\n")
-        .append(body.source())
-        .append(indent(indent)).append("}\n");
+        .append(body.source());
+    if (!endsWithLoopExit(body.source())) {
+      source.append(indent(indent + 1)).append("break;\n");
+    }
+    source.append(indent(indent)).append("}\n");
     return new ConditionalRender(source.toString(), body.complete(), loop.backEdgeIndex());
   }
 

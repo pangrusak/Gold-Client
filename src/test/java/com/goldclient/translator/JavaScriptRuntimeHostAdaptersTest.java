@@ -53,9 +53,40 @@ class JavaScriptRuntimeHostAdaptersTest {
           }
         };
 
+        const contents = new Map([["/config/sample.cfg", "alpha\\nbeta\\n"]]);
+        FakeFile.prototype.readText = function () { return contents.get(this.path) ?? null; };
+        FakeFile.prototype.writeText = function (value) { contents.set(this.path, value); };
+        FakeFile.prototype.exists = function () { return contents.has(this.path); };
+        FakeFile.prototype.isDirectory = function () { return false; };
+
         const file = runtime.createJava("java.io.File", "config", "sample.cfg");
         if (file.path !== "/config/sample.cfg") {
           throw new Error("java.io.File adapter path: " + file.path);
+        }
+        if (!runtime.invokeJavaStatic("java.nio.file.Files", "exists", file)) {
+          throw new Error("java.nio.file.Files.exists did not reach the virtual file");
+        }
+        if (runtime.invokeJavaStatic("java.lang.Thread", "sleep", 5) !== undefined) {
+          throw new Error("Thread.sleep should be a non-blocking no-op");
+        }
+
+        const outputStream = runtime.createJava("java.io.FileOutputStream", file);
+        const outputWriter = runtime.createJava("java.io.OutputStreamWriter", outputStream);
+        const bufferedWriter = runtime.createJava("java.io.BufferedWriter", outputWriter);
+        bufferedWriter.write("gamma");
+        bufferedWriter.close();
+        if (contents.get("/config/sample.cfg") !== "gamma") {
+          throw new Error("buffered writer did not persist file contents: " + contents.get("/config/sample.cfg"));
+        }
+
+        const inputStream = runtime.createJava("java.io.FileInputStream", file);
+        const inputReader = runtime.createJava("java.io.InputStreamReader", inputStream);
+        const bufferedReader = runtime.createJava("java.io.BufferedReader", inputReader);
+        const lines = [];
+        bufferedReader.lines().forEach(line => lines.push(line));
+        bufferedReader.close();
+        if (lines.join("|") !== "gamma") {
+          throw new Error("buffered reader lines: " + lines.join("|"));
         }
 
         class StaticFieldProbe {}
@@ -88,6 +119,43 @@ class JavaScriptRuntimeHostAdaptersTest {
           throw new Error("DecimalFormat optional pattern: " + optional.format(3.14159));
         }
 
+        let classNotFound = false;
+        try {
+          runtime.invokeJavaStatic("java.lang.Class", "forName", "absent.Probe");
+        } catch (error) {
+          classNotFound = error?.javaClassName === "java.lang.ClassNotFoundException";
+        }
+        if (!classNotFound) {
+          throw new Error("Class.forName must throw ClassNotFoundException for unknown classes");
+        }
+
+        let noClassDef = false;
+        try {
+          runtime.getStaticField("absent.Probe", "instance");
+        } catch (error) {
+          noClassDef = error?.javaClassName === "java.lang.NoClassDefFoundError";
+        }
+        if (!noClassDef) {
+          throw new Error("getStaticField must throw NoClassDefFoundError for absent classes");
+        }
+
+        const gson = runtime.createJava("com.google.gson.GsonBuilder").create();
+        if (gson.toJson({ name: "x", count: 2 }) !== '{"name":"x","count":2}') {
+          throw new Error("Gson.toJson did not serialize an object: " + gson.toJson({ name: "x", count: 2 }));
+        }
+        class ProbeData {
+          constructor() {
+            this.name = "";
+            this.count = 0;
+          }
+        }
+        runtime.registerClass("probe.ProbeData", ProbeData);
+        const probeData = gson.fromJson('{"name":"y","count":3}',
+            runtime.classLiteral("probe.ProbeData"));
+        if (!(probeData instanceof ProbeData) || probeData.name !== "y" || probeData.count !== 3) {
+          throw new Error("Gson.fromJson did not populate the target class");
+        }
+
         const logger = runtime.invokeStaticClass(
           "org.apache.logging.log4j.LogManager", "getLogger", "gold-test");
         if (logger.getName() !== "gold-test") throw new Error("LogManager did not return a logger");
@@ -104,6 +172,48 @@ class JavaScriptRuntimeHostAdaptersTest {
         }
         if (!nullRejected) throw new Error("checkNotNull accepted null");
 
+        const baseMethods = new Map([
+          ["label", [{ arity: 0, descriptor: "()Ljava/lang/String;", isStatic: false,
+            isAbstract: false, isBridge: false, isAdapterRequired: false,
+            fn: function () { return "base"; } }]]
+        ]);
+        class SuperBase {
+          constructor() { this.baseInit = true; }
+        }
+        runtime.registerClass("probe.SuperBase", SuperBase, null,
+          { superName: "java.lang.Object", interfaces: [], methods: baseMethods });
+
+        const childMethods = new Map([
+          ["label", [{ arity: 0, descriptor: "()Ljava/lang/String;", isStatic: false,
+            isAbstract: false, isBridge: false, isAdapterRequired: false,
+            fn: function () { return "child"; } }]]
+        ]);
+        class SuperChild extends SuperBase {}
+        runtime.registerClass("probe.SuperChild", SuperChild, null,
+          { superName: "probe.SuperBase", interfaces: [], methods: childMethods });
+
+        const child = new SuperChild();
+        if (runtime.invokeInstance(child, "label") !== "child") {
+          throw new Error("virtual dispatch did not reach the override");
+        }
+        if (runtime.invokeSuper(child, "probe.SuperBase", "label") !== "base") {
+          throw new Error("invokeSuper re-entered the override instead of the base method");
+        }
+
+        const flagCalls = [];
+        const flagMethods = new Map([
+          ["setFlag", [{ arity: 1, descriptor: "(Z)V", isStatic: false,
+            isAbstract: false, isBridge: false, isAdapterRequired: false,
+            fn: function (value) { flagCalls.push(value); } }]]
+        ]);
+        class FlagHolder {}
+        runtime.registerClass("probe.FlagHolder", FlagHolder, null,
+          { superName: "java.lang.Object", interfaces: [], methods: flagMethods });
+        runtime.invoke(new FlagHolder(), flagMethods, "setFlag", [0]);
+        if (flagCalls.length !== 1) {
+          throw new Error("lowered int 0 was not accepted for a boolean parameter");
+        }
+
         const configReceiver = {};
         const configResult = runtime.invokeNamedConstructor(
           configReceiver, "net.minecraftforge.common.config.Configuration", file, "1.0");
@@ -118,6 +228,59 @@ class JavaScriptRuntimeHostAdaptersTest {
         if (eventResult !== eventReceiver || eventReceiver.platformOwner
             !== "net.minecraftforge.fml.common.eventhandler.Event") {
           throw new Error("Event super-constructor was not routed");
+        }
+
+        globalThis.GoldClientResources = {
+          formatVersion: "gold-client-resources-v1",
+          files: {
+            "assets/demo/lang/en_us.json":
+              Buffer.from('{"item.demo":"Demo"}', "utf8").toString("base64"),
+            "demo/data.txt": Buffer.from("relative-resource", "utf8").toString("base64")
+          }
+        };
+        if (!runtime.hasResource("assets/demo/lang/en_us.json")) {
+          throw new Error("embedded resource was not visible to the runtime");
+        }
+        if (runtime.hasResource("assets/demo/missing.json")) {
+          throw new Error("missing resource was reported as present");
+        }
+        if (runtime.getResourceText("assets/demo/lang/en_us.json") !== '{"item.demo":"Demo"}') {
+          throw new Error("resource text did not round-trip");
+        }
+        if (runtime.listResources("assets/demo/").length !== 1) {
+          throw new Error("resource listing did not include the embedded file");
+        }
+        let invalidResource = false;
+        try {
+          runtime.hasResource("../outside");
+        } catch (error) {
+          invalidResource = true;
+        }
+        if (!invalidResource) throw new Error("invalid resource path was accepted");
+
+        const literal = runtime.classLiteral("demo.Plugin");
+        const relative = literal.getResourceAsStream("data.txt");
+        if (!relative) throw new Error("relative class resource was not found");
+        const relativeBytes = relative.readAllBytes();
+        if (new TextDecoder().decode(relativeBytes) !== "relative-resource") {
+          throw new Error("relative class resource bytes did not round-trip");
+        }
+        const absolute = literal.getResourceAsStream("/assets/demo/lang/en_us.json");
+        if (!absolute) throw new Error("absolute class resource was not found");
+        if (new TextDecoder().decode(absolute.readAllBytes()) !== '{"item.demo":"Demo"}') {
+          throw new Error("absolute class resource bytes did not round-trip");
+        }
+        if (literal.getResourceAsStream("missing.txt") !== null) {
+          throw new Error("missing class resource did not return null");
+        }
+        const loader = literal.getClassLoader();
+        const loaderStream = loader.getResourceAsStream("demo/data.txt");
+        if (!loaderStream || new TextDecoder().decode(loaderStream.readAllBytes())
+            !== "relative-resource") {
+          throw new Error("class loader resource stream did not round-trip");
+        }
+        if (literal.getResource("data.txt")?.getPath() !== "/demo/data.txt") {
+          throw new Error("class resource URL path was wrong");
         }
 
         if (calls.length !== 2) throw new Error("unexpected host construct calls: " + calls.length);

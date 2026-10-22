@@ -527,6 +527,23 @@ class IntermediateRepresentationAnalyzerTest {
   }
 
   @Test
+  void routesInvokeSpecialSuperCallsThroughNonVirtualDispatch() {
+    List<InstructionModel> instructions = List.of(
+        instruction(42, "ALOAD", "0"),
+        instruction(183, "INVOKESPECIAL", "demo/Base", "value", "()Ljava/lang/String;"),
+        instruction(176, "ARETURN"));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(
+        method("value", "()Ljava/lang/String;", instructions));
+
+    assertTrue(ir.operations().stream().anyMatch(operation ->
+        "CALL_VALUE".equals(operation.kind())
+            && operation.operands().equals(List.of(
+                "GoldClientRuntime.invokeSuper(local0, \"demo.Base\", \"value\")"))),
+        ir.operations().toString());
+  }
+
+  @Test
   void routesJavaStringInstanceMethodsThroughRuntime() {
     List<InstructionModel> instructions = List.of(
         instruction(42, "ALOAD", "1"),
@@ -910,6 +927,30 @@ class IntermediateRepresentationAnalyzerTest {
       // the copied value instead of reordering it into the receiver slot.
       assertEquals("local0", write.operands().get(0), write.toString());
       assertEquals("0.0", write.operands().get(2), write.toString());
+    }
+  }
+
+  @Test
+  void keepsIntToLongConversionsCategoryTwoAcrossDup2X1() {
+    MethodModel method = method("reset", "()V", List.of(
+        instruction(25, "ALOAD", "0"),
+        instruction(25, "ALOAD", "0"),
+        instruction(25, "ALOAD", "0"),
+        instruction(3, "ICONST_0"),
+        instruction(133, "I2L"),
+        instruction(93, "DUP2_X1"),
+        instruction(181, "PUTFIELD", "sample/Buffer", "a", "J"),
+        instruction(181, "PUTFIELD", "sample/Buffer", "b", "J"),
+        instruction(177, "RETURN")));
+
+    IrMethodModel ir = new IntermediateRepresentationAnalyzer().analyze(method);
+
+    var writes = ir.operations().stream()
+        .filter(operation -> "FIELD_WRITE".equals(operation.kind())).toList();
+    assertEquals(2, writes.size(), ir.operations().toString());
+    for (var write : writes) {
+      assertEquals("local0", write.operands().get(0), write.toString());
+      assertEquals("GoldClientRuntime.toLong(0)", write.operands().get(2), write.toString());
     }
   }
 

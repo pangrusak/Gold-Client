@@ -538,6 +538,14 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void keepsSingleLetterFieldNamesNextToNumericSuffixRewriting() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax(
+        "int value() { return local0.this$0.l + 1L; }");
+    assertTrue(lowered.contains("local0.this$0.l"), lowered);
+    assertFalse(lowered.contains("1L"), lowered);
+  }
+
+  @Test
   void keepsMultidimensionalArrayAllocationAsExecutableRuntimeCode() {
     var method = new IrMethodModel("matrix", "()V", List.of(
         op("LOCAL_WRITE", "local1", "GoldClientRuntime.newMultiArray(\"int\", [2, 3], 2)"),
@@ -867,6 +875,19 @@ class JavaScriptTranslatorTest {
         "GoldClientRuntime.unsupported(\"constructor-delegation\", \"this()\")"),
         lowered);
     assertFalse(lowered.contains(", )"), lowered);
+  }
+
+  @Test
+  void renamesFieldAccessesThatCollideWithMethodNames() {
+    var method = new IrMethodModel("flag", "()Z", List.of(
+        op("FIELD_READ", "local0", "example.Option", "local0.flag"),
+        op("RETURN", "local0.flag")));
+
+    TranslationResult result = new JavaScriptTranslator().translate(method, false,
+        java.util.Map.of("flag", "flag$field"));
+
+    assertTrue(result.source().contains("this.flag$field"), result.source());
+    assertFalse(result.source().contains("this.flag\n"), result.source());
   }
 
   @Test

@@ -39,6 +39,17 @@ public final class JavaScriptTranslator {
   }
 
   public TranslationResult translate(IrMethodModel method, boolean isStatic) {
+    return translate(method, isStatic, java.util.Map.of());
+  }
+
+  /**
+   * Translates a method while renaming instance fields that collide with method
+   * names on the same JS object. Java permits a field and a method to share a
+   * name; JavaScript properties cannot, and a boolean field would shadow the
+   * method. Field declarations and writes are renamed to {@code name$field}.
+   */
+  public TranslationResult translate(IrMethodModel method, boolean isStatic,
+      java.util.Map<String, String> fieldRenames) {
     TranslationResult structured = structuredTranslator.translate(method);
     String javaSource = structured.source();
     Matcher signature = SIGNATURE.matcher(javaSource);
@@ -75,6 +86,7 @@ public final class JavaScriptTranslator {
         || body.contains("Unsupported JVM IR");
     body = lowerJavaSyntax(body);
     body = makeUnsupportedOperationsExplicit(body);
+    body = renameCollidingFieldAccesses(body, fieldRenames);
     boolean approximatedCatch = body.contains(MERGED_CATCH_APPROXIMATION);
     hasUnsupportedMarkers |= body.contains("GoldClientRuntime.unsupported(\"invalid-call-receiver\"")
         || approximatedCatch;
@@ -96,6 +108,19 @@ public final class JavaScriptTranslator {
         .append(body.stripTrailing()).append("\n")
         .append("}\n");
     return new TranslationResult(output.toString(), complete);
+  }
+
+  private static String renameCollidingFieldAccesses(String body,
+      java.util.Map<String, String> fieldRenames) {
+    if (fieldRenames.isEmpty()) return body;
+    String result = body;
+    for (var entry : fieldRenames.entrySet()) {
+      Pattern pattern = Pattern.compile("(?<![\\w$])this\\." + Pattern.quote(entry.getKey())
+          + "\\b(?!\\s*\\()");
+      result = pattern.matcher(result)
+          .replaceAll(Matcher.quoteReplacement("this." + entry.getValue()));
+    }
+    return result;
   }
 
   /**
@@ -920,8 +945,13 @@ public final class JavaScriptTranslator {
     result = result.replace("Boolean.parseBoolean(", "GoldClientRuntime.invokeJavaStatic(\"java.lang.Boolean\", \"parseBoolean\", ");
 
     // JVM numeric literals carry suffixes which are not valid JavaScript.
+    // A suffix is only valid on the matching literal form: `l`/`L` belongs to
+    // integers, while `f`/`F`/`d`/`D` may follow an integer or a float. Keep the
+    // two forms separate so a field access such as `.l` (local0.this$0.l) is
+    // never mistaken for `0.` plus a long suffix.
+    result = result.replaceAll("\\b(-?(?:0[xX][0-9a-fA-F]+|[0-9]+))[lL]\\b", "$1");
     result = result.replaceAll(
-        "\\b(-?(?:0[xX][0-9a-fA-F]+|(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?))[lLfFdD]\\b",
+        "\\b(-?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?)[fFdD]\\b",
         "$1");
 
     // Primitive casts are compile-time hints on the JS target; int conversion

@@ -43,6 +43,48 @@ metadata from platform adapter requirements. It does not call a dependency
 "missing" unless a target runtime classpath is supplied; no runtime
 classpath-resolution option is currently implemented.
 
+Create one self-contained Eaglercraft 1.12.2 HTML client from an explicit set of
+mod and dependency JARs:
+
+```bash
+java -jar target/gold-client-1.jar --create-client \
+  test-mods/appleskin1.12.2.jar \
+  --output clients/build/appleskin/gold-client.html
+```
+
+The command downloads the pinned 75,729,830-byte client into `cache/clients/`,
+verifies its SHA-256, builds the shared loader bundle, and inlines the bundle,
+member map, bindings adapter, mod resources, and provenance into one HTML file.
+`--input <jar>` and positional JARs are equivalent. Existing outputs are kept
+unless `--force` is passed. Builds are one-shot: there is no append or
+incremental update, so any mod-set change requires creating a new client.
+
+Exit status `0` means the represented translation is complete, `2` means the
+HTML was written but blockers or incomplete methods remain, and `1` means a
+fatal error. The plain-text report names the affected classes and methods.
+Node.js is required because the packaged inliner runs as a Node script.
+
+The HTML embeds each input JAR's resources under `globalThis.GoldClientResources`.
+The runtime exposes them through `GoldClientRuntime.hasResource`,
+`getResourceBytes`, `getResourceText`, and `listResources`, and the host
+adapter exposes the `resources` service with `has`, `list`, `get`, `getBytes`,
+and `getText`. Translated class literals also provide Java-style
+`getResource`, `getResourceAsStream`, and `getClassLoader()` for relative and
+absolute JAR paths. This does not cover `getClass().getResourceAsStream(...)`,
+Forge resource-pack APIs, or Minecraft `IResourceManager`; those remain
+unbound. Embedding a resource is not evidence that the mod loads or renders it.
+
+Start the local browser UI for the same workflow:
+
+```bash
+java -jar target/gold-client-1.jar --ui --open
+```
+
+The UI binds to `127.0.0.1` (default port `8080`), accepts dropped or selected
+JARs, shows translation blockers, and offers the generated HTML for download.
+It uses the same one-shot build path as `--create-client`; it is not a
+multi-mod project editor.
+
 TeaVM compilation is a separate, opt-in path and requires an explicitly
 selected class with `public static void main(String[])`:
 
@@ -135,9 +177,13 @@ that extend native Minecraft classes still fail explicitly with
 `unsupported-platform-superclass` rather than faking the superclass state.
 
 `test-mods/xaeros.jar` is a legacy Xaero's Minimap 26.6.0 Forge mod targeting
-Minecraft 1.12.2. Its metadata declares no additional mod dependencies; the
-analyzer detects Forge platform integration requirements. This is an analysis
-fixture, not evidence that Xaero can currently be translated or run.
+Minecraft 1.12.2. Its metadata declares `xaerolib` as a required dependency;
+`test-mods/xaerolib.jar` is tracked so the pair can be analyzed together. A
+`--create-client` build of the pair still exits `2`: both JARs contain coremod
+plugins and ASM class transformers that Gold Client does not execute, and one
+`DropDownWidget.drawSlot` method has an unresolved control-flow jump. This is
+analysis/blocker evidence, not evidence that Xaero can currently be translated
+or run.
 
 ## Design
 

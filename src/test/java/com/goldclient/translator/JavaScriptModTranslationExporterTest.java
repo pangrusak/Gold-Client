@@ -108,6 +108,45 @@ class JavaScriptModTranslationExporterTest {
   }
 
   @Test
+  void initializesInheritedInstanceFieldDefaultsInSubclassConstructors() throws Exception {
+    ClassModel parent = new ClassModel("example/BaseManager", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(),
+        List.of(new FieldModel("frozen", "Z", null,
+            Opcodes.ACC_PUBLIC, List.of(), null)),
+        List.of(), List.of());
+    ClassModel child = new ClassModel("example/SubManager", "example/BaseManager", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(),
+        List.of(new FieldModel("count", "J", null,
+            Opcodes.ACC_PUBLIC, List.of(), null)),
+        List.of(), List.of());
+
+    Path output = tempDir.resolve("inherited-fields");
+    new JavaScriptModTranslationExporter().export(List.of(parent, child), output);
+
+    String source = Files.readString(output.resolve("example/SubManager.translated.js"));
+    assertTrue(source.contains("this.frozen = false;"), source);
+    assertTrue(source.contains("this.count = 0;"), source);
+  }
+
+  @Test
+  void renamesInstanceFieldsThatCollideWithMethodNames() throws Exception {
+    ClassModel clazz = new ClassModel("example/Option", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(),
+        List.of(new FieldModel("flag", "Z", null,
+            Opcodes.ACC_PUBLIC, List.of(), null)),
+        List.of(method("flag", "()Z", Opcodes.ACC_PUBLIC,
+            List.of(op("CONSTANT", "true"), op("RETURN", "true")))),
+        List.of());
+
+    Path output = tempDir.resolve("field-collision");
+    new JavaScriptModTranslationExporter().export(List.of(clazz), output);
+
+    String source = Files.readString(output.resolve("example/Option.translated.js"));
+    assertTrue(source.contains("this.flag$field = false;"), source);
+    assertTrue(source.contains("flag(...args) { return GoldClientRuntime.invoke("), source);
+  }
+
+  @Test
   void exportsRuntimeSourceVerbatimFromClasspathResource() throws Exception {
     Path output = tempDir.resolve("runtime-export");
     new JavaScriptModTranslationExporter().export(List.of(), output);
@@ -460,6 +499,59 @@ class JavaScriptModTranslationExporterTest {
     String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
     assertEquals(0, node.exitValue(), outputText);
     assertEquals("java-throwable-ok", outputText);
+  }
+
+  @Test
+  void inheritedTranslatedMethodsRemainReachableThroughDirectPropertyAccess() throws Exception {
+    Path output = tempDir.resolve("inherited-method-access");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("inherited-method-access.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as r } from "./gold-client-runtime.js";
+
+        class Parent {
+          inherited() { return "parent"; }
+        }
+        class Child {}
+        r.registerClass("sample.Parent", Parent, null,
+          { superName: "java.lang.Object", interfaces: [] });
+        r.registerClass("sample.Child", Child, null,
+          { superName: "sample.Parent", interfaces: [] });
+        const child = new Child();
+        if (typeof child.inherited !== "function") {
+          throw new Error("inherited method is not reachable through property access");
+        }
+        if (child.inherited() !== "parent") {
+          throw new Error("inherited method dispatch returned the wrong value");
+        }
+        if (!(child instanceof Parent)) {
+          throw new Error("translated prototype hierarchy was not linked");
+        }
+
+        class LateParent {
+          lateInherited() { return "late"; }
+        }
+        class LateChild {}
+        r.registerClass("sample.LateChild", LateChild, null,
+          { superName: "sample.LateParent", interfaces: [] });
+        r.registerClass("sample.LateParent", LateParent, null,
+          { superName: "java.lang.Object", interfaces: [] });
+        if (new LateChild().lateInherited() !== "late") {
+          throw new Error("subclass registered before its superclass was not re-parented");
+        }
+        console.log("inherited-method-access-ok");
+        """, StandardCharsets.UTF_8);
+    Process node;
+    try {
+      node = new ProcessBuilder("node", runner.toString()).redirectErrorStream(true).start();
+    } catch (java.io.IOException missingNode) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(false, "Node.js is not installed");
+      return;
+    }
+    assertTrue(node.waitFor(10, TimeUnit.SECONDS), "inherited method access test timed out");
+    String outputText = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, node.exitValue(), outputText);
+    assertEquals("inherited-method-access-ok", outputText);
   }
 
   @Test

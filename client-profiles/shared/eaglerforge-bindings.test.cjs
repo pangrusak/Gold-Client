@@ -137,6 +137,16 @@ function installFixture() {
     const context = {
         console,
         ModAPI,
+        atob: value => Buffer.from(value, "base64").toString("binary"),
+        TextDecoder,
+        GoldClientResources: {
+            formatVersion: "gold-client-resources-v1",
+            files: {
+                "assets/demo/lang/en_us.json":
+                    Buffer.from('{"item.demo":"Demo"}', "utf8").toString("base64"),
+                "assets/demo/textures/gui.png": Buffer.from([1, 2, 3, 4]).toString("base64")
+            }
+        },
         GoldClientRuntime: {
             getStaticField(owner, field) {
                 if (owner === "net.minecraftforge.fml.relauncher.Side") {
@@ -206,6 +216,24 @@ test("installs the Forge binding surface on the global window", () => {
         "resources", "network", "config", "registries", "logger", "side"]) {
         assert.equal(typeof bindings[service], "object", service);
     }
+});
+
+test("reads embedded mod resources without inventing missing files", () => {
+    const { bindings } = installFixture();
+    const resources = bindings.resources;
+    assert.equal(resources.call("has", "assets/demo/lang/en_us.json"), true);
+    assert.equal(resources.call("has", "/assets/demo/lang/en_us.json"), true);
+    assert.equal(resources.call("has", "assets/demo/missing.json"), false);
+    assert.equal(resources.call("getText", "assets/demo/lang/en_us.json"),
+        '{"item.demo":"Demo"}');
+    assert.deepEqual(Array.from(resources.call("getBytes", "assets/demo/textures/gui.png")),
+        [1, 2, 3, 4]);
+    assert.deepEqual(Array.from(resources.call("list", "assets/demo/textures/")),
+        ["assets/demo/textures/gui.png"]);
+    assert.equal(resources.call("get", "assets/demo/missing.json"), null);
+    assert.throws(() => resources.call("open", "assets/demo/lang/en_us.json"),
+        /unsupported-resource-operation/);
+    assert.throws(() => resources.call("has", "../secret"), /invalid-resource-path/);
 });
 
 test("resolves SRG static methods through ModAPI", () => {
