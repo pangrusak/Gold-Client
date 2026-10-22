@@ -139,6 +139,23 @@ class JavaScriptRuntimeHostAdaptersTest {
           throw new Error("getStaticField must throw NoClassDefFoundError for absent classes");
         }
 
+        class StaticBase {}
+        class StaticSub {}
+        runtime.registerClass("probe.StaticBase", StaticBase);
+        runtime.registerClass("probe.StaticSub", StaticSub, null, {
+          superName: "probe.StaticBase", interfaces: []
+        });
+        runtime.setStaticField("probe.StaticBase", "shared", "base-value");
+        if (runtime.getStaticField("probe.StaticSub", "shared") !== "base-value") {
+          throw new Error("getStaticField did not resolve an inherited static field");
+        }
+
+        const vector = runtime.create("org.lwjgl.util.vector.Vector4f", 1, 2, 3, 4);
+        if (vector.getX() !== 1 || vector.getY() !== 2 || vector.getZ() !== 3
+            || vector.getW() !== 4) {
+          throw new Error("Vector4f adapter did not keep its components");
+        }
+
         const gson = runtime.createJava("com.google.gson.GsonBuilder").create();
         if (gson.toJson({ name: "x", count: 2 }) !== '{"name":"x","count":2}') {
           throw new Error("Gson.toJson did not serialize an object: " + gson.toJson({ name: "x", count: 2 }));
@@ -415,6 +432,25 @@ class JavaScriptRuntimeHostAdaptersTest {
         mutable.setPos(4, 5, 6);
         if (mutable.getX() !== 4 || mutable.getY() !== 5 || mutable.getZ() !== 6) {
           throw new Error("MutableBlockPos.setPos");
+        }
+        const nestedMutable = r.create("net.minecraft.util.math.BlockPos$MutableBlockPos");
+        nestedMutable.setPos(7, 8, 9);
+        if (nestedMutable.getX() !== 7 || nestedMutable.getY() !== 8 || nestedMutable.getZ() !== 9) {
+          throw new Error("BlockPos$MutableBlockPos.setPos");
+        }
+        const pooledMutable = r.create("net.minecraft.util.math.BlockPos$PooledMutableBlockPos");
+        pooledMutable.setPos(10, 11, 12);
+        if (pooledMutable.getX() !== 10 || pooledMutable.getY() !== 11 || pooledMutable.getZ() !== 12) {
+          throw new Error("BlockPos$PooledMutableBlockPos.setPos");
+        }
+        const buffer = r.invokeStaticClass("org.lwjgl.BufferUtils", "createByteBuffer", 8);
+        buffer.putInt(0x01020304);
+        buffer.flip();
+        if (buffer.remaining() !== 4 || buffer.position() !== 0) {
+          throw new Error("BufferUtils.createByteBuffer position");
+        }
+        if (!buffer.bytes || buffer.bytes[0] !== 1 || buffer.bytes[3] !== 4) {
+          throw new Error("BufferUtils.createByteBuffer data");
         }
         const miss = r.getStaticField("net.minecraft.util.math.RayTraceResult$Type", "MISS");
         const missResult = r.create("net.minecraft.util.math.RayTraceResult", miss);

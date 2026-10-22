@@ -321,6 +321,27 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void breaksOutOfDoWhileWhenTheBodyJumpsPastItsBackEdge() {
+    IrMethodModel method = new IrMethodModel("find", "(I)I", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local4 == 0", "Lexit"), 0),
+        new IrOperationModel("LABEL", List.of("Lheader"), 1),
+        new IrOperationModel("LOCAL_WRITE", List.of("local3", "(local3 + 1) & mask"), 2),
+        new IrOperationModel("LOCAL_WRITE", List.of("local4", "key[local3]"), 3),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local4 == 0", "Lexit"), 4),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("local4 != local1", "Lheader"), 5),
+        new IrOperationModel("RETURN", List.of("local3"), 6),
+        new IrOperationModel("LABEL", List.of("Lexit"), 7),
+        new IrOperationModel("RETURN", List.of("local3"), 8)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("do {"), result.source());
+    assertTrue(result.source().contains("if (local4 == 0) break;"), result.source());
+    assertTrue(result.source().contains("} while (local4 != local1);"), result.source());
+  }
+
+  @Test
   void translatesForwardExitWithBackwardGotoAsWhileLoop() {
     IrMethodModel method = new IrMethodModel("sum", "()I", List.of(
         new IrOperationModel("LABEL", List.of("L0"), 0),

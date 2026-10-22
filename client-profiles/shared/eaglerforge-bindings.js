@@ -683,9 +683,33 @@
      * that behavior from visible native fields and the real constructor rather
      * than returning a placeholder.
      */
+    function installNativeMemberAliases(prototype) {
+        if (prototype == null) return;
+        for (const [srg, mcp] of Object.entries(MEMBER_MAP)) {
+            if (!srg || !mcp || srg === mcp) continue;
+            if (typeof prototype[srg] === "function") continue;
+            const target = typeof prototype[mcp] === "function"
+                ? mcp
+                : (typeof prototype["$" + mcp] === "function" ? "$" + mcp : null);
+            if (!target) continue;
+            try {
+                Object.defineProperty(prototype, srg, {
+                    value: function goldClientNativeMemberAlias(...args) {
+                        return this[target](...args);
+                    },
+                    configurable: true,
+                    writable: true
+                });
+            } catch (ignored) {
+                // Frozen host prototypes keep their existing surface.
+            }
+        }
+    }
+
     function installNativeSuperclassAdapters(owner, prototype) {
-        if (owner !== "net.minecraft.client.renderer.texture.TextureMap"
-            || prototype == null) return;
+        if (prototype == null) return;
+        installNativeMemberAliases(prototype);
+        if (owner !== "net.minecraft.client.renderer.texture.TextureMap") return;
         const registerSprite = function goldClientRegisterSprite(location) {
             if (location === null || location === undefined) {
                 fail("texture-map-register-sprite", "cannot register a null sprite location");
@@ -783,6 +807,15 @@
             ? matching[0]
             : (constructors.length === 1 && typeof constructors[0] === "function"
                 ? constructors[0] : null);
+        if (!constructor
+            && owner === "net.minecraft.client.renderer.texture.SimpleTexture") {
+            // TeaVM exports the native no-argument initializer but not the Java
+            // SimpleTexture(ResourceLocation) constructor. Its only constructor
+            // state is the texture location the translated subclass passed.
+            nativeClass.call(receiver);
+            receiver.$textureLocation = args[0] ?? null;
+            return receiver;
+        }
         if (!constructor) {
             fail("missing-platform-super-constructor-binding", "cannot initialize translated "
                 + "subclass of " + owner + "/" + args.length

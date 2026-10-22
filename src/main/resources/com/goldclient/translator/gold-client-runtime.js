@@ -36,6 +36,7 @@ const goldClientLoggers = new Map();
 // constructor's non-configurable `prototype`), so keep those values here instead
 // of replacing the class prototype or throwing inside a static initializer.
 const goldStaticFieldOverrides = new WeakMap();
+const goldDeclaredStaticFields = new WeakMap();
 
 // Small compatibility helpers used by generated JavaScript.
 // This is not a replacement for Minecraft/Forge or a full JVM runtime.
@@ -314,7 +315,7 @@ class GoldClientJavaList {
       add: value => owner.items.splice(cursor++, 0, value)
     };
   }
-  forEach(callback) { this.items.forEach((value, index) => callFunctional(callback, "accept", value, index)); }
+  forEach(callback) { this.items.forEach(value => callFunctional(callback, "accept", value)); }
   stream() { return new GoldClientJavaStream(this.items); }
   toString() { return "[" + this.items.map(value => value == null ? "null" : String(value)).join(", ") + "]"; }
   #checkIndex(index) {
@@ -360,7 +361,7 @@ class GoldClientJavaSet {
   }
   clear() { this.items.clear(); }
   toArray() { return Array.from(this.items); }
-  forEach(callback) { this.items.forEach((value, index) => callFunctional(callback, "accept", value, index)); }
+  forEach(callback) { this.items.forEach(value => callFunctional(callback, "accept", value)); }
   iterator() { return goldClientJavaIterator(this); }
   stream() { return new GoldClientJavaStream(this.items); }
   [Symbol.iterator]() { return this.items[Symbol.iterator](); }
@@ -556,6 +557,7 @@ class GoldClientJavaStopwatch {
 // can re-enter bestMethod->descriptorScore for the same receiver/method while
 // scoring a lambda/sam argument. Bail out of that branch rather than loop.
 const descriptorScoringStack = new Set();
+const activeMethodCalls = new WeakMap();
 
 class GoldClientJavaLoadingCache {
   constructor(loader = null) { this.loader = loader; this.entries = new GoldClientJavaMap(); }
@@ -1095,6 +1097,63 @@ class GoldClientJavaDate {
   static now() { return new GoldClientJavaDate(Date.now()); }
 }
 
+class GoldClientJavaCalendar {
+  constructor(value = Date.now()) {
+    this.date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  }
+  getTimeInMillis() { return this.date.getTime(); }
+  setTimeInMillis(value) { this.date.setTime(Number(value)); }
+  getTime() { return new GoldClientJavaDate(this.date); }
+  setTime(value) { this.date.setTime(value instanceof GoldClientJavaDate ? value.getTime() : Number(value)); }
+  get(field) {
+    const date = this.date;
+    switch (Number(field)) {
+      case 0: return 1;
+      case 1: return date.getFullYear();
+      case 2: return date.getMonth();
+      case 3: {
+        const start = new Date(date.getFullYear(), 0, 1);
+        return Math.floor((date - start) / 604800000) + 1;
+      }
+      case 4: return Math.floor((date.getDate() - 1) / 7) + 1;
+      case 5: return date.getDate();
+      case 6: {
+        const start = new Date(date.getFullYear(), 0, 1);
+        return Math.floor((date - start) / 86400000) + 1;
+      }
+      case 7: return date.getDay() + 1;
+      case 8: return Math.floor((date.getDate() - 1) / 7) + 1;
+      case 9: return date.getHours() < 12 ? 0 : 1;
+      case 10: return date.getHours() % 12;
+      case 11: return date.getHours();
+      case 12: return date.getMinutes();
+      case 13: return date.getSeconds();
+      case 14: return date.getMilliseconds();
+      case 15: return -date.getTimezoneOffset() * 60000;
+      case 16: return 0;
+      default: return 0;
+    }
+  }
+  add(field, amount) {
+    const value = Number(amount) | 0;
+    switch (Number(field)) {
+      case 1: this.date.setFullYear(this.date.getFullYear() + value); break;
+      case 2: this.date.setMonth(this.date.getMonth() + value); break;
+      case 3: this.date.setDate(this.date.getDate() + value * 7); break;
+      case 5: this.date.setDate(this.date.getDate() + value); break;
+      case 6: this.date.setDate(this.date.getDate() + value); break;
+      case 10: this.date.setHours(this.date.getHours() + value); break;
+      case 11: this.date.setHours(this.date.getHours() + value); break;
+      case 12: this.date.setMinutes(this.date.getMinutes() + value); break;
+      case 13: this.date.setSeconds(this.date.getSeconds() + value); break;
+      case 14: this.date.setMilliseconds(this.date.getMilliseconds() + value); break;
+      default: break;
+    }
+  }
+  clear() { this.date = new Date(0); }
+  toString() { return this.date.toString(); }
+}
+
 class GoldClientJavaStream {
   constructor(values = []) {
     this.values = Array.from(values?.items ?? values ?? []);
@@ -1373,6 +1432,78 @@ class GoldClientJavaGson {
     if (!className) return parsed;
     return this.#fromPlain(parsed, className);
   }
+}
+
+// LWJGL vector math is plain data; mods use it for rendering coordinates.
+// These mirror the LWJGL 2 Vector2f/Vector3f/Vector4f contracts used through
+// Forge's bundled lwjgl artifact.
+class GoldClientLwjglVector2f {
+  constructor(x = 0, y = 0) { this.x = Number(x); this.y = Number(y); }
+  getX() { return this.x; }
+  getY() { return this.y; }
+  set(x, y) { this.x = Number(x); this.y = Number(y); return this; }
+  setX(x) { this.x = Number(x); return this; }
+  setY(y) { this.y = Number(y); return this; }
+  lengthSquared() { return this.x * this.x + this.y * this.y; }
+  length() { return Math.sqrt(this.lengthSquared()); }
+  negate() { this.x = -this.x; this.y = -this.y; return this; }
+  translate(dx, dy) { this.x += Number(dx); this.y += Number(dy); return this; }
+  toString() { return "Vector2f[" + this.x + ", " + this.y + "]"; }
+}
+
+class GoldClientLwjglVector3f {
+  constructor(x = 0, y = 0, z = 0) { this.x = Number(x); this.y = Number(y); this.z = Number(z); }
+  getX() { return this.x; }
+  getY() { return this.y; }
+  getZ() { return this.z; }
+  set(x, y, z) { this.x = Number(x); this.y = Number(y); this.z = Number(z); return this; }
+  setX(x) { this.x = Number(x); return this; }
+  setY(y) { this.y = Number(y); return this; }
+  setZ(z) { this.z = Number(z); return this; }
+  lengthSquared() { return this.x * this.x + this.y * this.y + this.z * this.z; }
+  length() { return Math.sqrt(this.lengthSquared()); }
+  dot(other) { return this.x * other.x + this.y * other.y + this.z * other.z; }
+  cross(other) {
+    const x = this.y * other.z - this.z * other.y;
+    const y = this.z * other.x - this.x * other.z;
+    const z = this.x * other.y - this.y * other.x;
+    this.x = x; this.y = y; this.z = z;
+    return this;
+  }
+  add(other) { this.x += other.x; this.y += other.y; this.z += other.z; return this; }
+  sub(other) { this.x -= other.x; this.y -= other.y; this.z -= other.z; return this; }
+  negate() { this.x = -this.x; this.y = -this.y; this.z = -this.z; return this; }
+  translate(dx, dy, dz) { this.x += Number(dx); this.y += Number(dy); this.z += Number(dz); return this; }
+  scale(value) { this.x *= value; this.y *= value; this.z *= value; return this; }
+  normalise() {
+    const length = this.length();
+    if (length !== 0) { this.x /= length; this.y /= length; this.z /= length; }
+    return this;
+  }
+  normalize() { return this.normalise(); }
+  toString() { return "Vector3f[" + this.x + ", " + this.y + ", " + this.z + "]"; }
+}
+
+class GoldClientLwjglVector4f {
+  constructor(x = 0, y = 0, z = 0, w = 0) {
+    this.x = Number(x); this.y = Number(y); this.z = Number(z); this.w = Number(w);
+  }
+  getX() { return this.x; }
+  getY() { return this.y; }
+  getZ() { return this.z; }
+  getW() { return this.w; }
+  set(x, y, z, w) {
+    this.x = Number(x); this.y = Number(y); this.z = Number(z); this.w = Number(w);
+    return this;
+  }
+  setX(x) { this.x = Number(x); return this; }
+  setY(y) { this.y = Number(y); return this; }
+  setZ(z) { this.z = Number(z); return this; }
+  setW(w) { this.w = Number(w); return this; }
+  lengthSquared() { return this.x * this.x + this.y * this.y + this.z * this.z + this.w * this.w; }
+  length() { return Math.sqrt(this.lengthSquared()); }
+  negate() { this.x = -this.x; this.y = -this.y; this.z = -this.z; this.w = -this.w; return this; }
+  toString() { return "Vector4f[" + this.x + ", " + this.y + ", " + this.z + ", " + this.w + "]"; }
 }
 
 class GoldClientJavaMatcher {
@@ -2977,6 +3108,14 @@ registerMinecraftAdapter("net.minecraft.util.math.MutableBlockPos", {
   kind: "value-type",
   construct: () => new GoldClientMinecraftMutableBlockPos()
 });
+registerMinecraftAdapter("net.minecraft.util.math.BlockPos$MutableBlockPos", {
+  kind: "value-type",
+  construct: () => new GoldClientMinecraftMutableBlockPos()
+});
+registerMinecraftAdapter("net.minecraft.util.math.BlockPos$PooledMutableBlockPos", {
+  kind: "value-type",
+  construct: () => new GoldClientMinecraftMutableBlockPos()
+});
 registerMinecraftAdapter("net.minecraft.util.math.RayTraceResult", {
   kind: "value-type",
   construct: args => new GoldClientMinecraftRayTraceResult(...args)
@@ -3252,6 +3391,133 @@ class GoldClientForgeEventBus {
 
 const GoldClientForgeEventBusInstance = new GoldClientForgeEventBus();
 
+// LWJGL buffers are exposed directly to native GL calls, so the Eaglercraft
+// TeaVM buffer is used when it exists. Generated code calls Java names
+// (putInt/flip/position); install those on the native instance instead of
+// wrapping it, because GL methods require the real buffer object.
+function goldClientInstallByteBufferMethods(buffer, methods) {
+  const hook = name => typeof methods?.["nleib_EaglerArrayByteBuffer_" + name] === "function"
+    ? methods["nleib_EaglerArrayByteBuffer_" + name] : null;
+  const call = (name, ...args) => hook(name)(buffer, ...args);
+  const define = (name, value) => {
+    if (typeof buffer[name] === "function") return;
+    try {
+      Object.defineProperty(buffer, name, {
+        value, configurable: true, writable: true, enumerable: false
+      });
+    } catch {
+      // Frozen host buffers keep their existing surface.
+    }
+  };
+  if (hook("putInt")) define("putInt", value => { call("putInt", Number(value) | 0); return buffer; });
+  if (hook("putShort")) define("putShort", value => { call("putShort", Number(value) | 0); return buffer; });
+  if (hook("putFloat")) define("putFloat", value => { call("putFloat", Number(value)); return buffer; });
+  if (hook("put")) define("put", value => { call("put", Number(value) | 0); return buffer; });
+  if (hook("getFloat")) define("getFloat", () => call("getFloat"));
+  if (hook("flip")) define("flip", () => { call("flip"); return buffer; });
+  if (hook("clear")) define("clear", () => { call("clear"); return buffer; });
+  if (hook("position0") && hook("position")) {
+    define("position", function (value) {
+      if (arguments.length === 0) return call("position0");
+      call("position", Number(value) | 0);
+      return buffer;
+    });
+  }
+  if (hook("limit") && hook("limit0")) {
+    define("limit", function (value) {
+      if (arguments.length === 0) return call("limit");
+      call("limit0", Number(value) | 0);
+      return buffer;
+    });
+  }
+  if (hook("remaining")) define("remaining", () => call("remaining"));
+  if (hook("hasRemaining")) define("hasRemaining", () => call("hasRemaining"));
+  define("mark", () => {
+    buffer.$mark0 = hook("position0") ? call("position0") : buffer.$position1 ?? 0;
+    return buffer;
+  });
+  define("reset", () => {
+    if (buffer.$mark0 == null || buffer.$mark0 < 0) {
+      throw new RangeError("InvalidMarkException");
+    }
+    call("position", buffer.$mark0);
+    return buffer;
+  });
+  define("rewind", () => {
+    call("position", 0);
+    buffer.$mark0 = -1;
+    return buffer;
+  });
+  return buffer;
+}
+
+class GoldClientJavaByteBuffer {
+  constructor(length) {
+    const size = Math.max(0, Number(length) | 0);
+    this.bytes = new Uint8Array(size);
+    this.view = new DataView(this.bytes.buffer);
+    this._position = 0;
+    this._limit = size;
+    this._mark = -1;
+  }
+  capacity() { return this.bytes.length; }
+  position(value) {
+    if (arguments.length === 0) return this._position;
+    const next = Number(value) | 0;
+    if (next < 0 || next > this._limit) throw new RangeError("IllegalArgumentException: position");
+    this._position = next;
+    return this;
+  }
+  limit(value) {
+    if (arguments.length === 0) return this._limit;
+    const next = Number(value) | 0;
+    if (next < 0 || next > this.bytes.length) throw new RangeError("IllegalArgumentException: limit");
+    this._limit = next;
+    if (this._position > next) this._position = next;
+    return this;
+  }
+  remaining() { return this._limit - this._position; }
+  hasRemaining() { return this._position < this._limit; }
+  putInt(value) {
+    if (this._position + 4 > this._limit) throw new RangeError("BufferOverflowException");
+    this.view.setInt32(this._position, Number(value) | 0, false);
+    this._position += 4;
+    return this;
+  }
+  putShort(value) {
+    if (this._position + 2 > this._limit) throw new RangeError("BufferOverflowException");
+    this.view.setInt16(this._position, Number(value) | 0, false);
+    this._position += 2;
+    return this;
+  }
+  putFloat(value) {
+    if (this._position + 4 > this._limit) throw new RangeError("BufferOverflowException");
+    this.view.setFloat32(this._position, Number(value), false);
+    this._position += 4;
+    return this;
+  }
+  put(value) {
+    if (this._position + 1 > this._limit) throw new RangeError("BufferOverflowException");
+    this.bytes[this._position++] = Number(value) & 0xff;
+    return this;
+  }
+  getFloat() {
+    if (this._position + 4 > this._limit) throw new RangeError("BufferUnderflowException");
+    const value = this.view.getFloat32(this._position, false);
+    this._position += 4;
+    return value;
+  }
+  flip() { this._limit = this._position; this._position = 0; this._mark = -1; return this; }
+  clear() { this._position = 0; this._limit = this.bytes.length; this._mark = -1; return this; }
+  mark() { this._mark = this._position; return this; }
+  reset() {
+    if (this._mark < 0) throw new RangeError("InvalidMarkException");
+    this._position = this._mark;
+    return this;
+  }
+  rewind() { this._position = 0; this._mark = -1; return this; }
+}
+
 // JVM Class objects are singletons. Caching keeps literal identity usable in
 // equality checks and lets EVENT_BUS.unregister(SomeClass.class) find its entry.
 const goldClientClassLiterals = new Map();
@@ -3501,6 +3767,15 @@ export const GoldClientRuntime = Object.freeze({
       enumerable: false
     });
     return array;
+  },
+  createByteBuffer(length) {
+    const size = Math.max(0, Number(length) | 0);
+    const methods = globalThis.ModAPI?.hooks?.methods;
+    if (typeof methods?.nlei_PlatformRuntime_allocateByteBuffer === "function") {
+      return goldClientInstallByteBufferMethods(
+        methods.nlei_PlatformRuntime_allocateByteBuffer(size), methods);
+    }
+    return new GoldClientJavaByteBuffer(size);
   },
   newMultiArray(kind, dimensions, totalDimensions = dimensions.length) {
     const sizes = dimensions.map(Number);
@@ -3897,8 +4172,37 @@ export const GoldClientRuntime = Object.freeze({
       // probe optional integrations by catching exactly that linkage error.
       throw this.javaException("java.lang.NoClassDefFoundError", className);
     }
-    this.ensureInitialized(constructor);
-    return this.staticFieldValue(constructor, fieldName);
+    const owner = this.findStaticFieldOwner(className, fieldName, new Set());
+    if (owner) {
+      this.ensureInitialized(owner);
+      return this.staticFieldValue(owner, fieldName);
+    }
+    // A static field that exists in the bytecode but was never installed is a
+    // linkage error, not a missing host adapter.
+    throw this.javaException("java.lang.NoSuchFieldError", className + "." + fieldName);
+  },
+  /**
+   * Resolves the class that actually declares a static field, including fields
+   * inherited from superclasses and interfaces (Java's getstatic resolves the
+   * declaring class, and reading it initializes that class).
+   */
+  findStaticFieldOwner(className, fieldName, visited) {
+    const constructor = this.classes.get(className);
+    if (!constructor || visited.has(constructor)) return null;
+    visited.add(constructor);
+    if (goldDeclaredStaticFields.get(constructor)?.has(fieldName)) return constructor;
+    const overrides = goldStaticFieldOverrides.get(constructor);
+    if (overrides?.has(fieldName)) return constructor;
+    const builtins = ["name", "length", "prototype", "caller", "arguments"];
+    if (Object.prototype.hasOwnProperty.call(constructor, fieldName)
+        && !builtins.includes(fieldName)) {
+      return constructor;
+    }
+    for (const interfaceName of constructor.__goldInterfaces ?? []) {
+      const owner = this.findStaticFieldOwner(interfaceName, fieldName, visited);
+      if (owner) return owner;
+    }
+    return this.findStaticFieldOwner(constructor.__goldSuperName, fieldName, visited);
   },
   rethrowMissingPlatformMember(error, className, fieldName) {
     if (error?.name !== "GoldClientForgeBindingError") throw error;
@@ -3941,6 +4245,9 @@ export const GoldClientRuntime = Object.freeze({
     // example "prototype") go into a side map so construction keeps working.
     // This is also used before registration for literal class-field
     // initialization, so it must not trigger <clinit>.
+    let declared = goldDeclaredStaticFields.get(constructor);
+    if (!declared) goldDeclaredStaticFields.set(constructor, declared = new Set());
+    declared.add(fieldName);
     try {
       Object.defineProperty(constructor, fieldName, {
         value, writable: true, enumerable: true, configurable: true
@@ -4040,7 +4347,8 @@ export const GoldClientRuntime = Object.freeze({
       // Runtime-provided JDK/Gson shims are also reachable through create(),
       // which is how translated bytecode instantiates them.
       if (name.startsWith("java.") || name.startsWith("javax.")
-          || name.startsWith("com.google.gson.")) {
+          || name.startsWith("com.google.gson.")
+          || name.startsWith("org.lwjgl.util.vector.")) {
         return this.createJava(name, ...args);
       }
       const service = this.platformService(name);
@@ -4104,6 +4412,12 @@ export const GoldClientRuntime = Object.freeze({
         return new GoldClientJavaOutputStreamWriter(args[0]);
       case "java.io.BufferedWriter":
         return new GoldClientJavaBufferedWriter(args[0]);
+      case "org.lwjgl.util.vector.Vector2f":
+        return new GoldClientLwjglVector2f(...args);
+      case "org.lwjgl.util.vector.Vector3f":
+        return new GoldClientLwjglVector3f(...args);
+      case "org.lwjgl.util.vector.Vector4f":
+        return new GoldClientLwjglVector4f(...args);
       case "com.google.gson.GsonBuilder":
         return new GoldClientJavaGsonBuilder();
       case "com.google.gson.Gson":
@@ -4112,6 +4426,8 @@ export const GoldClientRuntime = Object.freeze({
         return new GoldClientJavaOptional(args[0]);
       case "java.util.Date":
         return new GoldClientJavaDate(args.length ? args[0] : Date.now());
+      case "java.util.Calendar":
+        return new GoldClientJavaCalendar();
       case "java.util.UUID":
         return args.length ? GoldClientJavaUuid.fromString(args[0]) : GoldClientJavaUuid.randomUUID();
       case "java.util.PriorityQueue":
@@ -4615,6 +4931,9 @@ export const GoldClientRuntime = Object.freeze({
       if (method === "fromString") return GoldClientJavaUuid.fromString(args[0]);
     }
     if (owner === "java.util.Date" && method === "from") return new GoldClientJavaDate(args[0]);
+    if (owner === "java.util.Calendar" && method === "getInstance") {
+      return new GoldClientJavaCalendar();
+    }
     if (owner === "java.lang.Character") {
       const value = String(args[0] ?? "").charAt(0);
       if (method === "isDigit") return /^\p{N}$/u.test(value);
@@ -4774,6 +5093,9 @@ export const GoldClientRuntime = Object.freeze({
     if (className === "org.apache.logging.log4j.LogManager"
         && (methodName === "getLogger" || methodName === "getFormatterLogger")) {
       return GoldClientLog4jLogger.get(args[0]);
+    }
+    if (className === "org.lwjgl.BufferUtils" && methodName === "createByteBuffer") {
+      return this.createByteBuffer(args[0]);
     }
     if (methodName === "lambda$registerItemSubtypes$0" || methodName === "lambda$registerItemSubtypes$1") {
       console.log("[ISC_LOG] "+className+"."+methodName+" args="+JSON.stringify(args.map(String)));
@@ -5266,13 +5588,13 @@ export const GoldClientRuntime = Object.freeze({
   }
 },
 
-  bestMethod(candidates, args, isStatic) {
+  bestMethod(candidates, args, isStatic, exclude = null) {
     let best = null;
     let bestScore = -1;
     let bestIsBridge = true;
     for (const method of candidates) {
       if (method.isAbstract || method.isAdapterRequired || method.isStatic !== isStatic
-          || method.arity !== args.length) continue;
+          || method.arity !== args.length || (exclude && method.fn === exclude)) continue;
       const score = this.descriptorScore(method.descriptor, args);
       if (score < 0) continue;
       const isBridge = method.isBridge === true;
@@ -5288,22 +5610,22 @@ export const GoldClientRuntime = Object.freeze({
     }
     return best;
   },
-  resolveInterfaceMethod(className, name, args, isStatic, visited = new Set()) {
+  resolveInterfaceMethod(className, name, args, isStatic, visited = new Set(), exclude = null) {
     if (!className || visited.has(className)) return null;
     visited.add(className);
     const current = this.classes.get(className);
     if (!current) return null;
     const candidates = current.__goldMethods?.get(name) ?? [];
-    const target = this.bestMethod(candidates, args, isStatic);
+    const target = this.bestMethod(candidates, args, isStatic, exclude);
     if (target) return target;
     for (const parentInterface of current.__goldInterfaces ?? []) {
       const inherited = this.resolveInterfaceMethod(
-        parentInterface, name, args, isStatic, visited);
+        parentInterface, name, args, isStatic, visited, exclude);
       if (inherited) return inherited;
     }
     return null;
   },
-  resolveClassMethod(className, name, args, isStatic) {
+  resolveClassMethod(className, name, args, isStatic, exclude = null) {
     let currentName = className;
     const visitedClasses = new Set();
     const interfaces = [];
@@ -5325,12 +5647,13 @@ export const GoldClientRuntime = Object.freeze({
       if (!current) break;
       interfaces.push(...(current.__goldInterfaces ?? []));
       const candidates = current.__goldMethods?.get(name) ?? [];
-      const target = this.bestMethod(candidates, args, isStatic);
+      const target = this.bestMethod(candidates, args, isStatic, exclude);
       if (target) return target;
       currentName = current.__goldSuperName;
     }
     for (const interfaceName of interfaces) {
-      const target = this.resolveInterfaceMethod(interfaceName, name, args, isStatic);
+      const target = this.resolveInterfaceMethod(
+        interfaceName, name, args, isStatic, new Set(), exclude);
       if (target) return target;
     }
     return null;
@@ -5527,8 +5850,37 @@ export const GoldClientRuntime = Object.freeze({
   },
   invoke(receiver, methods, name, args, optional = false) {
     const className = receiver?.isModProxy ? null : receiver?.constructor?.__goldClassName;
-    const target = this.resolveClassMethod(className, name, args, false);
-    if (target) return target.fn.apply(receiver, args);
+    let target = this.resolveClassMethod(className, name, args, false);
+    const trackable = receiver !== null
+      && (typeof receiver === "object" || typeof receiver === "function");
+    let active = null;
+    if (target && trackable) {
+      active = activeMethodCalls.get(receiver) ?? null;
+      if (active?.has(target.fn)) {
+        // A generated wrapper can call its own overloaded method by name. If
+        // that re-enters the implementation already on the stack, select the
+        // next applicable overload instead of recursing forever; Java would
+        // have linked the original call to a specific descriptor.
+        const alternate = this.resolveClassMethod(
+          className, name, args, false, target.fn);
+        if (alternate) target = alternate;
+      }
+      if (!active) {
+        active = new Set();
+        activeMethodCalls.set(receiver, active);
+      }
+    }
+    if (target) {
+      if (active) active.add(target.fn);
+      try {
+        return target.fn.apply(receiver, args);
+      } finally {
+        if (active) {
+          active.delete(target.fn);
+          if (active.size === 0) activeMethodCalls.delete(receiver);
+        }
+      }
+    }
     const declaration = (methods.get(name) ?? []).find(method =>
       method.isAdapterRequired && !method.isStatic && method.arity === args.length);
     if (declaration) return declaration.fn.apply(receiver, args);

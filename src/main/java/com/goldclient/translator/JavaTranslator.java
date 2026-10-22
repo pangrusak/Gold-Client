@@ -4822,6 +4822,31 @@ public final class JavaTranslator {
       }
       if (!isLoopExitMetadata(operation)) break;
     }
+    if (exitIndex < 0) {
+      // A do-while can only leave through a branch in its body (fastutil's
+      // hash-table probes do this before the back-edge test). The continuation
+      // label then follows an early return, so the scan above stops before
+      // reaching it. Accept the nearest body branch target outside the loop
+      // instead; the reference check below still proves the body uses it.
+      int nearest = Integer.MAX_VALUE;
+      for (int i = headerIndex + 1; i < branchIndex; i++) {
+        IrOperationModel operation = operations.get(i);
+        String target = null;
+        if ("JUMP".equals(operation.kind()) && !operation.operands().isEmpty()) {
+          target = operation.operands().get(0);
+        } else if ("CONDITIONAL_BRANCH".equals(operation.kind())
+            && operation.operands().size() >= 2) {
+          target = operation.operands().get(1);
+        }
+        if (target == null) continue;
+        Integer targetIndex = labels.get(labelKey(target));
+        if (targetIndex == null || targetIndex <= branchIndex
+            || targetIndex >= operations.size()) continue;
+        if (!"LABEL".equals(operations.get(targetIndex).kind())) continue;
+        nearest = Math.min(nearest, targetIndex);
+      }
+      if (nearest != Integer.MAX_VALUE) exitIndex = nearest;
+    }
     if (exitIndex < 0 || operations.get(exitIndex).operands().isEmpty()) return null;
     String exitLabel = labelKey(operations.get(exitIndex).operands().get(0));
     for (int i = headerIndex + 1; i < branchIndex; i++) {
