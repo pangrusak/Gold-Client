@@ -2,7 +2,9 @@ package com.goldclient.planner;
 
 import com.goldclient.analyzer.ModAnalysis;
 import com.goldclient.analyzer.ModAnalyzer;
+import com.goldclient.model.AnnotationData;
 import com.goldclient.model.ClassModel;
+import com.goldclient.translator.ForgeDependencyGraph;
 import com.goldclient.translator.ForgeLifecycleExporter;
 import com.goldclient.translator.ForgeTransformationInspector;
 import com.goldclient.translator.JavaScriptBundleExporter;
@@ -17,6 +19,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -38,6 +41,7 @@ public final class LoaderCommand {
   public static int run(String[] args, PrintStream out, PrintStream err) {
     List<Path> inputs = new ArrayList<>();
     List<Path> libraries = new ArrayList<>();
+    List<Path> libraryDirectories = new ArrayList<>();
     Path output = null;
     Path reportFile = null;
     boolean singleFile = false;
@@ -62,6 +66,8 @@ public final class LoaderCommand {
         switch (flag) {
           case "--input" -> inputs.add(Path.of(value).toAbsolutePath().normalize());
           case "--library" -> libraries.add(Path.of(value).toAbsolutePath().normalize());
+          case "--library-dir" ->
+              libraryDirectories.add(Path.of(value).toAbsolutePath().normalize());
           case "--output" -> {
             if (output != null) throw new IllegalArgumentException("Duplicate --output");
             output = Path.of(value).toAbsolutePath().normalize();
@@ -96,6 +102,73 @@ public final class LoaderCommand {
           throw new IllegalArgumentException("Library JAR supplied more than once: " + library);
         }
       }
+      for (Path directory : libraryDirectories) {
+        if (!Files.isDirectory(directory)) {
+          throw new IOException("Library directory does not exist: " + directory);
+        }
+      }
+
+      Map<Path, ModAnalysis> analyses = new LinkedHashMap<>();
+      for (Path input : realInputs) analyses.put(input, new ModAnalyzer().analyze(input));
+      for (Path library : realLibraries) {
+        analyses.put(library, new ModAnalyzer().analyze(library));
+      }
+      Set<String> knownModIds = new LinkedHashSet<>();
+      for (ModAnalysis analysis : analyses.values()) {
+        knownModIds.addAll(declaredModIds(analysis));
+      }
+      Map<String, List<Path>> candidates = new LinkedHashMap<>();
+      for (Path directory : new LinkedHashSet<>(libraryDirectories)) {
+        List<Path> jars;
+        try (var stream = Files.list(directory)) {
+          jars = stream.filter(Files::isRegularFile)
+              .filter(path -> path.getFileName().toString().endsWith(".jar"))
+              .map(path -> path.toAbsolutePath().normalize())
+              .sorted()
+              .toList();
+        }
+        for (Path jar : jars) {
+          if (!analyses.containsKey(jar)) {
+            try {
+              analyses.put(jar, new ModAnalyzer().analyze(jar));
+            } catch (Exception ignored) {
+              continue;
+            }
+          }
+          for (String modId : declaredModIds(analyses.get(jar))) {
+            candidates.computeIfAbsent(modId, key -> new ArrayList<>()).add(jar);
+          }
+        }
+      }
+      Set<Path> knownLibraryPaths = new LinkedHashSet<>(realLibraries);
+      List<Path> resolvedLibraries = new ArrayList<>();
+      ArrayDeque<Path> dependencyQueue = new ArrayDeque<>(realInputs);
+      dependencyQueue.addAll(realLibraries);
+      Set<Path> scannedDependencies = new LinkedHashSet<>();
+      Set<String> loaderProvided = Set.of("forge", "minecraft", "fml");
+      while (!dependencyQueue.isEmpty()) {
+        Path owner = dependencyQueue.removeFirst();
+        if (!scannedDependencies.add(owner)) continue;
+        ModAnalysis analysis = analyses.get(owner);
+        if (analysis == null) continue;
+        for (String dependency : requiredDependencyIds(analysis)) {
+          if (loaderProvided.contains(dependency) || knownModIds.contains(dependency)) continue;
+          List<Path> matches = candidates.get(dependency);
+          if (matches == null || matches.isEmpty()) continue;
+          if (matches.size() > 1) {
+            throw new IOException("Required dependency " + dependency
+                + " is ambiguous in library directories: " + matches);
+          }
+          Path resolved = matches.get(0).toRealPath();
+          if (!knownLibraryPaths.add(resolved)) continue;
+          if (realInputs.contains(resolved)) continue;
+          realLibraries.add(resolved);
+          resolvedLibraries.add(resolved);
+          knownModIds.add(dependency);
+          dependencyQueue.addLast(resolved);
+        }
+      }
+
       Set<Path> allPaths = new LinkedHashSet<>(realInputs);
       allPaths.addAll(realLibraries);
       List<Path> allInputs = new ArrayList<>(allPaths);
@@ -112,21 +185,24 @@ public final class LoaderCommand {
       classifications.put("MOD", 0);
       classifications.put("API_PROVIDER", 0);
       classifications.put("TRANSFORMER", 0);
+      Set<String> libraryModIds = new LinkedHashSet<>();
       for (Path input : allInputs) {
         boolean library = libraryPaths.contains(input);
-        ModAnalysis analysis = new ModAnalyzer().analyze(input);
+        ModAnalysis analysis = analyses.get(input);
+        if (analysis == null) throw new IOException("Input was not analyzed: " + input);
         int methods = analysis.totalMethods();
         int fields = analysis.totalFields();
         String metadataModId = analysis.metadata().getModId();
+        Set<String> declaredModIds = declaredModIds(analysis);
         ForgeTransformationInspector.Report transformations =
             ForgeTransformationInspector.inspect(List.of(input));
         List<String> surfaces = transformationSurfaces(transformations);
         boolean transformer = !surfaces.isEmpty();
-        boolean modEntrypoint = metadataModId != null && !metadataModId.isBlank()
-            && !"Unknown".equals(metadataModId);
+        boolean modEntrypoint = hasModAnnotation(analysis);
         String classification = transformer ? "TRANSFORMER"
             : modEntrypoint ? "MOD" : "API_PROVIDER";
         classifications.merge(classification, 1, Integer::sum);
+        if (library) libraryModIds.addAll(declaredModIds);
         if (transformer) {
           transformationBlockers.addAll(transformations.blockers());
           if (library) transformerLibraries.add(input.toString());
@@ -152,7 +228,7 @@ public final class LoaderCommand {
       Path destination = output;
       JavaScriptModTranslationExporter.ExportReport export =
           new JavaScriptModTranslationExporter().export(allInputs, classes, metadataModIds,
-              libraryClasses, destination);
+              libraryClasses, libraryModIds, destination);
       Path singleFileOutput = null;
       JavaScriptBundleExporter.BundleSummary singleFileSummary = null;
       if (singleFile) {
@@ -197,8 +273,13 @@ public final class LoaderCommand {
       report.put("inputs", records);
       report.put("inputCount", inputs.size());
       report.put("libraries", libraries.stream().map(Path::toString).toList());
+      report.put("libraryDirectories",
+          libraryDirectories.stream().map(Path::toString).toList());
+      report.put("resolvedLibraries",
+          resolvedLibraries.stream().map(Path::toString).toList());
       report.put("libraryClassCount", libraryClasses.size());
       report.put("transformerLibraries", transformerLibraries);
+      report.put("suppliedModIds", List.copyOf(libraryModIds));
       report.put("classificationCounts", classifications);
       report.put("output", destination.toString());
       report.put("classCount", classes.size());
@@ -231,6 +312,10 @@ public final class LoaderCommand {
       out.println("Gold Client Forge loader build");
       out.println("Inputs: " + inputs.size());
       out.println("Libraries: " + libraries.size());
+      if (!resolvedLibraries.isEmpty()) {
+        out.println("Resolved libraries: " + resolvedLibraries.size());
+        for (Path library : resolvedLibraries) out.println("  - " + library);
+      }
       out.println("Classifications: MOD=" + classifications.get("MOD")
           + ", API_PROVIDER=" + classifications.get("API_PROVIDER")
           + ", TRANSFORMER=" + classifications.get("TRANSFORMER"));
@@ -268,16 +353,76 @@ public final class LoaderCommand {
   private static void usage(PrintStream out) {
     out.println("""
         Usage: gold-client loader --input <mod.jar> [--input <dependency-mod.jar> ...] \
-        [--library <api-provider.jar> ...] --output <directory> [--report <file>] \
-        [--single-file [--compact]]
+        [--library <api-provider.jar> ...] [--library-dir <directory> ...] \
+        --output <directory> [--report <file>] [--single-file [--compact]]
           Builds one shared JavaScript Forge loader bundle from several mod JARs.
           --input may be repeated. Duplicate class definitions are rejected.
           --library repeats an API/dependency JAR whose classes are bundled but
           whose own @Mod entry points are not added to the lifecycle.
+          --library-dir scans JAR metadata and adds only the required dependency
+          closure as libraries; optional dependencies are not selected.
           --single-file writes gold-client-forge.js as one classic-script file.
           --compact strips full-line comments and blank lines from that file.
           Exits 2 when lifecycle blockers or incomplete methods remain.
         """);
+  }
+
+  private static Set<String> declaredModIds(ModAnalysis analysis) {
+    Set<String> ids = new LinkedHashSet<>();
+    String metadataId = analysis.metadata().getModId();
+    boolean usableMetadata = metadataId != null && !metadataId.isBlank()
+        && !"Unknown".equals(metadataId);
+    for (ClassModel clazz : analysis.classes()) {
+      for (AnnotationData annotation : clazz.annotationData()) {
+        if (!"net.minecraftforge.fml.common.Mod".equals(annotation.name())) continue;
+        Object modId = annotation.values().get("modid");
+        Object useMetadata = annotation.values().get("useMetadata");
+        String literal = modId instanceof String value ? value : null;
+        if (literal == null || literal.isBlank()) {
+          if (usableMetadata && Boolean.TRUE.equals(useMetadata)) ids.add(metadataId);
+        } else {
+          ids.add(literal);
+        }
+      }
+    }
+    if (usableMetadata) ids.add(metadataId);
+    return ids;
+  }
+
+  private static boolean hasModAnnotation(ModAnalysis analysis) {
+    for (ClassModel clazz : analysis.classes()) {
+      for (AnnotationData annotation : clazz.annotationData()) {
+        if ("net.minecraftforge.fml.common.Mod".equals(annotation.name())) return true;
+      }
+    }
+    return false;
+  }
+
+  private static Set<String> requiredDependencyIds(ModAnalysis analysis) {
+    Set<String> ids = new LinkedHashSet<>();
+    for (String declaration : analysis.metadata().getDependencies()) {
+      addRequiredDependencies(ids, declaration);
+    }
+    for (ClassModel clazz : analysis.classes()) {
+      for (AnnotationData annotation : clazz.annotationData()) {
+        String name = annotation.name().replace('/', '.');
+        if (!"net.minecraftforge.fml.common.Mod".equals(name)) continue;
+        Object declaration = annotation.values().get("dependencies");
+        if (declaration instanceof String value) addRequiredDependencies(ids, value);
+      }
+    }
+    return ids;
+  }
+
+  private static void addRequiredDependencies(Set<String> ids, String declaration) {
+    try {
+      for (ForgeDependencyGraph.Dependency dependency
+          : ForgeDependencyGraph.parse(declaration)) {
+        if (dependency.required()) ids.add(dependency.modId());
+      }
+    } catch (IllegalArgumentException ignored) {
+      // The lifecycle exporter reports malformed declarations as blockers.
+    }
   }
 
   private static List<String> transformationSurfaces(

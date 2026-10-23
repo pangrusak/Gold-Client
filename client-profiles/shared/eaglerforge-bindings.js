@@ -227,6 +227,11 @@
                     if (typeof raw.$ordinal === "number") return raw.$ordinal;
                     if (typeof raw.ordinal === "number") return raw.ordinal;
                 }
+                if (raw?.$mcResourceManager
+                    && (property === "getResourceManager"
+                        || memberNames(property).includes("getResourceManager"))) {
+                    return () => virtualResourceManager(raw.$mcResourceManager);
+                }
                 if (property === "name") {
                     if (typeof raw.$name2 === "string") return api().util.ustr(raw.$name2);
                     if (typeof raw.$name === "string") return api().util.ustr(raw.$name);
@@ -2481,6 +2486,247 @@
                 }
             }
         });
+    }
+
+    function resourceLocationParts(value) {
+        const call = (candidate) => {
+            if (typeof candidate !== "function") return null;
+            try {
+                const result = candidate.call(value);
+                return result == null ? null : String(result);
+            } catch (error) {
+                return null;
+            }
+        };
+        const domain = call(value?.getResourceDomain)
+            ?? call(value?.$getResourceDomain)
+            ?? (typeof value?.resourceDomain === "string" ? value.resourceDomain : null)
+            ?? (typeof value?.$resourceDomain === "string" ? value.$resourceDomain : null);
+        const path = call(value?.getResourcePath)
+            ?? call(value?.$getResourcePath)
+            ?? (typeof value?.resourcePath === "string" ? value.resourcePath : null)
+            ?? (typeof value?.$resourcePath === "string" ? value.$resourcePath : null);
+        return domain && path ? {domain, path} : null;
+    }
+
+    function resourceLocationHandle(domain, path) {
+        return Object.freeze({
+            getResourceDomain: () => domain,
+            $getResourceDomain: () => domain,
+            getResourcePath: () => path,
+            $getResourcePath: () => path,
+            toString: () => domain + ":" + path
+        });
+    }
+
+    function resourceInputStream(bytes) {
+        let position = 0;
+        let mark = 0;
+        let closed = false;
+        const check = () => {
+            if (closed) throw new Error("java.io.IOException: stream is closed");
+        };
+        const stream = {
+            read(target, offset = 0, length = null) {
+                check();
+                if (!(target instanceof Uint8Array)) {
+                    if (position >= bytes.length) return -1;
+                    return bytes[position++];
+                }
+                if (position >= bytes.length) return -1;
+                const count = length == null ? target.length - offset : Number(length);
+                if (count <= 0) return 0;
+                const available = Math.min(count, bytes.length - position);
+                target.set(bytes.subarray(position, position + available), offset);
+                position += available;
+                return available;
+            },
+            $read(target, offset = 0, length = null) {
+                return stream.read(target, offset, length);
+            },
+            readAllBytes() {
+                check();
+                const remaining = bytes.slice(position);
+                position = bytes.length;
+                return remaining;
+            },
+            skip(count) {
+                check();
+                const skipped = Math.min(Math.max(0, Number(count)), bytes.length - position);
+                position += skipped;
+                return skipped;
+            },
+            available() { check(); return bytes.length - position; },
+            mark() { mark = position; },
+            reset() { check(); position = mark; },
+            markSupported() { return true; },
+            close() { closed = true; }
+        };
+        return stream;
+    }
+
+    function modResource(location, path) {
+        const value = resourceBase64(path);
+        if (value === null) return null;
+        let bytes = null;
+        const getBytes = () => bytes ?? (bytes = decodeBase64(value));
+        return Object.freeze({
+            getResourceLocation: () => location,
+            $getResourceLocation: () => location,
+            getInputStream: () => resourceInputStream(getBytes()),
+            $getInputStream: () => resourceInputStream(getBytes()),
+            hasMetadata: () => false,
+            $hasMetadata: () => false,
+            getMetadata: () => null,
+            $getMetadata: () => null
+        });
+    }
+
+    function resourceList(items) {
+        const values = Array.from(items);
+        return Object.freeze({
+            size: () => values.length,
+            $size: () => values.length,
+            isEmpty: () => values.length === 0,
+            get: index => values[Number(index) | 0] ?? null,
+            $get: index => values[Number(index) | 0] ?? null,
+            iterator: () => {
+                let index = 0;
+                return {
+                    hasNext: () => index < values.length,
+                    next: () => values[index++],
+                    remove: () => { throw new Error("java.lang.UnsupportedOperationException"); }
+                };
+            },
+            [Symbol.iterator]: () => values[Symbol.iterator]()
+        });
+    }
+
+    function stringSet(values) {
+        const set = new Set(values);
+        return Object.freeze({
+            size: () => set.size,
+            $size: () => set.size,
+            isEmpty: () => set.size === 0,
+            contains: value => set.has(String(value)),
+            iterator: () => {
+                const iterator = set.values();
+                let next = null;
+                return {
+                    hasNext: () => {
+                        const value = iterator.next();
+                        if (value.done) return false;
+                        next = value.value;
+                        return true;
+                    },
+                    next: () => next
+                };
+            },
+            [Symbol.iterator]: () => set[Symbol.iterator]()
+        });
+    }
+
+    function nativeResourceLocation(value) {
+        if (isProxy(value)) return value;
+        const parts = resourceLocationParts(value);
+        if (!parts) return value;
+        try {
+            return constructNative("net.minecraft.util.ResourceLocation",
+                [parts.domain, parts.path]);
+        } catch (error) {
+            return value;
+        }
+    }
+
+    function nativeValues(value) {
+        const values = [];
+        if (value === null || value === undefined) return values;
+        if (Array.isArray(value)) return value.slice();
+        const size = typeof value.$size === "function" ? value.$size()
+            : typeof value.size === "function" ? value.size() : null;
+        const get = typeof value.$get === "function" ? value.$get
+            : typeof value.get === "function" ? value.get : null;
+        if (Number.isInteger(size) && typeof get === "function") {
+            for (let index = 0; index < size; index++) values.push(get.call(value, index));
+            return values;
+        }
+        const iterator = typeof value.$iterator === "function" ? value.$iterator()
+            : typeof value.iterator === "function" ? value.iterator() : null;
+        if (iterator) {
+            const hasNext = typeof iterator.$hasNext === "function" ? iterator.$hasNext.bind(iterator)
+                : typeof iterator.hasNext === "function" ? iterator.hasNext.bind(iterator) : null;
+            const next = typeof iterator.$next === "function" ? iterator.$next.bind(iterator)
+                : typeof iterator.next === "function" ? iterator.next.bind(iterator) : null;
+            if (hasNext && next) {
+                while (hasNext()) values.push(next());
+                return values;
+            }
+        }
+        if (typeof value[Symbol.iterator] === "function") {
+            try {
+                for (const item of value) values.push(item);
+            } catch {
+                return values;
+            }
+        }
+        return values;
+    }
+
+    function virtualResourceManager(nativeManager) {
+        const modDomains = new Set();
+        for (const name of Object.keys(resourceFiles())) {
+            const match = /^assets\/([^/]+)\//.exec(name);
+            if (match) modDomains.add(match[1]);
+        }
+        const nativeNames = {
+            getResource: ["$getResource", "getResource", "func_110536_a"],
+            getAllResources: ["$getAllResources", "getAllResources", "func_135056_b"],
+            getResourceDomains: ["$getResourceDomains", "getResourceDomains", "func_135055_a"]
+        };
+        const callNative = (name, args) => {
+            const functionName = (nativeNames[name] ?? [])
+                .find(candidate => typeof nativeManager?.[candidate] === "function");
+            if (!functionName) return null;
+            return nativeManager[functionName](...args);
+        };
+        const manager = {
+            getResource(location) {
+                const parts = resourceLocationParts(location);
+                const path = parts ? "assets/" + parts.domain + "/" + parts.path : null;
+                const mod = path ? modResource(resourceLocationHandle(parts.domain, parts.path), path)
+                    : null;
+                if (mod) return mod;
+                const native = callNative("getResource", [nativeResourceLocation(location)]);
+                if (native !== null && native !== undefined) return native;
+                const runtime = global.GoldClientForge?.runtime ?? global.GoldClientRuntime;
+                const message = parts ? parts.domain + ":" + parts.path : String(location);
+                if (runtime?.javaException) {
+                    throw runtime.javaException("java.io.FileNotFoundException", message);
+                }
+                throw new Error("java.io.FileNotFoundException: " + message);
+            },
+            getAllResources(location) {
+                const parts = resourceLocationParts(location);
+                const path = parts ? "assets/" + parts.domain + "/" + parts.path : null;
+                const values = [];
+                const mod = path ? modResource(resourceLocationHandle(parts.domain, parts.path), path)
+                    : null;
+                if (mod) values.push(mod);
+                const native = callNative("getAllResources", [nativeResourceLocation(location)]);
+                if (native !== null && native !== undefined) values.push(...nativeValues(native));
+                return resourceList(values);
+            },
+            getResourceDomains() {
+                const values = new Set(modDomains);
+                const native = callNative("getResourceDomains", []);
+                for (const value of nativeValues(native)) values.add(String(value));
+                return stringSet(values);
+            }
+        };
+        manager.$getResource = manager.getResource;
+        manager.$getAllResources = manager.getAllResources;
+        manager.$getResourceDomains = manager.getResourceDomains;
+        return Object.freeze(manager);
     }
 
     function unsupportedService(service) {

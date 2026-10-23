@@ -37,11 +37,23 @@ class JavaScriptRuntimeHostAdaptersTest {
           getPath() { return this.path; }
         }
 
+        function bindingFailure(code, detail) {
+          const error = new Error("[GoldForge " + code + "] " + detail);
+          error.name = "GoldClientForgeBindingError";
+          return error;
+        }
+
         const calls = [];
         globalThis.goldClientForgeBindings = {
           virtualFileClass: FakeFile,
           forge: {
             construct(owner, args, receiver) {
+              if (owner === "net.minecraft.block.MissingCtorBlock") {
+                throw bindingFailure("missing-constructor", owner + " has no constructors");
+              }
+              if (owner === "net.minecraft.block.MissingClassBlock") {
+                throw bindingFailure("unknown-class", owner);
+              }
               calls.push([owner, args.length, !!receiver]);
               if (!receiver) return { owner, args, initialized: true };
               receiver.platformOwner = owner;
@@ -49,9 +61,19 @@ class JavaScriptRuntimeHostAdaptersTest {
               receiver.isCanceled = () => false;
               receiver.isCancelable = () => false;
               return receiver;
+            },
+            call(owner, method) {
+              if (owner === "net.minecraft.block.MissingClassBlock") {
+                throw bindingFailure("unknown-class", owner);
+              }
+              throw bindingFailure("missing-static-method", owner + "." + method);
+            },
+            get(owner, field) {
+              throw bindingFailure("missing-static-field", owner + "." + field);
             }
           }
         };
+        globalThis.goldClientForgeBindings.minecraft = globalThis.goldClientForgeBindings.forge;
 
         const contents = new Map([["/config/sample.cfg", "alpha\\nbeta\\n"]]);
         FakeFile.prototype.readText = function () { return contents.get(this.path) ?? null; };
@@ -137,6 +159,46 @@ class JavaScriptRuntimeHostAdaptersTest {
         }
         if (!noClassDef) {
           throw new Error("getStaticField must throw NoClassDefFoundError for absent classes");
+        }
+
+        let bindingNoSuchMethod = false;
+        try {
+          runtime.create("net.minecraft.block.MissingCtorBlock");
+        } catch (error) {
+          bindingNoSuchMethod = error?.javaClassName === "java.lang.NoSuchMethodError";
+        }
+        if (!bindingNoSuchMethod) {
+          throw new Error("missing host constructor must surface as NoSuchMethodError");
+        }
+
+        let bindingNoClass = false;
+        try {
+          runtime.create("net.minecraft.block.MissingClassBlock");
+        } catch (error) {
+          bindingNoClass = error?.javaClassName === "java.lang.NoClassDefFoundError";
+        }
+        if (!bindingNoClass) {
+          throw new Error("unknown host constructor class must surface as NoClassDefFoundError");
+        }
+
+        let bindingNoSuchField = false;
+        try {
+          runtime.getStaticField("net.minecraft.block.KnownBlock", "missing");
+        } catch (error) {
+          bindingNoSuchField = error?.javaClassName === "java.lang.NoSuchFieldError";
+        }
+        if (!bindingNoSuchField) {
+          throw new Error("missing host static field must surface as NoSuchFieldError");
+        }
+
+        let bindingNoSuchStaticMethod = false;
+        try {
+          runtime.invokePlatformStatic("net.minecraft.block.KnownBlock", "missing");
+        } catch (error) {
+          bindingNoSuchStaticMethod = error?.javaClassName === "java.lang.NoSuchMethodError";
+        }
+        if (!bindingNoSuchStaticMethod) {
+          throw new Error("missing host static method must surface as NoSuchMethodError");
         }
 
         class StaticBase {}
@@ -289,6 +351,13 @@ class JavaScriptRuntimeHostAdaptersTest {
         }
         if (literal.getResourceAsStream("missing.txt") !== null) {
           throw new Error("missing class resource did not return null");
+        }
+        const instanceClass = runtime.invokeInstance(
+          {__goldClassName: "demo.Plugin"}, "getClass");
+        const instanceStream = instanceClass.getResourceAsStream("data.txt");
+        if (!instanceStream || new TextDecoder().decode(instanceStream.readAllBytes())
+            !== "relative-resource") {
+          throw new Error("getClass().getResourceAsStream did not resolve the class resource");
         }
         const loader = literal.getClassLoader();
         const loaderStream = loader.getResourceAsStream("demo/data.txt");

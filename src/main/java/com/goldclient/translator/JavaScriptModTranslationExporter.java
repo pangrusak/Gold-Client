@@ -71,6 +71,18 @@ public final class JavaScriptModTranslationExporter {
   public ExportReport export(List<Path> inputJars, List<ClassModel> classes,
       Map<String, String> metadataModIds, Set<String> excludedLifecycleClasses,
       Path outputDirectory) throws IOException {
+    return export(inputJars, classes, metadataModIds, excludedLifecycleClasses,
+        Set.of(), outputDirectory);
+  }
+
+  /**
+   * Exports a bundle while treating {@code suppliedModIds} as present for
+   * dependency resolution even though their library JARs have no lifecycle
+   * entry. The supplied classes still translate and register normally.
+   */
+  public ExportReport export(List<Path> inputJars, List<ClassModel> classes,
+      Map<String, String> metadataModIds, Set<String> excludedLifecycleClasses,
+      Set<String> suppliedModIds, Path outputDirectory) throws IOException {
     if (classes == null) throw new IllegalArgumentException("Classes must not be null.");
     if (outputDirectory == null) throw new IllegalArgumentException("Output directory must not be null.");
     List<Path> jars = inputJars == null ? List.of() : inputJars.stream()
@@ -141,7 +153,8 @@ public final class JavaScriptModTranslationExporter {
             + System.lineSeparator(), StandardCharsets.UTF_8);
     new ForgeLifecycleExporter().export(classes, metadataModIds, root,
         transformations.blockers(),
-        excludedLifecycleClasses == null ? Set.of() : excludedLifecycleClasses);
+        excludedLifecycleClasses == null ? Set.of() : excludedLifecycleClasses,
+        suppliedModIds == null ? Set.of() : suppliedModIds);
     new ForgeHostRuntimeExporter().export(root);
     new ForgeCompatibilityPlanner().export(classes, root);
     Files.writeString(root.resolve("package.json"),

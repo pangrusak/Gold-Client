@@ -44,8 +44,16 @@ Current evidence:
   and the bindings `resources` service.
 - [x] Class-literal `getResource`, `getResourceAsStream`, and `getClassLoader()`
   read embedded JAR files using Java's relative/absolute path rules.
-- [ ] `getClass().getResourceAsStream(...)`, Minecraft `IResourceManager`, and
-  Forge resource-pack calls.
+- [x] `getClass().getResourceAsStream(...)` resolves through the same class
+  literal. `Minecraft.getResourceManager()` exposes embedded mod resources via
+  `getResource`, `getAllResources`, and `getResourceDomains`, then delegates
+  missing lookups to the native manager. Unit and adapter tests cover relative
+  and absolute paths; a real headless-browser run also read the EnchDesc
+  `en_US.lang` through the bridge. This is not evidence that a mod's rendering
+  code uses the resource correctly.
+- [x] Merge native TeaVM resource lists and domain iterators with embedded mod
+  resources instead of ignoring non-array native results.
+- [ ] Forge resource-pack APIs and resource reload listeners for mod packs.
 - [ ] Build-time coremod/ASM/Mixin execution. Mixins and coremods normally
   rewrite Minecraft bytecode, but this pipeline never has the host Minecraft
   bytecode; the current output keeps an explicit blocker rather than guessing.
@@ -60,10 +68,20 @@ declared event subscribers from original annotations. `--library` inputs keep
 their classes/resources in the bundle but exclude their own `@Mod` and
 `@Mod.EventBusSubscriber` declarations from automatic lifecycle loading; the
 plan records each input's `mod`/`library` role and the library class count.
-Inputs are also classified as `MOD`, `API_PROVIDER`, or `TRANSFORMER` using
-mod metadata and the transformation inspector. Transformer libraries remain
+Inputs are also classified as `MOD` (actual `@Mod` entry class),
+`API_PROVIDER` (no `@Mod` entrypoint or transformation surface), or
+`TRANSFORMER` using annotations and the transformation inspector. A synthetic
+pure API-provider JAR with only `mcmod.info` plus a dependent `@Mod` JAR is
+covered by `ForgeLoaderTest`: the API class is bundled, the provider is not
+added to the lifecycle, and its mod ID satisfies the required dependency. Transformer libraries remain
 explicit blockers; their classes are bundled for diagnostics but their Mixin,
 coremod, access-transformer, or ASM effects are never claimed to run.
+`--library-dir <directory>` indexes candidate JARs by `mcmod.info`/`@Mod` mod
+ID and resolves only the required dependency closure of the inputs and supplied
+libraries. Optional
+dependencies are not selected. A resolved library satisfies required-dependency
+presence without receiving a lifecycle entry or load-order node; the plan
+records it under `resolvedLibraries` and its mod IDs under `suppliedModIds`.
 
 ### Single-file injection output
 
@@ -296,10 +314,12 @@ The profile injector prefers this file when present and emits a classic
   ordinary classes and claims the bundle is ready.
 - [ ] Rendering, input, recipe registration/lookup, networking, resources,
   capabilities, and most Minecraft/Forge API calls.
-- [ ] Precise classification of platform exceptions thrown by host bindings.
-  A plain JavaScript error is treated as `java.lang.Throwable` unless its
-  message starts with a known JDK exception class; hosts can throw
-  `GoldClientRuntime.javaException(...)` when a specific Java type is required.
+- [x] Classification of missing platform members thrown by host bindings.
+  `unknown-class` becomes `NoClassDefFoundError`; missing fields become
+  `NoSuchFieldError`; missing constructors and static/instance methods become
+  `NoSuchMethodError`. Other host errors still propagate unchanged, and a plain
+  JavaScript error is still treated as `java.lang.Throwable` unless it is a
+  recognized binding error or `GoldClientRuntime.javaException(...)`.
 - [ ] Server-only mods in this client-side host. They are blocked explicitly.
 - [ ] Any claim that `READY_FOR_REAL_FORGE_HOST` means the mods run. It means
   the discovered lifecycle plan has no structural blockers and is ready to be

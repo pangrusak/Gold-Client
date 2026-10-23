@@ -70,9 +70,13 @@ The runtime exposes them through `GoldClientRuntime.hasResource`,
 adapter exposes the `resources` service with `has`, `list`, `get`, `getBytes`,
 and `getText`. Translated class literals also provide Java-style
 `getResource`, `getResourceAsStream`, and `getClassLoader()` for relative and
-absolute JAR paths. This does not cover `getClass().getResourceAsStream(...)`,
-Forge resource-pack APIs, or Minecraft `IResourceManager`; those remain
-unbound. Embedding a resource is not evidence that the mod loads or renders it.
+absolute JAR paths, and `instance.getClass().getResourceAsStream(...)` resolves
+through the same class literal. At runtime,
+`Minecraft.getResourceManager()` is overlaid for embedded mod resources:
+`getResource`, `getAllResources`, and `getResourceDomains` return mod resources
+before delegating missing lookups to the native manager. Forge resource-pack
+APIs and resource reload integration remain unsupported. Embedding a resource
+is not evidence that the mod loads or renders it.
 
 Start the local browser UI for the same workflow:
 
@@ -113,8 +117,12 @@ java -jar target/gold-client-1.jar loader \
 `--input` may be repeated. `--library <dependency.jar>` repeats an API or
 dependency JAR whose classes and resources are bundled, but whose own `@Mod`
 and `@Mod.EventBusSubscriber` declarations are excluded from automatic
-lifecycle loading. Plain mod inputs still supply the load order. Duplicate
-class definitions across inputs and libraries are rejected. The bundle contains
+lifecycle loading. `--library-dir <directory>` indexes JAR metadata and `@Mod` literals, then adds
+only the required dependency closure as libraries; optional dependencies are
+never selected automatically. A library's mod ID satisfies a dependent mod's required
+declaration without adding that library to the lifecycle load order. Plain mod
+inputs still supply the load order. Duplicate class definitions across inputs
+and libraries are rejected. The bundle contains
 one class registry, merged resources, a
 phase-major FML lifecycle dispatcher (including `FMLConstructionEvent` before
 `preInit`), dependency-ordered mod construction, static
@@ -124,13 +132,16 @@ phase-major FML lifecycle dispatcher (including `FMLConstructionEvent` before
 `before`/`after` clauses constrain load order. The generated
 `loader-plan.json` records inputs, hashes, roles, counts, library class counts,
 load order, blockers, and whether the lifecycle plan is ready for a real host.
-Each input is classified while building: `MOD` (has Forge mod metadata),
-`API_PROVIDER` (no mod entrypoint or transformation surface), or `TRANSFORMER`
-(Mixin configs, access-transformers, coremod/loading plugins, or other
-transformation surfaces). `classificationCounts` and `transformerLibraries`
-make that report explicit. A library is not proof that its code is
-API-compatible: transformer libraries are listed as blockers, and Mixin/coremod/
-AT surfaces in any bundled JAR remain explicit blockers.
+Each input is classified while building: `MOD` (has an actual Forge `@Mod`
+entry class), `API_PROVIDER` (no `@Mod` entrypoint or transformation surface;
+metadata-only libraries qualify), or `TRANSFORMER` (Mixin configs,
+access-transformers, coremod/loading plugins, or other transformation
+surfaces). A metadata-only API provider can still satisfy a dependent mod's
+required mod-ID presence. `classificationCounts` and `transformerLibraries`
+make that report explicit, and `suppliedModIds` records the mod IDs that can
+satisfy dependencies without joining the lifecycle. A library is not proof that
+its code is API-compatible: transformer libraries are listed as blockers, and
+Mixin/coremod/AT surfaces in any bundled JAR remain explicit blockers.
 
 `--single-file` additionally writes `gold-client-forge.js`, a classic-script
 bundle that inlines every generated module plus the JAR resources under

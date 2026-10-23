@@ -285,6 +285,62 @@ test("reads embedded mod resources without inventing missing files", () => {
     assert.throws(() => resources.call("has", "../secret"), /invalid-resource-path/);
 });
 
+test("serves embedded mod resources through Minecraft.getResourceManager", () => {
+    const { bindings } = installFixture();
+    const manager = bindings.adapt({ $mcResourceManager: {} }).getResourceManager();
+    const location = {
+        getResourceDomain: () => "demo",
+        getResourcePath: () => "lang/en_us.json"
+    };
+    const resource = manager.getResource(location);
+    assert.equal(resource.getResourceLocation().getResourceDomain(), "demo");
+    assert.equal(resource.hasMetadata(), false);
+    assert.equal(Buffer.from(resource.getInputStream().readAllBytes()).toString("utf8"),
+        '{"item.demo":"Demo"}');
+    assert.equal(manager.getAllResources(location).size(), 1);
+    assert.equal(manager.getResourceDomains().contains("demo"), true);
+    assert.throws(() => manager.getResource({
+        getResourceDomain: () => "demo",
+        getResourcePath: () => "missing.json"
+    }), /FileNotFoundException: demo:missing\.json/);
+});
+
+test("merges native TeaVM resource lists and domain iterators", () => {
+    const { bindings } = installFixture();
+    const native = {
+        $mcResourceManager: {
+            $getAllResources() {
+                return {
+                    $size: () => 1,
+                    $get: index => ({ nativeResource: index })
+                };
+            },
+            $getResourceDomains() {
+                let index = 0;
+                const names = ["vanilla", "forge"];
+                return {
+                    $iterator: () => ({
+                        $hasNext: () => index < names.length,
+                        $next: () => names[index++]
+                    })
+                };
+            }
+        }
+    };
+    const manager = bindings.adapt(native).getResourceManager();
+    const location = {
+        getResourceDomain: () => "demo",
+        getResourcePath: () => "lang/en_us.json"
+    };
+    const resources = manager.getAllResources(location);
+    assert.equal(resources.size(), 2);
+    assert.deepEqual(resources.get(1), { nativeResource: 0 });
+    const domains = manager.getResourceDomains();
+    assert.equal(domains.contains("demo"), true);
+    assert.equal(domains.contains("vanilla"), true);
+    assert.equal(domains.contains("forge"), true);
+});
+
 test("resolves SRG static methods through ModAPI", () => {
     const { bindings, minecraft } = installFixture();
     const result = bindings.minecraft.call("net.minecraft.client.Minecraft", "func_71410_x", []);

@@ -56,7 +56,17 @@ public final class ForgeDependencyGraph {
 
     /** Returns a stable topological order, retaining input order where unconstrained. */
     public static Plan plan(Collection<Mod> mods) {
+        return plan(mods, Set.of());
+    }
+
+    /**
+     * Plans a supplied set of lifecycle mods while treating {@code suppliedModIds}
+     * as present but not lifecycle-ordered. This lets a dependency supplied as a
+     * library satisfy a mod's required declaration without inventing a mod entry.
+     */
+    public static Plan plan(Collection<Mod> mods, Set<String> suppliedModIds) {
         List<Mod> input = List.copyOf(mods);
+        Set<String> supplied = suppliedModIds == null ? Set.of() : Set.copyOf(suppliedModIds);
         Map<String, Mod> byId = new LinkedHashMap<>();
         List<String> blockers = new ArrayList<>();
         for (Mod mod : input) {
@@ -83,12 +93,14 @@ public final class ForgeDependencyGraph {
                 String target = dependency.modId();
                 // Forge, FML, and Minecraft are supplied by the Forge-compatible host.
                 if (LOADER_PROVIDED.contains(target)) continue;
-                boolean present = byId.containsKey(target);
+                boolean lifecyclePresent = byId.containsKey(target);
+                boolean present = lifecyclePresent || supplied.contains(target);
                 if (dependency.required() && !present) {
                     blockers.add("Required dependency missing: " + mod.id() + " -> " + target);
                     continue;
                 }
                 if (!present) continue; // optional ordering constraints apply only when installed
+                if (!lifecyclePresent) continue; // supplied libraries have no lifecycle node
                 // Plain required/optional clauses declare presence only; they do
                 // not constrain load order.
                 if (!dependency.orders()) continue;

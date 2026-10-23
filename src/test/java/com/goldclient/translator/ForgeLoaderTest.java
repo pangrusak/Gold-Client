@@ -20,6 +20,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.jar.Attributes;
 import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
+import org.objectweb.asm.AnnotationVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.Opcodes;
@@ -236,11 +239,182 @@ class ForgeLoaderTest {
     assertTrue(plan.contains("\"classification\": \"MOD\""), plan);
     assertTrue(plan.contains("\"libraryClassCount\": 3"), plan);
     assertTrue(plan.contains("\"mods\": [\n    \"appleskin\"\n  ]"), plan);
-    assertFalse(plan.contains("enchdesc"), plan);
+    assertTrue(plan.contains("\"suppliedModIds\": [\n    \"enchdesc\"\n  ]"), plan);
     assertTrue(Files.isRegularFile(
         output.resolve("net/darkhax/enchdesc/client/TooltipHandler.translated.js")));
     String lifecycle = Files.readString(output.resolve("forge-lifecycle-plan.json"));
     assertFalse(lifecycle.contains("enchdesc"), lifecycle);
+  }
+
+  @Test
+  void bundlesPureApiProviderForDependentModWithoutInventingLifecycle() throws Exception {
+    Path api = tempDir.resolve("api-provider-pilot.jar");
+    Path providerClass = compileClass(writer -> {
+      writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "sample/ApiProvider", null,
+          "java/lang/Object", null);
+      MethodVisitor constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V",
+          null, null);
+      constructor.visitCode();
+      constructor.visitVarInsn(Opcodes.ALOAD, 0);
+      constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>",
+          "()V", false);
+      constructor.visitInsn(Opcodes.RETURN);
+      constructor.visitMaxs(1, 1);
+      constructor.visitEnd();
+      MethodVisitor value = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+          "value", "()I", null, null);
+      value.visitCode();
+      value.visitIntInsn(Opcodes.BIPUSH, 7);
+      value.visitInsn(Opcodes.IRETURN);
+      value.visitMaxs(1, 0);
+      value.visitEnd();
+      writer.visitEnd();
+    });
+    Path apiMetadata = tempDir.resolve("api-provider-mcmod.info");
+    Files.writeString(apiMetadata,
+        "[{\"modid\":\"apiprovider\",\"name\":\"API Provider\","
+            + "\"version\":\"1.0\"}]", StandardCharsets.UTF_8);
+    writeJar(api, Map.of(
+        "sample/ApiProvider.class", providerClass,
+        "mcmod.info", apiMetadata));
+
+    Path mod = tempDir.resolve("dependent-mod-pilot.jar");
+    Path modClass = compileClass(writer -> {
+      writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "sample/UsesApi", null,
+          "java/lang/Object", null);
+      AnnotationVisitor annotation = writer.visitAnnotation(
+          "Lnet/minecraftforge/fml/common/Mod;", true);
+      annotation.visit("modid", "usesapi");
+      annotation.visit("dependencies", "required-after:apiprovider");
+      annotation.visitEnd();
+      MethodVisitor constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V",
+          null, null);
+      constructor.visitCode();
+      constructor.visitVarInsn(Opcodes.ALOAD, 0);
+      constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>",
+          "()V", false);
+      constructor.visitMethodInsn(Opcodes.INVOKESTATIC, "sample/ApiProvider", "value",
+          "()I", false);
+      constructor.visitInsn(Opcodes.POP);
+      constructor.visitInsn(Opcodes.RETURN);
+      constructor.visitMaxs(1, 1);
+      constructor.visitEnd();
+      writer.visitEnd();
+    });
+    writeJar(mod, Map.of("sample/UsesApi.class", modClass));
+
+    Path output = tempDir.resolve("api-provider-pilot-loader");
+    ByteArrayOutputStream logBytes = new ByteArrayOutputStream();
+    int code;
+    try (PrintStream out = new PrintStream(logBytes, true, StandardCharsets.UTF_8);
+         PrintStream err = new PrintStream(logBytes, true, StandardCharsets.UTF_8)) {
+      code = LoaderCommand.run(new String[] {
+          "--input", mod.toString(), "--library", api.toString(),
+          "--output", output.toString()
+      }, out, err);
+    }
+    String log = logBytes.toString(StandardCharsets.UTF_8);
+    assertEquals(0, code, log);
+    assertTrue(log.contains("API_PROVIDER=1"), log);
+    assertTrue(log.contains("MOD=1"), log);
+    assertTrue(Files.isRegularFile(output.resolve("sample/ApiProvider.translated.js")), log);
+    String index = Files.readString(output.resolve("mod-index.js"));
+    assertTrue(index.contains("sample.ApiProvider"), index);
+    assertTrue(index.contains("sample.UsesApi"), index);
+    String plan = Files.readString(output.resolve("loader-plan.json"));
+    assertTrue(plan.contains("\"classification\": \"API_PROVIDER\""), plan);
+    String lifecycle = Files.readString(output.resolve("forge-lifecycle-plan.json"));
+    assertTrue(lifecycle.contains("\"modId\": \"usesapi\""), lifecycle);
+    assertFalse(lifecycle.contains("Required dependency missing"), lifecycle);
+  }
+
+  @Test
+  void libraryDirectoryIndexesModIdsFromAnnotationsWithoutMetadata() throws Exception {
+    Path provider = tempDir.resolve("annotation-provider.jar");
+    Path providerClass = compileClass(writer -> {
+      writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "sample/AnnotationProvider", null,
+          "java/lang/Object", null);
+      AnnotationVisitor annotation = writer.visitAnnotation(
+          "Lnet/minecraftforge/fml/common/Mod;", true);
+      annotation.visit("modid", "annotationprovider");
+      annotation.visitEnd();
+      writer.visitEnd();
+    });
+    writeJar(provider, Map.of("sample/AnnotationProvider.class", providerClass));
+
+    Path mod = tempDir.resolve("annotation-dependent.jar");
+    Path modClass = compileClass(writer -> {
+      writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "sample/AnnotationDependent", null,
+          "java/lang/Object", null);
+      AnnotationVisitor annotation = writer.visitAnnotation(
+          "Lnet/minecraftforge/fml/common/Mod;", true);
+      annotation.visit("modid", "annotationdependent");
+      annotation.visit("dependencies",
+          "required-after:annotationprovider;optional:annotationoptional");
+      annotation.visitEnd();
+      writer.visitEnd();
+    });
+    writeJar(mod, Map.of("sample/AnnotationDependent.class", modClass));
+
+    Path optional = tempDir.resolve("annotation-optional.jar");
+    Path optionalClass = compileClass(writer -> {
+      writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "sample/AnnotationOptional", null,
+          "java/lang/Object", null);
+      AnnotationVisitor annotation = writer.visitAnnotation(
+          "Lnet/minecraftforge/fml/common/Mod;", true);
+      annotation.visit("modid", "annotationoptional");
+      annotation.visitEnd();
+      writer.visitEnd();
+    });
+    writeJar(optional, Map.of("sample/AnnotationOptional.class", optionalClass));
+
+    Path directory = tempDir.resolve("annotation-libraries");
+    Files.createDirectories(directory);
+    Files.copy(provider, directory.resolve(provider.getFileName()));
+    Files.copy(optional, directory.resolve(optional.getFileName()));
+    Path output = tempDir.resolve("annotation-loader");
+    ByteArrayOutputStream logBytes = new ByteArrayOutputStream();
+    int code;
+    try (PrintStream out = new PrintStream(logBytes, true, StandardCharsets.UTF_8);
+         PrintStream err = new PrintStream(logBytes, true, StandardCharsets.UTF_8)) {
+      code = LoaderCommand.run(new String[] {
+          "--input", mod.toString(), "--library-dir", directory.toString(),
+          "--output", output.toString()
+      }, out, err);
+    }
+    String log = logBytes.toString(StandardCharsets.UTF_8);
+    assertEquals(0, code, log);
+    assertTrue(log.contains("Resolved libraries: 1"), log);
+    String plan = Files.readString(output.resolve("loader-plan.json"));
+    assertTrue(plan.contains(directory.resolve(provider.getFileName()).toString()), plan);
+    assertFalse(plan.contains(optional.getFileName().toString()), plan);
+    String lifecycle = Files.readString(output.resolve("forge-lifecycle-plan.json"));
+    assertTrue(lifecycle.contains("\"loadOrder\": \"annotationdependent\""), lifecycle);
+    assertFalse(lifecycle.contains("\"modId\": \"annotationprovider\""), lifecycle);
+  }
+
+  private Path compileClass(java.util.function.Consumer<ClassWriter> build) {
+    ClassWriter writer = new ClassWriter(0);
+    build.accept(writer);
+    Path classFile = tempDir.resolve("compiled-" + System.nanoTime() + ".class");
+    try {
+      Files.write(classFile, writer.toByteArray());
+      return classFile;
+    } catch (Exception error) {
+      throw new AssertionError(error);
+    }
+  }
+
+  private void writeJar(Path jar, Map<String, Path> entries) throws Exception {
+    Manifest manifest = new Manifest();
+    manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+    try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+      for (Map.Entry<String, Path> entry : entries.entrySet()) {
+        output.putNextEntry(new java.util.jar.JarEntry(entry.getKey()));
+        Files.copy(entry.getValue(), output);
+        output.closeEntry();
+      }
+    }
   }
 
   @Test
@@ -298,6 +472,38 @@ class ForgeLoaderTest {
       // Manifest-only dependency JAR.
     }
     return jar;
+  }
+
+  @Test
+  void resolvesRequiredDependencyClosureFromLibraryDirectory() throws Exception {
+    Path input = Path.of("test-mods/FancyMenu.jar");
+    Path dependency = Path.of("library-mods/Konkrete.jar");
+    org.junit.jupiter.api.Assumptions.assumeTrue(
+        Files.isRegularFile(input) && Files.isRegularFile(dependency),
+        "FancyMenu/Konkrete fixtures are missing");
+    Path libraryDirectory = tempDir.resolve("library-dir");
+    Files.createDirectories(libraryDirectory);
+    Files.copy(dependency, libraryDirectory.resolve("Konkrete.jar"));
+    Path output = tempDir.resolve("closure-loader");
+    ByteArrayOutputStream logBytes = new ByteArrayOutputStream();
+    int code;
+    try (PrintStream out = new PrintStream(logBytes, true, StandardCharsets.UTF_8);
+         PrintStream err = new PrintStream(logBytes, true, StandardCharsets.UTF_8)) {
+      code = LoaderCommand.run(new String[] {
+          "--input", input.toString(), "--library-dir", libraryDirectory.toString(),
+          "--output", output.toString()
+      }, out, err);
+    }
+    String log = logBytes.toString(StandardCharsets.UTF_8);
+    assertEquals(2, code, log);
+    assertTrue(log.contains("Resolved libraries: 1"), log);
+    assertTrue(log.contains("Konkrete.jar"), log);
+    String plan = Files.readString(output.resolve("loader-plan.json"));
+    assertTrue(plan.contains("\"resolvedLibraries\""), plan);
+    assertTrue(plan.contains("Konkrete.jar"), plan);
+    String lifecycle = Files.readString(output.resolve("forge-lifecycle-plan.json"));
+    assertFalse(lifecycle.contains("Required dependency missing: fancymenu -> konkrete"),
+        lifecycle);
   }
 
   @Test

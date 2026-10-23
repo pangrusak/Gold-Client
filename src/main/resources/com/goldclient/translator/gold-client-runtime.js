@@ -4217,14 +4217,45 @@ export const GoldClientRuntime = Object.freeze({
     }
     return this.findStaticFieldOwner(constructor.__goldSuperName, fieldName, visited);
   },
+  platformBindingError(error) {
+    if (error?.name !== "GoldClientForgeBindingError") return null;
+    const match = /^\[GoldForge ([^\]]+)\] ([\s\S]*)$/.exec(String(error.message ?? ""));
+    return { code: match?.[1] ?? "", detail: match?.[2] ?? "" };
+  },
   rethrowMissingPlatformMember(error, className, fieldName) {
-    if (error?.name !== "GoldClientForgeBindingError") throw error;
-    const message = String(error.message ?? "");
-    if (message.includes("unknown-class")) {
+    const binding = this.platformBindingError(error);
+    if (!binding) throw error;
+    if (binding.code === "unknown-class") {
       throw this.javaException("java.lang.NoClassDefFoundError", className);
     }
-    if (message.includes("missing-static-field")) {
+    if (binding.code === "missing-static-field"
+        || binding.code === "missing-native-field"
+        || binding.code === "missing-native-member") {
       throw this.javaException("java.lang.NoSuchFieldError", className + "." + fieldName);
+    }
+    throw error;
+  },
+  rethrowPlatformConstruction(error, className, arity) {
+    const binding = this.platformBindingError(error);
+    if (!binding) throw error;
+    if (binding.code === "unknown-class") {
+      throw this.javaException("java.lang.NoClassDefFoundError", className);
+    }
+    if (/^(?:missing-constructor|ambiguous-constructor|missing-platform-super-constructor)/.test(binding.code)) {
+      throw this.javaException("java.lang.NoSuchMethodError",
+          className + "/" + (Number.isInteger(arity) ? arity : "?"));
+    }
+    throw error;
+  },
+  rethrowPlatformInvocation(error, className, method, arity) {
+    const binding = this.platformBindingError(error);
+    if (!binding) throw error;
+    if (binding.code === "unknown-class") {
+      throw this.javaException("java.lang.NoClassDefFoundError", className);
+    }
+    if (/^(?:missing-static-method|missing-instance-method|instance-method-without-receiver)$/.test(binding.code)) {
+      throw this.javaException("java.lang.NoSuchMethodError",
+          className + "." + method + "/" + (Number.isInteger(arity) ? arity : "?"));
     }
     throw error;
   },
@@ -4331,7 +4362,11 @@ export const GoldClientRuntime = Object.freeze({
     if (!target || typeof target.call !== "function") {
       return this.unsupported("missing-platform-method-binding", owner + "." + method);
     }
-    return target.call(owner, method, args);
+    try {
+      return target.call(owner, method, args);
+    } catch (error) {
+      this.rethrowPlatformInvocation(error, owner, method, args.length);
+    }
   },
   resolveClass(name) {
     return this.classes.get(name) ?? null;
@@ -4368,7 +4403,13 @@ export const GoldClientRuntime = Object.freeze({
       if (service) {
         const bindings = globalThis.window?.goldClientForgeBindings ?? globalThis.goldClientForgeBindings;
         const target = bindings?.[service];
-        if (typeof target?.construct === "function") return target.construct(name, args);
+        if (typeof target?.construct === "function") {
+          try {
+            return target.construct(name, args);
+          } catch (error) {
+            this.rethrowPlatformConstruction(error, name, args.length);
+          }
+        }
         return this.unsupported("missing-platform-constructor-binding", name);
       }
       return this.unsupported("missing-class-adapter", name);
@@ -5737,7 +5778,11 @@ export const GoldClientRuntime = Object.freeze({
         const bindings = globalThis.window?.goldClientForgeBindings ?? globalThis.goldClientForgeBindings;
         const target = bindings?.[service];
         if (typeof target?.construct === "function") {
-          return target.construct(className, args, receiver);
+          try {
+            return target.construct(className, args, receiver);
+          } catch (error) {
+            this.rethrowPlatformConstruction(error, className, args.length);
+          }
         }
         return this.unsupported("missing-platform-super-constructor-binding", className);
       }

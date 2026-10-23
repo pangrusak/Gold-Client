@@ -135,11 +135,24 @@ public final class ForgeLifecycleExporter {
   public LifecycleReport export(List<ClassModel> classes, Map<String, String> metadataModIds,
       Path outputDirectory, List<String> transformationBlockers,
       Set<String> excludedLifecycleClasses) throws IOException {
+    return export(classes, metadataModIds, outputDirectory, transformationBlockers,
+        excludedLifecycleClasses, Set.of());
+  }
+
+  /**
+   * Exports lifecycle metadata while also recording mod IDs supplied by
+   * library JARs. A supplied ID satisfies required dependencies but never
+   * creates a lifecycle entry or ordering node of its own.
+   */
+  public LifecycleReport export(List<ClassModel> classes, Map<String, String> metadataModIds,
+      Path outputDirectory, List<String> transformationBlockers,
+      Set<String> excludedLifecycleClasses, Set<String> suppliedModIds) throws IOException {
     if (classes == null || outputDirectory == null) {
       throw new IllegalArgumentException("Classes and output directory must not be null.");
     }
     Map<String, String> metadataIds = metadataModIds == null ? Map.of() : metadataModIds;
     Set<String> excluded = excludedLifecycleClasses == null ? Set.of() : excludedLifecycleClasses;
+    Set<String> supplied = suppliedModIds == null ? Set.of() : Set.copyOf(suppliedModIds);
     List<String> blockers = new ArrayList<>();
     Map<String, ClassModel> classesByName = indexClasses(classes, blockers);
     List<ModEntry> entries = new ArrayList<>();
@@ -203,10 +216,10 @@ public final class ForgeLifecycleExporter {
           + " class(es) implement IFMLLoadingPlugin or IClassTransformer: " + listed);
     }
 
-    List<ModEntry> ordered = orderMods(entries, blockers);
-    Set<String> knownIds = new LinkedHashSet<>();
+    List<ModEntry> ordered = orderMods(entries, blockers, supplied);
+    Set<String> knownIds = new LinkedHashSet<>(supplied);
     for (ModEntry mod : entries) knownIds.add(mod.modId());
-    validateInstanceInjections(entries, knownIds, classesByName, blockers);
+    validateInstanceInjections(entries, knownIds, supplied, classesByName, blockers);
 
     for (ClassModel clazz : classes.stream().sorted(Comparator.comparing(ClassModel::name)).toList()) {
       if (excluded.contains(clazz.name())) continue;
@@ -253,7 +266,7 @@ public final class ForgeLifecycleExporter {
             mod.handlers(), instance));
       }
     }
-    ordered = orderWithoutDuplicatingBlockers(entries, blockers);
+    ordered = orderWithoutDuplicatingBlockers(entries, blockers, supplied);
 
     int handlerCount = ordered.stream().flatMap(mod -> mod.handlers().values().stream())
         .mapToInt(List::size).sum();
@@ -490,7 +503,7 @@ public final class ForgeLifecycleExporter {
   }
 
   private static void validateInstanceInjections(List<ModEntry> mods, Set<String> knownIds,
-      Map<String, ClassModel> classesByName, List<String> blockers) {
+      Set<String> suppliedModIds, Map<String, ClassModel> classesByName, List<String> blockers) {
     Map<String, ModEntry> byId = new HashMap<>();
     for (ModEntry mod : mods) byId.put(mod.modId(), mod);
     for (ModEntry mod : mods) {
@@ -498,8 +511,14 @@ public final class ForgeLifecycleExporter {
         if (!"instance".equals(field.kind())) continue;
         ModEntry target = byId.get(field.targetModId());
         if (target == null) {
-          blockers.add("@Mod.Instance target is not present in this bundle: " + mod.modId()
-              + "." + field.name() + " -> " + field.targetModId());
+          if (suppliedModIds.contains(field.targetModId())) {
+            blockers.add("@Mod.Instance target is supplied as a library without a lifecycle "
+                + "instance: " + mod.modId() + "." + field.name()
+                + " -> " + field.targetModId());
+          } else {
+            blockers.add("@Mod.Instance target is not present in this bundle: " + mod.modId()
+                + "." + field.name() + " -> " + field.targetModId());
+          }
           continue;
         }
         String declared = field.descriptor().substring(1, field.descriptor().length() - 1);
@@ -511,13 +530,14 @@ public final class ForgeLifecycleExporter {
     }
   }
 
-  private static List<ModEntry> orderMods(List<ModEntry> entries, List<String> blockers) {
+  private static List<ModEntry> orderMods(List<ModEntry> entries, List<String> blockers,
+      Set<String> suppliedModIds) {
     ForgeDependencyGraph.Plan plan;
     try {
       List<ForgeDependencyGraph.Mod> mods = entries.stream()
           .map(mod -> new ForgeDependencyGraph.Mod(mod.modId(), mod.version(), mod.dependencies()))
           .toList();
-      plan = ForgeDependencyGraph.plan(mods);
+      plan = ForgeDependencyGraph.plan(mods, suppliedModIds);
     } catch (IllegalArgumentException error) {
       blockers.add("Forge dependency metadata is invalid: " + error.getMessage());
       return entries;
@@ -530,9 +550,9 @@ public final class ForgeLifecycleExporter {
   }
 
   private static List<ModEntry> orderWithoutDuplicatingBlockers(List<ModEntry> entries,
-      List<String> blockers) {
+      List<String> blockers, Set<String> suppliedModIds) {
     List<String> ignored = new ArrayList<>();
-    return orderMods(entries, ignored);
+    return orderMods(entries, ignored, suppliedModIds);
   }
 
   private static List<ModEntry> replaceMod(List<ModEntry> entries, String modId, ModEntry value) {
