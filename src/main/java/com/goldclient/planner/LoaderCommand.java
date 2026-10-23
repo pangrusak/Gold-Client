@@ -4,6 +4,7 @@ import com.goldclient.analyzer.ModAnalysis;
 import com.goldclient.analyzer.ModAnalyzer;
 import com.goldclient.model.ClassModel;
 import com.goldclient.translator.ForgeLifecycleExporter;
+import com.goldclient.translator.ForgeTransformationInspector;
 import com.goldclient.translator.JavaScriptBundleExporter;
 import com.goldclient.translator.JavaScriptModTranslationExporter;
 import com.google.gson.GsonBuilder;
@@ -105,12 +106,31 @@ public final class LoaderCommand {
       Map<String, String> metadataModIds = new LinkedHashMap<>();
       List<InputRecord> records = new ArrayList<>();
       Set<String> libraryClasses = new LinkedHashSet<>();
+      List<String> transformerLibraries = new ArrayList<>();
+      List<String> transformationBlockers = new ArrayList<>();
+      Map<String, Integer> classifications = new LinkedHashMap<>();
+      classifications.put("MOD", 0);
+      classifications.put("API_PROVIDER", 0);
+      classifications.put("TRANSFORMER", 0);
       for (Path input : allInputs) {
         boolean library = libraryPaths.contains(input);
         ModAnalysis analysis = new ModAnalyzer().analyze(input);
         int methods = analysis.totalMethods();
         int fields = analysis.totalFields();
         String metadataModId = analysis.metadata().getModId();
+        ForgeTransformationInspector.Report transformations =
+            ForgeTransformationInspector.inspect(List.of(input));
+        List<String> surfaces = transformationSurfaces(transformations);
+        boolean transformer = !surfaces.isEmpty();
+        boolean modEntrypoint = metadataModId != null && !metadataModId.isBlank()
+            && !"Unknown".equals(metadataModId);
+        String classification = transformer ? "TRANSFORMER"
+            : modEntrypoint ? "MOD" : "API_PROVIDER";
+        classifications.merge(classification, 1, Integer::sum);
+        if (transformer) {
+          transformationBlockers.addAll(transformations.blockers());
+          if (library) transformerLibraries.add(input.toString());
+        }
         for (ClassModel clazz : analysis.classes()) {
           Path previous = classOwners.putIfAbsent(clazz.name(), input);
           if (previous != null) {
@@ -125,7 +145,8 @@ public final class LoaderCommand {
           }
         }
         records.add(new InputRecord(input.toString(), TranslationPipeline.sha256(input),
-            analysis.totalClasses(), methods, fields, library ? "library" : "mod"));
+            analysis.totalClasses(), methods, fields, library ? "library" : "mod",
+            classification, surfaces));
       }
 
       Path destination = output;
@@ -148,11 +169,18 @@ public final class LoaderCommand {
           modIds.add(mod.getAsJsonObject().get("modId").getAsString());
         }
       }
+      Set<String> blockerSet = new LinkedHashSet<>();
       JsonArray blockers = lifecycle.getAsJsonArray("blockers");
-      List<String> blockerList = new ArrayList<>();
       if (blockers != null) {
-        for (JsonElement blocker : blockers) blockerList.add(blocker.getAsString());
+        for (JsonElement blocker : blockers) blockerSet.add(blocker.getAsString());
       }
+      blockerSet.addAll(transformationBlockers);
+      for (String library : transformerLibraries) {
+        blockerSet.add("Library " + library + " is a transformer library; Mixin, coremod, "
+            + "access-transformer, and ASM transformation are not implemented by the "
+            + "JavaScript pipeline.");
+      }
+      List<String> blockerList = new ArrayList<>(blockerSet);
 
       Map<String, Object> report = new LinkedHashMap<>();
       List<String> incompleteMethods = export.methods().stream()
@@ -170,6 +198,8 @@ public final class LoaderCommand {
       report.put("inputCount", inputs.size());
       report.put("libraries", libraries.stream().map(Path::toString).toList());
       report.put("libraryClassCount", libraryClasses.size());
+      report.put("transformerLibraries", transformerLibraries);
+      report.put("classificationCounts", classifications);
       report.put("output", destination.toString());
       report.put("classCount", classes.size());
       report.put("methodCount", export.methodCount());
@@ -201,6 +231,9 @@ public final class LoaderCommand {
       out.println("Gold Client Forge loader build");
       out.println("Inputs: " + inputs.size());
       out.println("Libraries: " + libraries.size());
+      out.println("Classifications: MOD=" + classifications.get("MOD")
+          + ", API_PROVIDER=" + classifications.get("API_PROVIDER")
+          + ", TRANSFORMER=" + classifications.get("TRANSFORMER"));
       out.println("Classes: " + classes.size());
       out.println("Methods inspected: " + export.methodCount());
       out.println("Adapter-required declarations: " + export.adapterRequiredCount());
@@ -247,6 +280,28 @@ public final class LoaderCommand {
         """);
   }
 
+  private static List<String> transformationSurfaces(
+      ForgeTransformationInspector.Report report) {
+    List<String> surfaces = new ArrayList<>();
+    if (!report.mixinConfigs().isEmpty()) {
+      surfaces.add(report.mixinConfigs().size() + " mixin config(s)");
+    }
+    if (!report.accessTransformers().isEmpty()) {
+      int rules = report.accessTransformers().stream()
+          .mapToInt(ForgeTransformationInspector.AccessTransformer::ruleCount).sum();
+      surfaces.add(report.accessTransformers().size() + " access-transformer file(s), "
+          + rules + " rule(s)");
+    }
+    if (!report.coremods().isEmpty()) {
+      surfaces.add(report.coremods().size() + " coremod/loading-plugin declaration(s)");
+    }
+    return List.copyOf(surfaces);
+  }
+
   private record InputRecord(String path, String sha256, int classCount, int methodCount,
-      int fieldCount, String role) {}
+      int fieldCount, String role, String classification, List<String> transformationSurfaces) {
+    InputRecord {
+      transformationSurfaces = List.copyOf(transformationSurfaces);
+    }
+  }
 }

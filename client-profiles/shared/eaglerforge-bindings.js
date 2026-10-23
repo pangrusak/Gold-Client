@@ -2115,6 +2115,8 @@
 
     let tooltipBridgeInstalled = false;
     let languageBridgeState = null;
+    let languageBridgeLocale = null;
+    let languageBridgeSentinel = null;
 
     function rawValue(value) {
         return isProxy(value) ? value.getRef() : value;
@@ -2151,6 +2153,7 @@
             const bus = global.goldClientForgeEventBus;
             if (!bus || typeof bus.post !== "function") return;
             try {
+                ensureLanguageBridge();
                 const result = bus.post(
                     "net.minecraftforge.event.entity.player.ItemTooltipEvent",
                     adaptForgeItemTooltip(data));
@@ -2196,8 +2199,43 @@
      * properties and mirror them into LanguageMap. This is additive: existing
      * keys are preserved and mod keys override only on collision.
      */
+    function liveLocale() {
+        const modApi = api();
+        const mc = modApi.mcinstance;
+        const manager = rawValue(mc?.$mcLanguageManager);
+        let locale = null;
+        try {
+            locale = rawValue(
+                modApi.reflect?.getClassById?.("net.minecraft.client.resources.LanguageManager")
+                    ?.staticVariables?.CURRENT_LOCALE ?? null);
+        } catch (error) {
+            locale = null;
+        }
+        if (!locale) {
+            const getLocale = manager?.$getCurrentLanguage ?? manager?.getCurrentLanguage;
+            locale = rawValue(typeof getLocale === "function"
+                ? getLocale.call(manager) : null);
+        }
+        let code = "en_us";
+        const rawCode = manager?.$currentLanguage ?? manager?.$languageCode;
+        if (typeof rawCode === "string") {
+            code = rawCode;
+        } else if (rawCode && typeof rawCode !== "symbol") {
+            try {
+                const text = String(rawCode);
+                if (text) code = text;
+            } catch (error) {
+                code = "en_us";
+            }
+        }
+        return {locale, code};
+    }
+
     function injectModLanguages() {
-        if (languageBridgeState !== null) return languageBridgeState;
+        if (languageBridgeState?.status === "applied"
+            || languageBridgeState?.status === "no-mod-language-files") {
+            return languageBridgeState;
+        }
         const state = {
             status: "skipped",
             language: null,
@@ -2224,34 +2262,9 @@
         }
 
         const modApi = api();
-        const mc = modApi.mcinstance;
-        const manager = rawValue(mc?.$mcLanguageManager);
-        let locale = null;
-        try {
-            locale = rawValue(
-                modApi.reflect?.getClassById?.("net.minecraft.client.resources.LanguageManager")
-                    ?.staticVariables?.CURRENT_LOCALE ?? null);
-        } catch (error) {
-            locale = null;
-        }
-        if (!locale) {
-            const getLocale = manager?.$getCurrentLanguage ?? manager?.getCurrentLanguage;
-            locale = rawValue(typeof getLocale === "function"
-                ? getLocale.call(manager) : null);
-        }
-        let localeCode = "en_us";
-        const rawCode = manager?.$currentLanguage ?? manager?.$languageCode;
-        if (typeof rawCode === "string") {
-            localeCode = rawCode;
-        } else if (rawCode && typeof rawCode !== "symbol") {
-            try {
-                const text = String(rawCode);
-                if (text) localeCode = text;
-            } catch (error) {
-                localeCode = "en_us";
-            }
-        }
-        const requested = normalizeLanguageCode(localeCode);
+        const live = liveLocale();
+        const locale = live.locale;
+        const requested = normalizeLanguageCode(live.code);
         state.language = requested;
         const selected = [];
         for (const code of ["en_US", requested]) {
@@ -2294,37 +2307,51 @@
         state.totalKeys = typeof size === "function"
             ? Number(size.call(properties)) : merged.size;
         state.status = "applied";
+        languageBridgeLocale = locale;
+        languageBridgeSentinel = merged.keys().next().value ?? null;
         languageBridgeState = Object.freeze(state);
         global.goldClientLanguageBridge = languageBridgeState;
         return languageBridgeState;
     }
 
+    function ensureLanguageBridge() {
+        if (languageBridgeState?.status === "applied") {
+            const live = liveLocale();
+            const properties = rawValue(live.locale?.$properties3 ?? live.locale?.properties3);
+            const contains = properties?.$containsKey ?? properties?.containsKey;
+            const stillPresent = !languageBridgeSentinel || typeof contains !== "function"
+                || !!contains.call(properties, api().util.str(languageBridgeSentinel));
+            if (stillPresent && (!live.locale || live.locale === languageBridgeLocale)) {
+                return languageBridgeState;
+            }
+            // The client replaces or refills its Locale on resource reload;
+            // reapply the mod keys to the live translation table.
+            languageBridgeState = null;
+        }
+        if (languageBridgeState?.status === "no-mod-language-files") {
+            return languageBridgeState;
+        }
+        try {
+            return injectModLanguages();
+        } catch (error) {
+            languageBridgeState = Object.freeze({
+                status: "failed",
+                error: String(error?.message ?? error)
+            });
+            global.goldClientLanguageBridge = languageBridgeState;
+            console.error("[GoldForge mod-language-bridge] failed", error);
+            return languageBridgeState;
+        }
+    }
+
     function prepareRuntimeBridges() {
         installTooltipEventBridge();
         const modApi = api();
-        try {
-            injectModLanguages();
-            return;
-        } catch (error) {
-            // The game settings object exists before the locale tables are
-            // initialized. Defer rather than aborting mod startup.
-        }
-        global.goldClientLanguageBridge = Object.freeze({
-            status: "pending",
-            error: null
-        });
+        if (ensureLanguageBridge().status === "applied") return;
         if (typeof modApi.addEventListener === "function") {
-            modApi.addEventListener("load", () => {
-                try {
-                    injectModLanguages();
-                } catch (error) {
-                    global.goldClientLanguageBridge = Object.freeze({
-                        status: "failed",
-                        error: String(error?.message ?? error)
-                    });
-                    console.error("[GoldForge mod-language-bridge] failed", error);
-                }
-            });
+            // The client creates its first Locale table after this callback
+            // fires; the tooltip listener also retries lazily.
+            modApi.addEventListener("load", ensureLanguageBridge);
         }
     }
 

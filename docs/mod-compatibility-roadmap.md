@@ -60,6 +60,10 @@ declared event subscribers from original annotations. `--library` inputs keep
 their classes/resources in the bundle but exclude their own `@Mod` and
 `@Mod.EventBusSubscriber` declarations from automatic lifecycle loading; the
 plan records each input's `mod`/`library` role and the library class count.
+Inputs are also classified as `MOD`, `API_PROVIDER`, or `TRANSFORMER` using
+mod metadata and the transformation inspector. Transformer libraries remain
+explicit blockers; their classes are bundled for diagnostics but their Mixin,
+coremod, access-transformer, or ASM effects are never claimed to run.
 
 ### Single-file injection output
 
@@ -116,6 +120,13 @@ The profile injector prefers this file when present and emits a classic
   definitions across inputs, and writes one merged bundle plus a report.
 - [x] AppleSkin translates to 22 classes and one `appleskin` mod entry with a
   ready lifecycle plan.
+- [x] EnchantmentDescriptions starts against the real injected client
+  (`GoldClientForge.status().started === true`, empty `startError`). Its 41
+  language keys are injected after the live `Locale` is replaced, and a real
+  `gold:itemtooltip` dispatch adds `Press §dSneak§7 for enchantment
+  descriptions.` to the tooltip list without listener failures. This covers the
+  listener, event bridge, live language table, and `I18n` path for the
+  non-sneak branch, not rendered GUI tooltips or the sneak-expanded branch.
 - [x] AppleSkin plus JEI translates to 393 classes and two mod entries
   (`jei`, `appleskin`) with dependency ordering and a ready lifecycle plan.
   All 2,287 methods are complete for the represented IR

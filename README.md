@@ -124,8 +124,13 @@ phase-major FML lifecycle dispatcher (including `FMLConstructionEvent` before
 `before`/`after` clauses constrain load order. The generated
 `loader-plan.json` records inputs, hashes, roles, counts, library class counts,
 load order, blockers, and whether the lifecycle plan is ready for a real host.
-A library is not proof that its code is API-compatible: Mixin/coremod/AT
-surfaces in any bundled JAR remain explicit blockers.
+Each input is classified while building: `MOD` (has Forge mod metadata),
+`API_PROVIDER` (no mod entrypoint or transformation surface), or `TRANSFORMER`
+(Mixin configs, access-transformers, coremod/loading plugins, or other
+transformation surfaces). `classificationCounts` and `transformerLibraries`
+make that report explicit. A library is not proof that its code is
+API-compatible: transformer libraries are listed as blockers, and Mixin/coremod/
+AT surfaces in any bundled JAR remain explicit blockers.
 
 `--single-file` additionally writes `gold-client-forge.js`, a classic-script
 bundle that inlines every generated module plus the JAR resources under
@@ -176,6 +181,17 @@ This is real lifecycle execution evidence for the translated AppleSkin class,
 not proof that its HUD/tooltip rendering, gameplay effects, or event handlers
 work once the game starts. The adapter remains strict: a missing platform API
 throws instead of returning a no-op.
+
+A separate single-file EnchantmentDescriptions candidate was started in
+headless Chromium with SwiftShader WebGL2 after a trusted mouse press:
+`GoldClientForge.status().started` was `true` with an empty `startError`, the
+language bridge applied all 41 `assets/enchdesc/lang/en_US.lang` keys to the
+live `Locale` after the client replaced its resource table, and dispatching the
+real `gold:itemtooltip` hook with a native enchanted book produced the list
+entry `Press §dSneak§7 for enchantment descriptions.` with no listener
+failures. That verifies the listener registration, event bridge, live language
+lookup, and `I18n` path for the non-sneak branch; it does not prove the rendered
+GUI tooltip or the sneak-expanded description branch.
 
 `NetworkRegistry.INSTANCE.newSimpleChannel(...)` and packet-class registration
 are kept virtual because that registration is metadata. Any actual packet send

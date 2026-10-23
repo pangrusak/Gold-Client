@@ -542,12 +542,15 @@ test("starts the injected bundle once the client is ready", () => {
     const languageKeys = new Map();
     const properties = {
         $put(key, value) { languageKeys.set(context.ModAPI.util.ustr(key), context.ModAPI.util.ustr(value)); },
+        $containsKey(key) { return languageKeys.has(context.ModAPI.util.ustr(key)); },
+        $get(key) { return languageKeys.get(context.ModAPI.util.ustr(key)) ?? null; },
         $size() { return languageKeys.size; }
     };
+    const locale = { $languageCode: "en_US", $properties3: properties };
     context.ModAPI.mcinstance = {
         $gameSettings: { $language: "en_us" },
         $mcLanguageManager: {
-            $getCurrentLanguage: () => ({ $languageCode: "en_US", $properties3: properties })
+            $getCurrentLanguage: () => locale
         }
     };
     context.ModAPI.settings = { $language: "en_us" };
@@ -586,6 +589,21 @@ test("starts the injected bundle once the client is ready", () => {
     assert.equal(tooltip.event.getEntityPlayer().getRef(), player);
     assert.equal(tooltip.event.getToolTip().getRef(), list);
     assert.equal(tooltip.event.isAdvanced(), true);
+
+    const reloadedKeys = new Map();
+    locale.$properties3 = {
+        $put(key, value) {
+            reloadedKeys.set(context.ModAPI.util.ustr(key), context.ModAPI.util.ustr(value));
+        },
+        $containsKey(key) { return reloadedKeys.has(context.ModAPI.util.ustr(key)); },
+        $get(key) { return reloadedKeys.get(context.ModAPI.util.ustr(key)) ?? null; },
+        $size() { return reloadedKeys.size; }
+    };
+    context.ModAPI.events.listeners["gold:itemtooltip"][0]({
+        itemStack: stack, player, toolTip: list, advanced: true
+    });
+    assert.equal(reloadedKeys.get("tooltip.demo"), "Demo tooltip",
+        "mod language keys must return after the client replaces its Locale table");
 });
 
 test("keeps Forge channel registration virtual and rejects real network sends", () => {

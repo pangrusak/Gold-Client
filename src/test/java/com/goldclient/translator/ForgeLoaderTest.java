@@ -17,6 +17,9 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.jar.Attributes;
+import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.Opcodes;
@@ -230,6 +233,7 @@ class ForgeLoaderTest {
     assertTrue(log.contains("Libraries: 1"), log);
     String plan = Files.readString(output.resolve("loader-plan.json"));
     assertTrue(plan.contains("\"role\": \"library\""), plan);
+    assertTrue(plan.contains("\"classification\": \"MOD\""), plan);
     assertTrue(plan.contains("\"libraryClassCount\": 3"), plan);
     assertTrue(plan.contains("\"mods\": [\n    \"appleskin\"\n  ]"), plan);
     assertFalse(plan.contains("enchdesc"), plan);
@@ -237,6 +241,63 @@ class ForgeLoaderTest {
         output.resolve("net/darkhax/enchdesc/client/TooltipHandler.translated.js")));
     String lifecycle = Files.readString(output.resolve("forge-lifecycle-plan.json"));
     assertFalse(lifecycle.contains("enchdesc"), lifecycle);
+  }
+
+  @Test
+  void classifiesApiProviderAndTransformerLibrariesAndBlocksTransformation()
+      throws Exception {
+    Path input = Path.of("test-mods/appleskin1.12.2.jar");
+    org.junit.jupiter.api.Assumptions.assumeTrue(Files.isRegularFile(input),
+        "AppleSkin fixture is missing");
+    Path apiLibrary = emptyJar("api-provider.jar", Map.of());
+    Path apiOutput = tempDir.resolve("api-provider-loader");
+    ByteArrayOutputStream apiLog = new ByteArrayOutputStream();
+    int apiCode;
+    try (PrintStream out = new PrintStream(apiLog, true, StandardCharsets.UTF_8);
+         PrintStream err = new PrintStream(apiLog, true, StandardCharsets.UTF_8)) {
+      apiCode = LoaderCommand.run(new String[] {
+          "--input", input.toString(), "--library", apiLibrary.toString(),
+          "--output", apiOutput.toString()
+      }, out, err);
+    }
+    assertEquals(0, apiCode, apiLog.toString(StandardCharsets.UTF_8));
+    String apiPlan = Files.readString(apiOutput.resolve("loader-plan.json"));
+    assertTrue(apiPlan.contains("\"classification\": \"API_PROVIDER\""), apiPlan);
+    assertTrue(apiPlan.contains("\"API_PROVIDER\": 1"), apiPlan);
+
+    Path transformerLibrary = emptyJar("transformer.jar",
+        Map.of("FMLCorePlugin", "sample.TransformerPlugin"));
+    Path transformerOutput = tempDir.resolve("transformer-loader");
+    ByteArrayOutputStream transformerLog = new ByteArrayOutputStream();
+    int transformerCode;
+    try (PrintStream out = new PrintStream(transformerLog, true, StandardCharsets.UTF_8);
+         PrintStream err = new PrintStream(transformerLog, true, StandardCharsets.UTF_8)) {
+      transformerCode = LoaderCommand.run(new String[] {
+          "--input", input.toString(), "--library", transformerLibrary.toString(),
+          "--output", transformerOutput.toString()
+      }, out, err);
+    }
+    String log = transformerLog.toString(StandardCharsets.UTF_8);
+    assertEquals(2, transformerCode, log);
+    assertTrue(log.contains("TRANSFORMER=1"), log);
+    assertTrue(log.contains("is a transformer library"), log);
+    String plan = Files.readString(transformerOutput.resolve("loader-plan.json"));
+    assertTrue(plan.contains("\"classification\": \"TRANSFORMER\""), plan);
+    assertTrue(plan.contains("\"transformerLibraries\""), plan);
+    assertTrue(plan.contains("is a transformer library"), plan);
+  }
+
+  private Path emptyJar(String name, Map<String, String> manifestEntries) throws Exception {
+    Manifest manifest = new Manifest();
+    manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+    for (Map.Entry<String, String> entry : manifestEntries.entrySet()) {
+      manifest.getMainAttributes().putValue(entry.getKey(), entry.getValue());
+    }
+    Path jar = tempDir.resolve(name);
+    try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+      // Manifest-only dependency JAR.
+    }
+    return jar;
   }
 
   @Test
@@ -476,6 +537,9 @@ class ForgeLoaderTest {
     assertEquals(0, node.exitValue(), nodeOutput);
     assertEquals("forge-loader-ok", nodeOutput);
 
+    Path embeddedResource = output.resolve("resources/assets/loader-test/probe.txt");
+    Files.createDirectories(embeddedResource.getParent());
+    Files.writeString(embeddedResource, "embedded-resource", StandardCharsets.UTF_8);
     Path singleFile = output.resolve(JavaScriptBundleExporter.DEFAULT_FILE_NAME);
     JavaScriptBundleExporter.BundleSummary summary =
         JavaScriptBundleExporter.write(output, singleFile, true);
@@ -506,6 +570,10 @@ class ForgeLoaderTest {
             || !sandbox.GoldClientResources.files
             || Object.keys(sandbox.GoldClientResources.files).length === 0) {
           throw new Error("single-file bundle did not embed resources");
+        }
+        const embedded = sandbox.GoldClientResources.files["assets/loader-test/probe.txt"];
+        if (embedded !== Buffer.from("embedded-resource").toString("base64")) {
+          throw new Error("single-file resource content mismatch: " + embedded);
         }
         if (!sandbox.window.goldClientForgeEntrypoint) throw new Error("entrypoint was not installed");
         if (!Array.isArray(bundle.mods) || bundle.mods.length !== 2) {
