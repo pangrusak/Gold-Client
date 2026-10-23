@@ -110,19 +110,26 @@ java -jar target/gold-client-1.jar loader \
   --single-file --compact
 ```
 
-`--input` may be repeated. Duplicate class definitions across inputs are
-rejected. The bundle contains one class registry, merged resources, a
+`--input` may be repeated. `--library <dependency.jar>` repeats an API or
+dependency JAR whose classes and resources are bundled, but whose own `@Mod`
+and `@Mod.EventBusSubscriber` declarations are excluded from automatic
+lifecycle loading. Plain mod inputs still supply the load order. Duplicate
+class definitions across inputs and libraries are rejected. The bundle contains
+one class registry, merged resources, a
 phase-major FML lifecycle dispatcher (including `FMLConstructionEvent` before
 `preInit`), dependency-ordered mod construction, static
 `@Mod.EventBusSubscriber` registration, and runtime interception for
 `MinecraftForge.EVENT_BUS.register(...)` calls made by translated code. Plain
 `required:`/`optional:` dependency clauses are parsed for presence; only
 `before`/`after` clauses constrain load order. The generated
-`loader-plan.json` records inputs, hashes, counts, load order, blockers, and
-whether the lifecycle plan is ready for a real host.
+`loader-plan.json` records inputs, hashes, roles, counts, library class counts,
+load order, blockers, and whether the lifecycle plan is ready for a real host.
+A library is not proof that its code is API-compatible: Mixin/coremod/AT
+surfaces in any bundled JAR remain explicit blockers.
 
 `--single-file` additionally writes `gold-client-forge.js`, a classic-script
-bundle that inlines every generated module and exposes
+bundle that inlines every generated module plus the JAR resources under
+`globalThis.GoldClientResources`, and exposes
 `globalThis.GoldClientForge` (`start`, `stop`, `status`, `mods`, `blockers`,
 `runtime`, `classes`, `getClass`). `--compact` strips full-line comments and
 blank lines from that file. The Eaglercraft profile injector prefers this file

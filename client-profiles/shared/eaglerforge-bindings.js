@@ -293,6 +293,16 @@
                         };
                     }
                 }
+                if (property === "getDisplayName"
+                    && ("$keyDescription" in raw || "keyDescription" in raw)) {
+                    // 1.12.2 KeyBinding.getDisplayName() localizes the stored
+                    // key description. Eaglercraft keeps only the raw field.
+                    return () => {
+                        const description = raw.$keyDescription ?? raw.keyDescription;
+                        return callStatic(
+                            "net.minecraft.client.resources.I18n", "format", [description, undefined]);
+                    };
+                }
                 if (property === "getRegistryName") {
                     return () => {
                         const registryName = nativeRegistryName(raw);
@@ -406,6 +416,17 @@
     }
 
     function nativeRegistryName(raw) {        let lookedUp = false;
+        const nativeClass = classNameOf(raw) ?? raw?.constructor?.name ?? "";
+        if (/(^|[.$])Enchantment$/.test(String(nativeClass))) {
+            const enchantmentName = raw.$name23 ?? raw.name23;
+            if (enchantmentName) {
+                const name = typeof enchantmentName === "string"
+                    ? enchantmentName : api().util.ustr(enchantmentName);
+                return adaptNative(constructNative(
+                    "net.minecraft.util.ResourceLocation",
+                    [api().util.str("minecraft:" + name)]));
+            }
+        }
         for (const owner of ["net.minecraft.item.Item", "net.minecraft.block.Block"]) {
             let entry = null;
             try {
@@ -2090,6 +2111,223 @@
         return receiver;
     }
 
+    // ---- runtime bridges -------------------------------------------------
+
+    let tooltipBridgeInstalled = false;
+    let languageBridgeState = null;
+
+    function rawValue(value) {
+        return isProxy(value) ? value.getRef() : value;
+    }
+
+    function adaptForgeItemTooltip(data) {
+        const event = new GoldClientForgeEvent();
+        event.__goldClassName = "net.minecraftforge.event.entity.player.ItemTooltipEvent";
+        event.getEntityPlayer = () => adaptNative(data?.player ?? null);
+        event.getPlayer = event.getEntityPlayer;
+        event.getItemStack = () => adaptNative(data?.itemStack ?? null);
+        event.getToolTip = () => adaptNative(data?.toolTip ?? null);
+        event.getTooltip = event.getToolTip;
+        event.isAdvanced = () => data?.advanced === true;
+        return event;
+    }
+
+    /**
+     * EaglerForge exposes one ItemTooltipEvent-shaped dispatch (see
+     * postinit's gold:itemtooltip hook). Translate that native data into a
+     * Forge event on the real host bus so translated @SubscribeEvent methods
+     * receive the same list the game is about to draw.
+     */
+    function installTooltipEventBridge() {
+        if (tooltipBridgeInstalled) return;
+        const modApi = api();
+        if (!modApi.events || typeof modApi.addEventListener !== "function") {
+            fail("item-tooltip-bridge", "EaglerForge ModAPI events are unavailable");
+        }
+        if (typeof modApi.events.newEvent === "function") {
+            modApi.events.newEvent("gold:itemtooltip", "client");
+        }
+        modApi.addEventListener("gold:itemtooltip", data => {
+            const bus = global.goldClientForgeEventBus;
+            if (!bus || typeof bus.post !== "function") return;
+            try {
+                const result = bus.post(
+                    "net.minecraftforge.event.entity.player.ItemTooltipEvent",
+                    adaptForgeItemTooltip(data));
+                for (const failure of result?.failures ?? []) {
+                    console.error("[GoldForge item-tooltip-event] listener "
+                        + failure.owner + " failed: "
+                        + (failure.error?.message ?? String(failure.error)), failure.error);
+                }
+            } catch (error) {
+                console.error("[GoldForge item-tooltip-event] dispatch failed", error);
+            }
+        });
+        tooltipBridgeInstalled = true;
+    }
+
+    function normalizeLanguageCode(code) {
+        const parts = String(code || "en_us").replace(/-/g, "_").split("_");
+        return parts[0].toLowerCase()
+            + (parts.length > 1 ? "_" + parts[1].toUpperCase() : "");
+    }
+
+    function parseLanguageFile(text, target) {
+        let added = 0;
+        for (const rawLine of String(text ?? "").split(/\r?\n/)) {
+            const line = rawLine.trim();
+            if (!line || line.startsWith("#")) continue;
+            const split = line.indexOf("=");
+            if (split <= 0) continue;
+            const key = line.slice(0, split).trim();
+            if (!key) continue;
+            let value = line.slice(split + 1);
+            value = value.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+            target.set(key, value);
+            added++;
+        }
+        return added;
+    }
+
+    /**
+     * Forge loads each mod's assets/<modid>/lang/<locale>.lang into the same
+     * translation tables as vanilla. Eaglercraft has no mod resource packs, so
+     * merge the translated bundle's language files into the live Locale
+     * properties and mirror them into LanguageMap. This is additive: existing
+     * keys are preserved and mod keys override only on collision.
+     */
+    function injectModLanguages() {
+        if (languageBridgeState !== null) return languageBridgeState;
+        const state = {
+            status: "skipped",
+            language: null,
+            files: [],
+            addedKeys: 0,
+            totalKeys: 0,
+            error: null
+        };
+        const files = resourceFiles();
+        const names = Object.keys(files);
+        const available = new Map();
+        for (const name of names) {
+            const match = /(?:^|\/)lang\/([^/]+)\.lang$/.exec(name);
+            if (!match) continue;
+            const code = normalizeLanguageCode(match[1]);
+            if (!available.has(code)) available.set(code, []);
+            available.get(code).push(name);
+        }
+        if (!available.size) {
+            state.status = "no-mod-language-files";
+            languageBridgeState = Object.freeze(state);
+            global.goldClientLanguageBridge = languageBridgeState;
+            return languageBridgeState;
+        }
+
+        const modApi = api();
+        const mc = modApi.mcinstance;
+        const manager = rawValue(mc?.$mcLanguageManager);
+        let locale = null;
+        try {
+            locale = rawValue(
+                modApi.reflect?.getClassById?.("net.minecraft.client.resources.LanguageManager")
+                    ?.staticVariables?.CURRENT_LOCALE ?? null);
+        } catch (error) {
+            locale = null;
+        }
+        if (!locale) {
+            const getLocale = manager?.$getCurrentLanguage ?? manager?.getCurrentLanguage;
+            locale = rawValue(typeof getLocale === "function"
+                ? getLocale.call(manager) : null);
+        }
+        let localeCode = "en_us";
+        const rawCode = manager?.$currentLanguage ?? manager?.$languageCode;
+        if (typeof rawCode === "string") {
+            localeCode = rawCode;
+        } else if (rawCode && typeof rawCode !== "symbol") {
+            try {
+                const text = String(rawCode);
+                if (text) localeCode = text;
+            } catch (error) {
+                localeCode = "en_us";
+            }
+        }
+        const requested = normalizeLanguageCode(localeCode);
+        state.language = requested;
+        const selected = [];
+        for (const code of ["en_US", requested]) {
+            if (selected.includes(code)) continue;
+            if (available.has(code)) selected.push(code);
+        }
+        if (!selected.length) selected.push(...available.keys());
+
+        const merged = new Map();
+        for (const code of selected) {
+            let added = 0;
+            for (const path of available.get(code).sort()) {
+                add: try {
+                    added += parseLanguageFile(resourceText(files[path]), merged);
+                } catch (error) {
+                    state.error = state.error ?? String(error?.message ?? error);
+                    break add;
+                }
+            }
+            state.files.push({ code, files: available.get(code).slice().sort(), entries: added });
+        }
+
+        const properties = rawValue(locale?.$properties3 ?? locale?.properties3);
+        const put = properties?.$put ?? properties?.put;
+        if (!properties || typeof put !== "function") {
+            fail("mod-language-bridge", "the live Locale properties map is unavailable");
+        }
+        for (const [key, value] of merged) {
+            put.call(properties, modApi.util.str(key), modApi.util.str(value));
+        }
+        const replace = modApi.hooks?.methods?.nmutt_LanguageMap_replaceWith;
+        if (typeof replace === "function") {
+            replace.call(null, properties);
+        } else {
+            fail("mod-language-bridge",
+                "LanguageMap.replaceWith is unavailable in this client build");
+        }
+        state.addedKeys = merged.size;
+        const size = properties.$size ?? properties.size;
+        state.totalKeys = typeof size === "function"
+            ? Number(size.call(properties)) : merged.size;
+        state.status = "applied";
+        languageBridgeState = Object.freeze(state);
+        global.goldClientLanguageBridge = languageBridgeState;
+        return languageBridgeState;
+    }
+
+    function prepareRuntimeBridges() {
+        installTooltipEventBridge();
+        const modApi = api();
+        try {
+            injectModLanguages();
+            return;
+        } catch (error) {
+            // The game settings object exists before the locale tables are
+            // initialized. Defer rather than aborting mod startup.
+        }
+        global.goldClientLanguageBridge = Object.freeze({
+            status: "pending",
+            error: null
+        });
+        if (typeof modApi.addEventListener === "function") {
+            modApi.addEventListener("load", () => {
+                try {
+                    injectModLanguages();
+                } catch (error) {
+                    global.goldClientLanguageBridge = Object.freeze({
+                        status: "failed",
+                        error: String(error?.message ?? error)
+                    });
+                    console.error("[GoldForge mod-language-bridge] failed", error);
+                }
+            });
+        }
+    }
+
     function forgeConstruct(owner, args, receiver = null) {
         const facade = FACADES.get(owner);
         if (facade?.construct) return facade.construct(args, receiver);
@@ -2247,6 +2485,7 @@
         }
         if (typeof forge.status === "function" && forge.status()?.started) return;
         try {
+            prepareRuntimeBridges();
             const started = forge.start(bindings);
             Promise.resolve(started).catch(error => {
                 global.goldClientForgeStartError = error;

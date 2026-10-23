@@ -36,6 +36,7 @@ public final class LoaderCommand {
 
   public static int run(String[] args, PrintStream out, PrintStream err) {
     List<Path> inputs = new ArrayList<>();
+    List<Path> libraries = new ArrayList<>();
     Path output = null;
     Path reportFile = null;
     boolean singleFile = false;
@@ -59,6 +60,7 @@ public final class LoaderCommand {
         String value = args[i];
         switch (flag) {
           case "--input" -> inputs.add(Path.of(value).toAbsolutePath().normalize());
+          case "--library" -> libraries.add(Path.of(value).toAbsolutePath().normalize());
           case "--output" -> {
             if (output != null) throw new IllegalArgumentException("Duplicate --output");
             output = Path.of(value).toAbsolutePath().normalize();
@@ -74,20 +76,37 @@ public final class LoaderCommand {
       if (output == null) throw new IllegalArgumentException("--output directory is required");
       if (reportFile == null) reportFile = output.resolve("loader-plan.json");
 
-      Set<Path> uniqueInputs = new LinkedHashSet<>();
+      Set<Path> realInputs = new LinkedHashSet<>();
       for (Path input : inputs) {
         if (!Files.isRegularFile(input)) throw new IOException("Input JAR does not exist: " + input);
-        if (!uniqueInputs.add(input.toRealPath())) {
+        if (!realInputs.add(input.toRealPath())) {
           throw new IllegalArgumentException("Input JAR supplied more than once: " + input);
         }
       }
-      inputs = new ArrayList<>(uniqueInputs);
+      Set<Path> realLibraries = new LinkedHashSet<>();
+      for (Path library : libraries) {
+        if (!Files.isRegularFile(library)) {
+          throw new IOException("Library JAR does not exist: " + library);
+        }
+        if (realInputs.contains(library.toRealPath())) {
+          throw new IllegalArgumentException("JAR supplied as both --input and --library: " + library);
+        }
+        if (!realLibraries.add(library.toRealPath())) {
+          throw new IllegalArgumentException("Library JAR supplied more than once: " + library);
+        }
+      }
+      Set<Path> allPaths = new LinkedHashSet<>(realInputs);
+      allPaths.addAll(realLibraries);
+      List<Path> allInputs = new ArrayList<>(allPaths);
+      Set<Path> libraryPaths = Set.copyOf(realLibraries);
 
       List<ClassModel> classes = new ArrayList<>();
       Map<String, Path> classOwners = new LinkedHashMap<>();
       Map<String, String> metadataModIds = new LinkedHashMap<>();
       List<InputRecord> records = new ArrayList<>();
-      for (Path input : inputs) {
+      Set<String> libraryClasses = new LinkedHashSet<>();
+      for (Path input : allInputs) {
+        boolean library = libraryPaths.contains(input);
         ModAnalysis analysis = new ModAnalyzer().analyze(input);
         int methods = analysis.totalMethods();
         int fields = analysis.totalFields();
@@ -99,18 +118,20 @@ public final class LoaderCommand {
                 + clazz.name().replace('/', '.') + " in " + previous + " and " + input);
           }
           classes.add(clazz);
+          if (library) libraryClasses.add(clazz.name());
           if (metadataModId != null && !metadataModId.isBlank()
               && !"Unknown".equals(metadataModId)) {
             metadataModIds.putIfAbsent(clazz.name(), metadataModId);
           }
         }
         records.add(new InputRecord(input.toString(), TranslationPipeline.sha256(input),
-            analysis.totalClasses(), methods, fields));
+            analysis.totalClasses(), methods, fields, library ? "library" : "mod"));
       }
 
       Path destination = output;
       JavaScriptModTranslationExporter.ExportReport export =
-          new JavaScriptModTranslationExporter().export(inputs, classes, metadataModIds, destination);
+          new JavaScriptModTranslationExporter().export(allInputs, classes, metadataModIds,
+              libraryClasses, destination);
       Path singleFileOutput = null;
       JavaScriptBundleExporter.BundleSummary singleFileSummary = null;
       if (singleFile) {
@@ -146,6 +167,9 @@ public final class LoaderCommand {
           .toList();
       report.put("formatVersion", "gold-forge-loader-build-v1");
       report.put("inputs", records);
+      report.put("inputCount", inputs.size());
+      report.put("libraries", libraries.stream().map(Path::toString).toList());
+      report.put("libraryClassCount", libraryClasses.size());
       report.put("output", destination.toString());
       report.put("classCount", classes.size());
       report.put("methodCount", export.methodCount());
@@ -176,6 +200,7 @@ public final class LoaderCommand {
 
       out.println("Gold Client Forge loader build");
       out.println("Inputs: " + inputs.size());
+      out.println("Libraries: " + libraries.size());
       out.println("Classes: " + classes.size());
       out.println("Methods inspected: " + export.methodCount());
       out.println("Adapter-required declarations: " + export.adapterRequiredCount());
@@ -210,9 +235,12 @@ public final class LoaderCommand {
   private static void usage(PrintStream out) {
     out.println("""
         Usage: gold-client loader --input <mod.jar> [--input <dependency-mod.jar> ...] \
-        --output <directory> [--report <file>] [--single-file [--compact]]
+        [--library <api-provider.jar> ...] --output <directory> [--report <file>] \
+        [--single-file [--compact]]
           Builds one shared JavaScript Forge loader bundle from several mod JARs.
           --input may be repeated. Duplicate class definitions are rejected.
+          --library repeats an API/dependency JAR whose classes are bundled but
+          whose own @Mod entry points are not added to the lifecycle.
           --single-file writes gold-client-forge.js as one classic-script file.
           --compact strips full-line comments and blank lines from that file.
           Exits 2 when lifecycle blockers or incomplete methods remain.
@@ -220,5 +248,5 @@ public final class LoaderCommand {
   }
 
   private record InputRecord(String path, String sha256, int classCount, int methodCount,
-      int fieldCount) {}
+      int fieldCount, String role) {}
 }

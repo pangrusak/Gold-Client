@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.objectweb.asm.Opcodes;
 
 /** Writes per-class JavaScript modules and a separate honest JS completeness report. */
@@ -58,6 +59,18 @@ public final class JavaScriptModTranslationExporter {
    */
   public ExportReport export(List<Path> inputJars, List<ClassModel> classes,
       Map<String, String> metadataModIds, Path outputDirectory) throws IOException {
+    return export(inputJars, classes, metadataModIds, Set.of(), outputDirectory);
+  }
+
+  /**
+   * Exports a bundle while keeping the listed classes out of Forge lifecycle
+   * discovery. This is used for {@code --library} inputs: their classes must be
+   * translated and registered, but a library JAR's {@code @Mod} entry point is
+   * not part of the game's load order.
+   */
+  public ExportReport export(List<Path> inputJars, List<ClassModel> classes,
+      Map<String, String> metadataModIds, Set<String> excludedLifecycleClasses,
+      Path outputDirectory) throws IOException {
     if (classes == null) throw new IllegalArgumentException("Classes must not be null.");
     if (outputDirectory == null) throw new IllegalArgumentException("Output directory must not be null.");
     List<Path> jars = inputJars == null ? List.of() : inputJars.stream()
@@ -127,7 +140,8 @@ public final class JavaScriptModTranslationExporter {
         new GsonBuilder().setPrettyPrinting().create().toJson(transformations)
             + System.lineSeparator(), StandardCharsets.UTF_8);
     new ForgeLifecycleExporter().export(classes, metadataModIds, root,
-        transformations.blockers());
+        transformations.blockers(),
+        excludedLifecycleClasses == null ? Set.of() : excludedLifecycleClasses);
     new ForgeHostRuntimeExporter().export(root);
     new ForgeCompatibilityPlanner().export(classes, root);
     Files.writeString(root.resolve("package.json"),

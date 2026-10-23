@@ -778,15 +778,33 @@ const modapi_postinit = "(" + (() => {
         }
     };
 
-    ModAPI.events.callEvent = function callEvent(name, data) {
+    // Dispatch an event and keep every listener return value. The original
+    // callEvent entrypoint only signalled side effects; translated Forge
+    // bridges need the values (for example an ItemTooltipEvent result) and a
+    // failure list so one bad listener does not hide the rest of the dispatch.
+    ModAPI.events.dispatch = function dispatch(name, data) {
+        var result = {
+            event: name,
+            data: data,
+            results: [],
+            failures: [],
+            canceled: !!(data && (typeof data.isCanceled === "function"
+                ? data.isCanceled() : data.isCanceled))
+        };
+        var invoke = function (func, payload) {
+            try {
+                result.results.push(func(payload));
+            } catch (error) {
+                result.failures.push(error);
+                console.error("[ModAPI] Event listener failed for " + name, error);
+            }
+        };
         if (ModAPI.events.types.includes(name) && name.startsWith("lib:")) {
             if (Array.isArray(ModAPI.events.listeners[name])) {
-                ModAPI.events.listeners[name].forEach((func) => {
-                    func(data);
-                });
+                ModAPI.events.listeners[name].forEach((func) => invoke(func, data));
             }
             ModAPI.events.lib_map[name] = data;
-            return;
+            return result;
         }
         if (
             !ModAPI.events.types.includes(name) ||
@@ -794,25 +812,34 @@ const modapi_postinit = "(" + (() => {
         ) {
             if (!Array.isArray(ModAPI.events.listeners[name])) {
                 if (ModAPI.events.types.includes(name)) {
-                    ModAPI.events.listeners.event.forEach((func) => {
-                        func({ event: name, data: data });
-                    });
-                    return;
+                    if (Array.isArray(ModAPI.events.listeners.event)) {
+                        ModAPI.events.listeners.event.forEach((func) => {
+                            invoke(func, { event: name, data: data });
+                        });
+                    }
+                    return result;
                 }
-                return;
+                console.error(
+                    "ModAPI/PluginAPI has been called with an invalid event name: " + name
+                );
+                console.error("Please report this bug to the repo.");
+                return result;
             }
-            console.error(
-                "ModAPI/PluginAPI has been called with an invalid event name: " + name
-            );
-            console.error("Please report this bug to the repo.");
-            return;
         }
         ModAPI.events.listeners[name].forEach((func) => {
-            func(data);
+            invoke(func, data);
         });
-        ModAPI.events.listeners.event.forEach((func) => {
-            func({ event: name, data: data });
-        });
+        if (Array.isArray(ModAPI.events.listeners.event)) {
+            ModAPI.events.listeners.event.forEach((func) => {
+                invoke(func, { event: name, data: data });
+            });
+        }
+        return result;
+    };
+
+    ModAPI.events.callEvent = function callEvent(name, data) {
+        var result = ModAPI.events.dispatch(name, data);
+        if (result.failures.length > 0) throw result.failures[0];
     };
     ModAPI.events.newEvent("update", "client");
 
@@ -1069,6 +1096,41 @@ const modapi_postinit = "(" + (() => {
             ModAPI.ScaledResolution = ModAPI.resolution = new Proxy(ScaledResolutionConstructor(ModAPI.mcinstance), TeaVM_to_Recursive_BaseData_ProxyConf);
         }
         return frameMethod.apply(this, args);
+    }
+
+    // Forge's ItemTooltipEvent is posted by GuiScreen.renderToolTip after the
+    // vanilla list is built and before it is drawn. Eaglercraft's equivalent
+    // is func_191927_a ($this, stack), so hook that exact method rather than
+    // limit the event to one ItemStack.getTooltip call site.
+    ModAPI.events.newEvent("gold:itemtooltip", "client");
+    try {
+        const guiTooltipMethodName = ModAPI.util.getMethodFromPackage(
+            "net.minecraft.client.gui.GuiScreen", "func_191927_a");
+        const guiTooltipMethod = ModAPI.hooks.methods[guiTooltipMethodName];
+        if (typeof guiTooltipMethod === "function") {
+            ModAPI.hooks.methods[guiTooltipMethodName] = function ($this, $stack) {
+                var toolTip = guiTooltipMethod.apply(this, arguments);
+                try {
+                    var minecraft = $this && ($this.$mc1 || $this.$mc);
+                    var player = minecraft && (minecraft.$player || minecraft.$thePlayer);
+                    var settings = minecraft && minecraft.$gameSettings;
+                    ModAPI.events.dispatch("gold:itemtooltip", {
+                        itemStack: $stack,
+                        player: player,
+                        toolTip: toolTip,
+                        advanced: !!(settings && settings.$advancedItemTooltips)
+                    });
+                } catch (error) {
+                    console.error("[ModAPI] ItemTooltipEvent dispatch failed", error);
+                }
+                return toolTip;
+            };
+        } else {
+            console.warn("[ModAPI] Could not install ItemTooltipEvent hook: "
+                + guiTooltipMethodName + " is unavailable");
+        }
+    } catch (error) {
+        console.warn("[ModAPI] Could not install ItemTooltipEvent hook", error);
     }
 
     ModAPI.events.newEvent("tick", "server");

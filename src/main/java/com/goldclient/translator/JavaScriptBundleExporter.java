@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -75,6 +76,7 @@ public final class JavaScriptBundleExporter {
     output.append("// Gold Client single-file Forge bundle.\n");
     output.append("// Classic script: loads the generated entry and exposes globalThis.GoldClientForge.\n");
     output.append("// A self-contained bundle is not proof that a Forge host can run it.\n");
+    output.append(resourceBundleSource(bundle));
     output.append("(function (global) {\n");
     output.append("  \"use strict\";\n");
     output.append("  const __goldFactories = new Map();\n");
@@ -121,6 +123,38 @@ public final class JavaScriptBundleExporter {
     output.append("  global.GoldClientForgeBundle = __goldBundle;\n");
     output.append("})(typeof globalThis !== \"undefined\" ? globalThis : this);\n");
     return output.toString();
+  }
+
+  /**
+   * The loader writes resources into a separate directory so generated modules
+   * can read them through the host. A single-file classic script has no bundle
+   * directory, so embed the same base64 map the normal host resource service
+   * expects.
+   */
+  private static String resourceBundleSource(Path bundle) throws IOException {
+    Path root = bundle.resolve("resources").normalize();
+    StringBuilder json = new StringBuilder();
+    json.append("globalThis.GoldClientResources=Object.freeze({\"formatVersion\":")
+        .append(jsString("gold-client-resources-v1")).append(",\"files\":{");
+    if (Files.isDirectory(root)) {
+      List<Path> entries;
+      try (Stream<Path> stream = Files.walk(root)) {
+        entries = stream.filter(Files::isRegularFile)
+            .sorted(Comparator.comparing(path -> root.relativize(path).toString()))
+            .toList();
+      }
+      Base64.Encoder encoder = Base64.getEncoder();
+      boolean first = true;
+      for (Path entry : entries) {
+        if (!first) json.append(',');
+        first = false;
+        String name = root.relativize(entry).toString().replace('\\', '/');
+        json.append(jsString(name)).append(':')
+            .append(jsString(encoder.encodeToString(Files.readAllBytes(entry))));
+      }
+    }
+    json.append("}});\n");
+    return json.toString();
   }
 
   private static Map<String, String> readModules(Path bundle, Path excludedOutput)

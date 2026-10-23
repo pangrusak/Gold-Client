@@ -3071,6 +3071,19 @@ registerMinecraftAdapter("net.minecraft.util.text.TextFormatting", {
     getByCode: args => GoldClientMinecraftTextFormatting.getByCode(args[0])
   }
 });
+// Forge 1.12 moved the old Realms ChatFormatting enum out of the client, but
+// many mods still reference that owner. Vanilla TextFormatting has the same
+// constants and section-sign rendering.
+registerMinecraftAdapter("com.mojang.realmsclient.gui.ChatFormatting", {
+  kind: "enum",
+  staticFields: GoldClientMinecraftTextFormatting,
+  staticMethods: {
+    values: () => GoldClientMinecraftTextFormatting.values(),
+    valueOf: args => GoldClientMinecraftTextFormatting.valueOf(args[0]),
+    fromColorIndex: args => GoldClientMinecraftTextFormatting.fromColorIndex(args[0]),
+    getByCode: args => GoldClientMinecraftTextFormatting.getByCode(args[0])
+  }
+});
 registerMinecraftAdapter("net.minecraft.item.EnumRarity", {
   kind: "enum",
   staticFields: GoldClientMinecraftEnumRarity,

@@ -56,14 +56,19 @@ The `loader` subcommand translates several Forge 1.12.2 JARs into one shared
 JavaScript class registry and emits `forge-lifecycle.js`,
 `eaglercraft-forge-entry.js`, `loader-plan.json`, and the existing translated
 class/resource modules. It discovers `@Mod` entry classes and statically
-declared event subscribers from original annotations.
+declared event subscribers from original annotations. `--library` inputs keep
+their classes/resources in the bundle but exclude their own `@Mod` and
+`@Mod.EventBusSubscriber` declarations from automatic lifecycle loading; the
+plan records each input's `mod`/`library` role and the library class count.
 
 ### Single-file injection output
 
 `loader --single-file [--compact]` additionally writes
 `gold-client-forge.js`, a classic-script bundle that inlines the runtime, every
-translated class module, the lifecycle, the host runtime, and the browser
-entrypoint. It exposes `globalThis.GoldClientForge` with `start(bindings)`,
+translated class module, the lifecycle, the host runtime, the browser
+entrypoint, and the JAR resource files (base64 under
+`globalThis.GoldClientResources`). It exposes `globalThis.GoldClientForge` with
+`start(bindings)`,
 `stop(reason)`, `status()`, `mods`, `blockers`, `runtime`, `classes` (module
 namespaces), and `getClass(name)` (the translated constructor). The file is
 self-contained JavaScript, but it still requires

@@ -1177,6 +1177,11 @@ class JavaScriptModTranslationExporterTest {
         if (r.invokePlatformStatic("net.minecraft.util.text.TextFormatting", "valueOf", "GOLD").getColorIndex() !== 6) {
           throw new Error("TextFormatting.valueOf");
         }
+        const chatBlue = r.getStaticField("com.mojang.realmsclient.gui.ChatFormatting", "BLUE");
+        if (chatBlue.toString() !== String.fromCharCode(167) + "9"
+            || chatBlue.getColorIndex() !== 9 || chatBlue.name() !== "BLUE") {
+          throw new Error("ChatFormatting alias");
+        }
         const rare = r.getStaticField("net.minecraft.item.EnumRarity", "RARE");
         if (rare.getColor() !== r.getStaticField("net.minecraft.util.text.TextFormatting", "AQUA")
             || rare.getRarityName() !== "Rare") {

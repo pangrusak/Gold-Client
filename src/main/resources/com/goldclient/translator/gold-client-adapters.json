@@ -11,6 +11,14 @@
       "kind": "value-type"
     },
     {
+      "owner": "net.minecraft.util.math.BlockPos$MutableBlockPos",
+      "kind": "value-type"
+    },
+    {
+      "owner": "net.minecraft.util.math.BlockPos$PooledMutableBlockPos",
+      "kind": "value-type"
+    },
+    {
       "owner": "net.minecraft.util.math.Vec3d",
       "kind": "value-type"
     },
@@ -36,6 +44,10 @@
     },
     {
       "owner": "net.minecraft.util.text.TextFormatting",
+      "kind": "enum"
+    },
+    {
+      "owner": "com.mojang.realmsclient.gui.ChatFormatting",
       "kind": "enum"
     },
     {

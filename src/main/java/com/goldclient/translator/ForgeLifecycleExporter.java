@@ -123,10 +123,23 @@ public final class ForgeLifecycleExporter {
    */
   public LifecycleReport export(List<ClassModel> classes, Map<String, String> metadataModIds,
       Path outputDirectory, List<String> transformationBlockers) throws IOException {
+    return export(classes, metadataModIds, outputDirectory, transformationBlockers, Set.of());
+  }
+
+  /**
+   * Exports lifecycle metadata while ignoring classes supplied as libraries.
+   * Excluded classes remain available for inheritance, field injection, and
+   * static subscriber lookup, but their own {@code @Mod} and
+   * {@code @Mod.EventBusSubscriber} declarations are not auto-loaded.
+   */
+  public LifecycleReport export(List<ClassModel> classes, Map<String, String> metadataModIds,
+      Path outputDirectory, List<String> transformationBlockers,
+      Set<String> excludedLifecycleClasses) throws IOException {
     if (classes == null || outputDirectory == null) {
       throw new IllegalArgumentException("Classes and output directory must not be null.");
     }
     Map<String, String> metadataIds = metadataModIds == null ? Map.of() : metadataModIds;
+    Set<String> excluded = excludedLifecycleClasses == null ? Set.of() : excludedLifecycleClasses;
     List<String> blockers = new ArrayList<>();
     Map<String, ClassModel> classesByName = indexClasses(classes, blockers);
     List<ModEntry> entries = new ArrayList<>();
@@ -134,6 +147,7 @@ public final class ForgeLifecycleExporter {
     Set<String> ids = new LinkedHashSet<>();
 
     for (ClassModel clazz : classes.stream().sorted(Comparator.comparing(ClassModel::name)).toList()) {
+      if (excluded.contains(clazz.name())) continue;
       if (!clazz.annotations().contains(MOD)) continue;
       AnnotationData modAnnotation = annotation(clazz.annotationData(), MOD);
       String id = stringValue(modAnnotation, "modid");
@@ -195,6 +209,7 @@ public final class ForgeLifecycleExporter {
     validateInstanceInjections(entries, knownIds, classesByName, blockers);
 
     for (ClassModel clazz : classes.stream().sorted(Comparator.comparing(ClassModel::name)).toList()) {
+      if (excluded.contains(clazz.name())) continue;
       AnnotationData registration = annotation(clazz.annotationData(), EVENT_BUS_SUBSCRIBER);
       if (registration == null) continue;
       String owner = stringValue(registration, "modid");

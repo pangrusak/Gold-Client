@@ -185,6 +185,61 @@ class ForgeLoaderTest {
   }
 
   @Test
+  void excludesLibraryModEntrypointsButKeepsTheirClassesInTheBundle() throws Exception {
+    ClassModel libraryMod = new ClassModel("sample/LibraryMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(constructor()),
+        List.of(), List.of(mod("libraryid", "")));
+    ClassModel appMod = new ClassModel("sample/AppMod", "java/lang/Object", List.of(),
+        Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(constructor()),
+        List.of(), List.of(mod("appid", "")));
+
+    Path output = tempDir.resolve("library-lifecycle");
+    var report = new JavaScriptModTranslationExporter().export(
+        List.of(), List.of(libraryMod, appMod), Map.of(),
+        java.util.Set.of("sample/LibraryMod"), output);
+
+    assertEquals(2, report.classCount());
+    var lifecycle = Files.readString(output.resolve("forge-lifecycle-plan.json"));
+    assertTrue(lifecycle.contains("\"modId\": \"appid\""), lifecycle);
+    assertFalse(lifecycle.contains("libraryid"), lifecycle);
+    assertTrue(Files.readString(output.resolve("mod-index.js")).contains("sample.LibraryMod"));
+    assertTrue(Files.isRegularFile(output.resolve("sample/LibraryMod.translated.js")));
+  }
+
+  @Test
+  void loaderCommandBundlesLibraryClassesWithoutLoadingTheirModEntrypoint() throws Exception {
+    Path input = Path.of("test-mods/appleskin1.12.2.jar");
+    Path library = Path.of("test-mods/EnchantmentDescriptions.jar");
+    org.junit.jupiter.api.Assumptions.assumeTrue(
+        Files.isRegularFile(input) && Files.isRegularFile(library),
+        "loader fixtures are missing");
+    Path output = tempDir.resolve("cli-library-loader");
+    ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+    ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+    int code;
+    try (PrintStream out = new PrintStream(stdout, true, StandardCharsets.UTF_8);
+         PrintStream err = new PrintStream(stderr, true, StandardCharsets.UTF_8)) {
+      code = LoaderCommand.run(new String[] {
+          "--input", input.toString(), "--library", library.toString(),
+          "--output", output.toString()
+      }, out, err);
+    }
+    String log = stdout.toString(StandardCharsets.UTF_8)
+        + stderr.toString(StandardCharsets.UTF_8);
+    assertEquals(0, code, log);
+    assertTrue(log.contains("Libraries: 1"), log);
+    String plan = Files.readString(output.resolve("loader-plan.json"));
+    assertTrue(plan.contains("\"role\": \"library\""), plan);
+    assertTrue(plan.contains("\"libraryClassCount\": 3"), plan);
+    assertTrue(plan.contains("\"mods\": [\n    \"appleskin\"\n  ]"), plan);
+    assertFalse(plan.contains("enchdesc"), plan);
+    assertTrue(Files.isRegularFile(
+        output.resolve("net/darkhax/enchdesc/client/TooltipHandler.translated.js")));
+    String lifecycle = Files.readString(output.resolve("forge-lifecycle-plan.json"));
+    assertFalse(lifecycle.contains("enchdesc"), lifecycle);
+  }
+
+  @Test
   void reportsMissingRequiredDependenciesInsteadOfInventingLoadOrder() throws Exception {
     ClassModel mod = new ClassModel("sample/Broken", "java/lang/Object", List.of(),
         Opcodes.ACC_PUBLIC, null, List.of(MOD), List.of(), List.of(constructor()),
@@ -447,6 +502,11 @@ class ForgeLoaderTest {
         vm.runInContext(source, sandbox, { filename: "gold-client-forge.js" });
         const bundle = sandbox.GoldClientForge;
         if (!bundle) throw new Error("GoldClientForge missing");
+        if (!sandbox.GoldClientResources
+            || !sandbox.GoldClientResources.files
+            || Object.keys(sandbox.GoldClientResources.files).length === 0) {
+          throw new Error("single-file bundle did not embed resources");
+        }
         if (!sandbox.window.goldClientForgeEntrypoint) throw new Error("entrypoint was not installed");
         if (!Array.isArray(bundle.mods) || bundle.mods.length !== 2) {
           throw new Error("mod metadata missing from the single-file bundle");

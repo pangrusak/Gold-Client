@@ -54,7 +54,38 @@ function installFixture() {
         this.description = description;
         this.keyCode = keyCode;
         this.category = category;
+        this.$keyDescription = description;
     }
+
+    const i18nEntry = {
+        id: "net.minecraft.client.resources.I18n",
+        compiledName: "nmcr_I18n",
+        class: function I18n() {},
+        methods: {},
+        staticMethods: {
+            format: {
+                method: function format(description, parameters) {
+                    return "localized:" + description + "/" + (parameters?.length ?? 0);
+                },
+                methodName: "nmcr_I18n_format"
+            }
+        },
+        staticVariables: {},
+        constructors: []
+    };
+
+    function ResourceLocation(name) {
+        this.$name = String(name);
+    }
+    const resourceLocationEntry = {
+        id: "net.minecraft.util.ResourceLocation",
+        compiledName: "nmcr_ResourceLocation",
+        class: ResourceLocation,
+        methods: {},
+        staticMethods: {},
+        staticVariables: {},
+        constructors: [function ResourceLocationConstructor(name) { return new ResourceLocation(name); }]
+    };
 
     const keyBindingEntry = {
         id: "net.minecraft.client.settings.KeyBinding",
@@ -105,11 +136,27 @@ function installFixture() {
     const ModAPI = {
         isServer: false,
         hooks: {},
+        events: {
+            types: [],
+            listeners: Object.create(null),
+            lib_map: Object.create(null),
+            newEvent(name) {
+                if (!this.types.includes(name)) this.types.push(name);
+            }
+        },
+        addEventListener(name, func) {
+            if (!this.events.types.includes(name) && !name.startsWith("custom:")) {
+                throw new Error("[ModAPI] This event does not exist!");
+            }
+            (this.events.listeners[name] ??= []).push(func);
+        },
         reflect: {
             getClassById(id) {
                 if (id === "net.minecraft.client.Minecraft") return minecraftEntry;
                 if (id === "net.minecraft.client.renderer.texture.TextureMap") return textureMapEntry;
                 if (id === "net.minecraft.client.settings.KeyBinding") return keyBindingEntry;
+                if (id === "net.minecraft.util.ResourceLocation") return resourceLocationEntry;
+                if (id === "net.minecraft.client.resources.I18n") return i18nEntry;
                 return null;
             },
             getClassByName(name) {
@@ -144,6 +191,8 @@ function installFixture() {
             files: {
                 "assets/demo/lang/en_us.json":
                     Buffer.from('{"item.demo":"Demo"}', "utf8").toString("base64"),
+                "assets/demo/lang/en_us.lang":
+                    Buffer.from("item.demo=Demo\ntooltip.demo=Demo tooltip\n", "utf8").toString("base64"),
                 "assets/demo/textures/gui.png": Buffer.from([1, 2, 3, 4]).toString("base64")
             }
         },
@@ -254,6 +303,22 @@ test("native proxies expose mapped fields and methods without leaking $ names", 
     client.field_71441_e = null;
     assert.equal(client.$theWorld, null);
     assert.throws(() => client.func_999999_z(), /missing-native-member/);
+});
+
+test("localizes a native KeyBinding display name", () => {
+    const { bindings } = installFixture();
+    function KeyBinding(description) { this.$keyDescription = description; }
+    const displayName = bindings.adapt(new KeyBinding("key.sneak")).getDisplayName();
+    assert.equal(displayName, "localized:key.sneak/0");
+});
+
+test("derives a Forge registry name for native enchantments", () => {
+    const { bindings } = installFixture();
+    function Enchantment() {}
+    const raw = new Enchantment();
+    raw.$name23 = "sharpness";
+    const location = bindings.adapt(raw).getRegistryName();
+    assert.equal(location.getRef().$name, "minecraft:sharpness");
 });
 
 test("initializes a translated subclass with the native internal constructor", () => {
@@ -473,8 +538,28 @@ test("initializes a translated Event subclass receiver in place", () => {
 test("starts the injected bundle once the client is ready", () => {
     const { context, bindings } = installFixture();
     let startedWith = null;
-    context.ModAPI.mcinstance = { $gameSettings: {} };
-    context.ModAPI.settings = {};
+    let tooltip = null;
+    const languageKeys = new Map();
+    const properties = {
+        $put(key, value) { languageKeys.set(context.ModAPI.util.ustr(key), context.ModAPI.util.ustr(value)); },
+        $size() { return languageKeys.size; }
+    };
+    context.ModAPI.mcinstance = {
+        $gameSettings: { $language: "en_us" },
+        $mcLanguageManager: {
+            $getCurrentLanguage: () => ({ $languageCode: "en_US", $properties3: properties })
+        }
+    };
+    context.ModAPI.settings = { $language: "en_us" };
+    context.ModAPI.hooks.methods = {
+        nmutt_LanguageMap_replaceWith(map) { assert.equal(map, properties); }
+    };
+    context.goldClientForgeEventBus = {
+        post(type, event) {
+            tooltip = { type, event };
+            return { failures: [] };
+        }
+    };
     context.GoldClientForge = {
         start(value) { startedWith = value; return Promise.resolve([]); },
         status() { return { started: false }; }
@@ -483,6 +568,24 @@ test("starts the injected bundle once the client is ready", () => {
     context.goldClientForgeAutoStart = true;
     bindings.startWhenReady();
     assert.equal(startedWith, bindings);
+    assert.equal(context.goldClientLanguageBridge.status, "applied");
+    assert.equal(languageKeys.get("tooltip.demo"), "Demo tooltip");
+    assert.equal(context.goldClientLanguageBridge.addedKeys, 2);
+
+    assert.equal(context.ModAPI.events.types.includes("gold:itemtooltip"), true);
+    const stack = { native: "stack" };
+    const player = { native: "player" };
+    const list = { native: "tooltip" };
+    context.ModAPI.events.listeners["gold:itemtooltip"][0]({
+        itemStack: stack, player, toolTip: list, advanced: true
+    });
+    assert.equal(tooltip.type, "net.minecraftforge.event.entity.player.ItemTooltipEvent");
+    assert.equal(tooltip.event.__goldClassName,
+        "net.minecraftforge.event.entity.player.ItemTooltipEvent");
+    assert.equal(tooltip.event.getItemStack().getRef(), stack);
+    assert.equal(tooltip.event.getEntityPlayer().getRef(), player);
+    assert.equal(tooltip.event.getToolTip().getRef(), list);
+    assert.equal(tooltip.event.isAdvanced(), true);
 });
 
 test("keeps Forge channel registration virtual and rejects real network sends", () => {
