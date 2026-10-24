@@ -159,7 +159,23 @@ public final class LoaderCommand {
             throw new IOException("Required dependency " + dependency
                 + " is ambiguous in library directories: " + matches);
           }
-          Path resolved = matches.get(0).toRealPath();
+          Path candidate = matches.get(0);
+          Path resolved;
+          try {
+            resolved = candidate.toRealPath();
+          } catch (Exception e) {
+            resolved = candidate.toAbsolutePath().normalize();
+          }
+          if (!analyses.containsKey(resolved) && analyses.containsKey(candidate)) {
+            analyses.put(resolved, analyses.get(candidate));
+          }
+          if (!analyses.containsKey(resolved)) {
+            try {
+              analyses.put(resolved, new ModAnalyzer().analyze(resolved));
+            } catch (Exception ex) {
+              throw new IOException("Input was not analyzed: " + candidate, ex);
+            }
+          }
           if (!knownLibraryPaths.add(resolved)) continue;
           if (realInputs.contains(resolved)) continue;
           realLibraries.add(resolved);
@@ -189,7 +205,14 @@ public final class LoaderCommand {
       for (Path input : allInputs) {
         boolean library = libraryPaths.contains(input);
         ModAnalysis analysis = analyses.get(input);
-        if (analysis == null) throw new IOException("Input was not analyzed: " + input);
+        if (analysis == null) {
+          try {
+            analysis = new ModAnalyzer().analyze(input);
+            analyses.put(input, analysis);
+          } catch (Exception e) {
+            throw new IOException("Input was not analyzed: " + input, e);
+          }
+        }
         int methods = analysis.totalMethods();
         int fields = analysis.totalFields();
         String metadataModId = analysis.metadata().getModId();

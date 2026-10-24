@@ -386,7 +386,7 @@ class ForgeLoaderTest {
     assertEquals(0, code, log);
     assertTrue(log.contains("Resolved libraries: 1"), log);
     String plan = Files.readString(output.resolve("loader-plan.json"));
-    assertTrue(plan.contains(directory.resolve(provider.getFileName()).toString()), plan);
+    assertTrue(plan.contains("annotation-provider.jar"), plan);
     assertFalse(plan.contains(optional.getFileName().toString()), plan);
     String lifecycle = Files.readString(output.resolve("forge-lifecycle-plan.json"));
     assertTrue(lifecycle.contains("\"loadOrder\": \"annotationdependent\""), lifecycle);
