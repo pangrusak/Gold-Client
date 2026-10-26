@@ -222,9 +222,11 @@ The profile injector prefers this file when present and emits a classic
   `GuiWorldTpCommand.func_73876_c`, `RadarRenderer.setupRenderForList`, and
   `RadarRenderProvider.setupContextForList`. The remaining incomplete is
   explicit rather than guessed:
-  - MixinBooter (1): `LazyLoader.loadBytecode`. Its loop back edge sits after
-    the protected region containing the header, so the try/loop structuring
-    currently renders the iteration as a plain conditional.
+  - MixinBooter (1): `LazyLoader.loadBytecode`. The loop's back edge lies
+    outside the enclosing try range, after synthetic try-region markers whose
+    protected start and handler sit in the loop tail. The try/loop structuring
+    therefore renders the iteration as a plain conditional and still carries an
+    exception-stack value.
   - Biomes O' Plenty, Konkrete, and Universal Tweaks: no incomplete methods.
     A guard chain whose join is a protected region's start label now keeps the
     `TRY_BEGIN` marker with that label, so `ValueNode.isJson` and

@@ -305,6 +305,28 @@ test("serves embedded mod resources through Minecraft.getResourceManager", () =>
     }), /FileNotFoundException: demo:missing\.json/);
 });
 
+test("registers reload listeners through the native resource manager", () => {
+    const { bindings } = installFixture();
+    let registered = null;
+    const nativeManager = {
+        registerReloadListener(listener) {
+            registered = listener;
+            listener.$onResourceManagerReload(this);
+        }
+    };
+    const manager = bindings.adapt({ $mcResourceManager: nativeManager }).getResourceManager();
+    const calls = [];
+    const listener = value => calls.push(value);
+    manager.registerReloadListener(listener);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0], manager);
+    assert.equal(typeof registered?.$onResourceManagerReload, "function");
+    registered.$onResourceManagerReload(nativeManager);
+    assert.equal(calls.length, 2);
+    manager.func_110542_a(listener);
+    assert.equal(calls.length, 3);
+});
+
 test("merges native TeaVM resource lists and domain iterators", () => {
     const { bindings } = installFixture();
     const native = {
@@ -528,15 +550,28 @@ test("supports Forge Configuration category lifecycle", () => {
     const file = new bindings.virtualFileClass("config", "categories.cfg");
     const config = bindings.forge.construct(
         "net.minecraftforge.common.config.Configuration", [file, "1.0.0"]);
-    assert.equal(config.getCategory("mode"), null);
+    const mode = config.getCategory("MODE");
+    assert.equal(mode.getName(), "mode");
+    assert.equal(mode.getQualifiedName(), "mode");
+    assert.equal(config.hasCategory("MODE"), true);
+    assert.equal(config.getCategory("mode").getName(), "mode");
+    assert.equal(config.hasChanged(), true);
     const search = config.addCategory("search");
     assert.equal(search.getName(), "search");
     assert.equal(config.getCategory("search").getName(), "search");
-    const removed = config.addCategory("mode");
-    config.removeCategory(removed);
-    assert.equal(config.getCategory("mode"), null);
-    assert.equal(config.hasCategory("mode"), false);
-    assert.deepEqual(Array.from(config.getCategoryNames()), ["search"]);
+    config.removeCategory(search);
+    assert.equal(config.hasCategory("search"), false);
+    assert.deepEqual(Array.from(config.getCategoryNames()), ["mode"]);
+    const child = config.getCategory("parent.child");
+    assert.equal(child.getName(), "child");
+    assert.equal(child.getQualifiedName(), "parent.child");
+    assert.equal(config.getCategory("PARENT").getChild("child").getQualifiedName(),
+        "parent.child");
+    assert.equal(config.getCategory("parent").getChildren().length, 1);
+    config.removeCategory(config.getCategory("parent"));
+    assert.equal(config.hasCategory("parent"), false);
+    assert.equal(config.hasCategory("parent.child"), false);
+    assert.deepEqual(Array.from(config.getCategoryNames()), ["mode"]);
 });
 
 test("preserves translated Configuration subclass overrides", () => {
@@ -605,6 +640,8 @@ test("starts the injected bundle once the client is ready", () => {
     const locale = { $languageCode: "en_US", $properties3: properties };
     context.ModAPI.mcinstance = {
         $gameSettings: { $language: "en_us" },
+        $renderEngine: { $textureManager: true },
+        $mcResourceManager: { $resourceManager: true },
         $mcLanguageManager: {
             $getCurrentLanguage: () => locale
         }

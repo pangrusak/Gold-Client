@@ -1179,6 +1179,7 @@
             this.version = stringArgument(version);
             this.categories = new Map();
             this.changed = false;
+            this.caseSensitiveCustomCategories = false;
             this.modId = stringArgument(rest[0] ?? "unknown");
             this.load();
         }
@@ -1208,26 +1209,43 @@
         }
         hasChanged() { return this.changed; }
         getConfigFile() { return this.file; }
-        category(name) {
+        categoryKey(name) {
             const key = stringArgument(name);
-            if (!this.categories.has(key)) {
-                this.categories.set(key, { name: key, values: {}, comment: null, languageKey: null });
-            }
-            return this.categories.get(key);
+            return this.caseSensitiveCustomCategories ? key : key.toLowerCase();
+        }
+        category(name) {
+            const key = this.categoryKey(name);
+            const existing = this.categories.get(key);
+            if (existing) return existing;
+            const separator = key.lastIndexOf(".");
+            const parent = separator < 0 ? null : this.category(key.slice(0, separator));
+            const category = {
+                name: separator < 0 ? key : key.slice(separator + 1),
+                qualifiedName: key,
+                values: {},
+                comment: null,
+                languageKey: null,
+                parent,
+                children: []
+            };
+            this.categories.set(key, category);
+            if (parent) parent.children.push(category);
+            this.changed = true;
+            return category;
         }
         categoryView(category) {
             if (category.view) return category.view;
             const self = this;
             category.view = {
                 getName: () => category.name,
-                getQualifiedName: () => category.name,
+                getQualifiedName: () => category.qualifiedName,
                 setComment: comment => { category.comment = String(comment); },
                 getComment: () => category.comment,
                 setLanguageKey: key => { category.languageKey = String(key); },
-                getLanguageKey: () => category.languageKey ?? "config." + category.name,
+                getLanguageKey: () => category.languageKey ?? "config." + category.qualifiedName,
                 getOrderedConfigElements: () => Object.keys(category.values)
                     .sort()
-                    .map(key => self.get(category.name, key, category.values[key])),
+                    .map(key => self.get(category.qualifiedName, key, category.values[key])),
                 getValues: () => ({ ...category.values }),
                 get: key => category.values[stringArgument(key)],
                 containsKey: key => Object.prototype.hasOwnProperty.call(
@@ -1243,10 +1261,22 @@
                     self.changed = true;
                 },
                 hasChanged: () => self.changed,
-                getChildren: () => [],
-                getChild: () => null,
-                isChild: () => false,
-                setChild: () => {}
+                getChildren: () => category.children.map(child => self.categoryView(child)),
+                getChild: name => {
+                    const childName = self.categoryKey(name);
+                    const child = category.children.find(entry =>
+                        entry.name === childName || entry.qualifiedName === childName);
+                    return child ? self.categoryView(child) : null;
+                },
+                isChild: () => category.parent !== null,
+                setChild: child => {
+                    const target = typeof child === "string"
+                        ? self.category(category.qualifiedName + "." + child)
+                        : child;
+                    if (target && !category.children.includes(target)) {
+                        category.children.push(target);
+                    }
+                }
             };
             return category.view;
         }
@@ -1255,19 +1285,27 @@
             return this.categoryView(category);
         }
         getCategory(name) {
-            const key = stringArgument(name);
-            if (!this.categories.has(key)) return null;
-            return this.categoryView(this.categories.get(key));
+            return this.categoryView(this.category(name));
         }
         removeCategory(category) {
             const name = typeof category === "string"
-                ? stringArgument(category)
-                : (typeof category?.getName === "function" ? stringArgument(category.getName()) : null);
-            if (name === null || !this.categories.has(name)) return;
-            this.categories.delete(name);
+                ? this.categoryKey(category)
+                : (typeof category?.qualifiedName === "string"
+                    ? this.categoryKey(category.qualifiedName)
+                    : (typeof category?.getQualifiedName === "function"
+                        ? this.categoryKey(category.getQualifiedName())
+                        : (typeof category?.getName === "function"
+                            ? this.categoryKey(category.getName()) : null)));
+            const target = name === null ? null : this.categories.get(name);
+            if (!target) return;
+            for (const child of [...target.children]) this.removeCategory(child);
+            this.categories.delete(target.qualifiedName);
+            if (target.parent) {
+                target.parent.children = target.parent.children.filter(child => child !== target);
+            }
             this.changed = true;
         }
-        hasCategory(name) { return this.categories.has(stringArgument(name)); }
+        hasCategory(name) { return this.categories.has(this.categoryKey(name)); }
         getCategoryNames() { return [...this.categories.keys()].sort(); }
         addCustomCategoryComment(category, comment) {
             this.category(category).comment = String(comment);
@@ -2689,6 +2727,20 @@
             if (!functionName) return null;
             return nativeManager[functionName](...args);
         };
+        const invokeReloadListener = listener => {
+            if (typeof listener === "function") return listener(manager);
+            if (typeof listener?.onResourceManagerReload === "function") {
+                return listener.onResourceManagerReload(manager);
+            }
+            if (typeof listener?.$onResourceManagerReload === "function") {
+                return listener.$onResourceManagerReload(manager);
+            }
+            const runtime = global.GoldClientForge?.runtime ?? global.GoldClientRuntime;
+            if (typeof runtime?.invokeInstance === "function") {
+                return runtime.invokeInstance(listener, "onResourceManagerReload", manager);
+            }
+            fail("resource-manager", "reload listener cannot be invoked");
+        };
         const manager = {
             getResource(location) {
                 const parts = resourceLocationParts(location);
@@ -2721,11 +2773,33 @@
                 const native = callNative("getResourceDomains", []);
                 for (const value of nativeValues(native)) values.add(String(value));
                 return stringSet(values);
+            },
+            registerReloadListener(listener) {
+                const registerName = ["$registerReloadListener",
+                    "registerReloadListener", "func_110542_a"]
+                    .find(name => typeof nativeManager?.[name] === "function");
+                let invoked = false;
+                const callback = adaptCallback(() => {
+                    invoked = true;
+                    return invokeReloadListener(listener);
+                });
+                let result;
+                if (registerName) {
+                    result = nativeManager[registerName](callback);
+                } else {
+                    console.warn("[GoldForge resource-manager] native reload registration "
+                        + "is unavailable; the listener was invoked once but will not "
+                        + "receive future resource reloads");
+                }
+                if (!invoked) invokeReloadListener(listener);
+                return result;
             }
         };
         manager.$getResource = manager.getResource;
         manager.$getAllResources = manager.getAllResources;
         manager.$getResourceDomains = manager.getResourceDomains;
+        manager.$registerReloadListener = manager.registerReloadListener;
+        manager.func_110542_a = manager.registerReloadListener;
         return Object.freeze(manager);
     }
 
@@ -2748,8 +2822,11 @@
         const forge = global.GoldClientForge;
         const modApi = global.ModAPI;
         // postinit initializes ModAPI.mcinstance to {} before Minecraft exists.
-        // Wait for the real startGame hook, which installs $gameSettings.
-        const clientReady = Boolean(modApi?.settings && modApi?.mcinstance?.$gameSettings);
+        // startGame installs $gameSettings before the render engine and resource
+        // manager exist, so wait until the client has those services too.
+        const client = modApi?.mcinstance;
+        const clientReady = Boolean(modApi?.settings && client?.$gameSettings
+            && client?.$renderEngine && client?.$mcResourceManager);
         if (!forge || typeof forge.start !== "function" || !clientReady) {
             if (Date.now() < autoStartDeadline) {
                 autoStartTimer = global.setTimeout(attemptAutoStart, 250);
