@@ -2776,7 +2776,7 @@
             },
             registerReloadListener(listener) {
                 const registerName = ["$registerReloadListener",
-                    "registerReloadListener", "func_110542_a"]
+                    "registerReloadListener", "$func_110542_a", "func_110542_a"]
                     .find(name => typeof nativeManager?.[name] === "function");
                 if (!registerName) {
                     fail("resource-manager",

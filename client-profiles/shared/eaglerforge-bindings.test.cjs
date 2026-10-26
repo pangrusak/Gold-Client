@@ -345,6 +345,23 @@ test("fails explicitly when native resource reload registration is unavailable",
     assert.equal(calls, 0, "unsupported registration must not fake a one-time reload");
 });
 
+test("resolves TeaVM-prefixed SRG resource reload registration", () => {
+    const { bindings } = installFixture();
+    let registered = null;
+    const nativeManager = {
+        $func_110542_a(listener) {
+            registered = listener;
+        }
+    };
+    const manager = bindings.adapt({ $mcResourceManager: nativeManager }).getResourceManager();
+    let calls = 0;
+    manager.registerReloadListener(() => calls++);
+    assert.equal(calls, 0);
+    assert.equal(typeof registered?.$onResourceManagerReload, "function");
+    registered.$onResourceManagerReload(nativeManager);
+    assert.equal(calls, 1);
+});
+
 test("merges native TeaVM resource lists and domain iterators", () => {
     const { bindings } = installFixture();
     const native = {
