@@ -2778,21 +2778,12 @@
                 const registerName = ["$registerReloadListener",
                     "registerReloadListener", "func_110542_a"]
                     .find(name => typeof nativeManager?.[name] === "function");
-                let invoked = false;
-                const callback = adaptCallback(() => {
-                    invoked = true;
-                    return invokeReloadListener(listener);
-                });
-                let result;
-                if (registerName) {
-                    result = nativeManager[registerName](callback);
-                } else {
-                    console.warn("[GoldForge resource-manager] native reload registration "
-                        + "is unavailable; the listener was invoked once but will not "
-                        + "receive future resource reloads");
+                if (!registerName) {
+                    fail("resource-manager",
+                        "native resource reload listener registration is unavailable");
                 }
-                if (!invoked) invokeReloadListener(listener);
-                return result;
+                const callback = adaptCallback(() => invokeReloadListener(listener));
+                return nativeManager[registerName](callback);
             }
         };
         manager.$getResource = manager.getResource;

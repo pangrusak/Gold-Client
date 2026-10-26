@@ -305,26 +305,44 @@ test("serves embedded mod resources through Minecraft.getResourceManager", () =>
     }), /FileNotFoundException: demo:missing\.json/);
 });
 
-test("registers reload listeners through the native resource manager", () => {
+test("registers reload listeners without invoking them until a reload", () => {
     const { bindings } = installFixture();
-    let registered = null;
+    const registered = [];
     const nativeManager = {
         registerReloadListener(listener) {
-            registered = listener;
-            listener.$onResourceManagerReload(this);
+            registered.push(listener);
         }
     };
     const manager = bindings.adapt({ $mcResourceManager: nativeManager }).getResourceManager();
     const calls = [];
     const listener = value => calls.push(value);
+
     manager.registerReloadListener(listener);
+    assert.equal(calls.length, 0, "registration must not simulate a resource reload");
+    assert.equal(registered.length, 1);
+    assert.equal(typeof registered[0]?.$onResourceManagerReload, "function");
+
+    registered[0].$onResourceManagerReload(nativeManager);
     assert.equal(calls.length, 1);
     assert.equal(calls[0], manager);
-    assert.equal(typeof registered?.$onResourceManagerReload, "function");
-    registered.$onResourceManagerReload(nativeManager);
-    assert.equal(calls.length, 2);
+
+    registered[0].$onResourceManagerReload(nativeManager);
+    assert.equal(calls.length, 2, "each actual reload must reach the listener");
+
     manager.func_110542_a(listener);
+    assert.equal(calls.length, 2, "the SRG alias must also only register");
+    assert.equal(registered.length, 2);
+    registered[1].$onResourceManagerReload(nativeManager);
     assert.equal(calls.length, 3);
+});
+
+test("fails explicitly when native resource reload registration is unavailable", () => {
+    const { bindings } = installFixture();
+    const manager = bindings.adapt({ $mcResourceManager: {} }).getResourceManager();
+    let calls = 0;
+    assert.throws(() => manager.registerReloadListener(() => calls++),
+        /resource-manager.*native resource reload listener registration is unavailable/);
+    assert.equal(calls, 0, "unsupported registration must not fake a one-time reload");
 });
 
 test("merges native TeaVM resource lists and domain iterators", () => {
