@@ -1,5 +1,15 @@
 # Mod compatibility evidence and roadmap
 
+## 2026-10-26 takeover baseline
+
+The current `main` checkout is `11f5d99` (`Commit again`). On a clean Windows
+checkout with OpenJDK 17.0.20.1, Maven 3.10.0, and Node 24.19.0, the complete
+Maven suite passes: 327 tests run, 0 failures, 0 errors, and 4 intentional
+skips. The two CI Node suites also pass: 5 tests run, 0 failures. This is
+verification of the existing implementation, not evidence that arbitrary
+Forge mods run in Eaglercraft. The remaining runtime and transformation
+boundaries below are still explicit blockers.
+
 This document records evidence from the exact external JARs in `test-mods/`
 and the current supplied client profile. A translated algorithm slice does not
 mean that the whole mod, its loader integration, or its transformations work.
