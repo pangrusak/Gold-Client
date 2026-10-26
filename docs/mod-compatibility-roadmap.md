@@ -54,7 +54,12 @@ Current evidence:
   code uses the resource correctly.
 - [x] Merge native TeaVM resource lists and domain iterators with embedded mod
   resources instead of ignoring non-array native results.
-- [ ] Forge resource-pack APIs and resource reload listeners for mod packs.
+- [ ] Forge resource-pack APIs and end-to-end resource reload behavior for mod packs.
+  The EaglerForge adapter forwards native resource-manager reload-listener
+  registration (including TeaVM's `$func_110542_a` name) and does not invoke
+  listeners during registration. Node regression tests cover deferred callbacks
+  and explicit failure when the native hook is absent; an actual in-client
+  resource reload remains unverified.
 - [ ] Build-time coremod/ASM/Mixin execution. Mixins and coremods normally
   rewrite Minecraft bytecode, but this pipeline never has the host Minecraft
   bytecode; the current output keeps an explicit blocker rather than guessing.
