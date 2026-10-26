@@ -1955,6 +1955,11 @@ public final class JavaTranslator {
       return null;
     }
 
+    ConditionalRender loopContinue = renderLoopContinueSwitch(
+        operations, switchIndex, end, indent, context, labels,
+        value, defaultLabel, arms);
+    if (loopContinue != null) return loopContinue;
+
     Integer defaultIndex = labels.get(labelKey(defaultLabel));
     if (defaultIndex == null || defaultIndex <= switchIndex || defaultIndex > end) return null;
     Map<String, Integer> targetIndices = new HashMap<>();
@@ -2101,6 +2106,90 @@ public final class JavaTranslator {
     if (switchLabel != null) source.append(indent(indent)).append("}\n");
     int lastIndex = joinIndex < end ? joinIndex - 1 : end - 1;
     return new ConditionalRender(source.toString(), complete, lastIndex);
+  }
+
+  /**
+   * Lowers a loop's trailing switch whose cases continue the loop and whose
+   * default leaves it. The default block is inlined only when it is a
+   * straight-line terminal block, so the switch never falls into unrelated
+   * loop code and no loop-scope {@code break} is required.
+   */
+  private static ConditionalRender renderLoopContinueSwitch(
+      List<IrOperationModel> operations,
+      int switchIndex,
+      int end,
+      int indent,
+      TranslationContext context,
+      Map<String, Integer> labels,
+      String value,
+      String defaultLabel,
+      List<SwitchArm> arms) {
+    if (end <= switchIndex + 1 || end >= operations.size()) return null;
+    IrOperationModel backEdge = operations.get(end);
+    if (!"JUMP".equals(backEdge.kind()) || backEdge.operands().isEmpty()) return null;
+    String loopLabel = labelKey(backEdge.operands().get(0));
+    if (!context.isActiveLoop(loopLabel)) return null;
+
+    Integer defaultIndex = labels.get(labelKey(defaultLabel));
+    if (defaultIndex == null || defaultIndex < end) return null;
+    int defaultEnd = straightLineReturnEnd(operations, defaultIndex);
+    if (defaultEnd < 0) return null;
+
+    for (int index = switchIndex + 1; index < end; index++) {
+      if (!isLoopExitMetadata(operations.get(index))) return null;
+    }
+
+    String continueLabel = null;
+    for (SwitchArm arm : arms) {
+      Integer target = labels.get(labelKey(arm.label()));
+      if (target == null) return null;
+      String targetLoop = loopContinueLabel(operations, target, context, labels);
+      if (targetLoop == null || !loopLabel.equals(targetLoop)) return null;
+      continueLabel = targetLoop;
+    }
+    if (continueLabel == null) return null;
+
+    StringBuilder source = new StringBuilder();
+    source.append(indent(indent)).append("switch (")
+        .append(normalizeExpression(value)).append(") {\n");
+    for (SwitchArm arm : arms) {
+      source.append(indent(indent + 1)).append("case ")
+          .append(arm.key()).append(":\n");
+    }
+    source.append(indent(indent + 2)).append("continue;\n");
+    source.append(indent(indent + 1)).append("default:\n");
+    RenderResult defaultBody = renderRange(
+        operations, defaultIndex, defaultEnd + 1, indent + 2, context, labels);
+    source.append(defaultBody.source());
+    source.append(indent(indent)).append("}\n");
+    return new ConditionalRender(source.toString(), defaultBody.complete(), end - 1);
+  }
+
+  private static String loopContinueLabel(
+      List<IrOperationModel> operations,
+      int targetIndex,
+      TranslationContext context,
+      Map<String, Integer> labels) {
+    int index = targetIndex;
+    for (int hop = 0; hop < 8; hop++) {
+      if (index < 0 || index >= operations.size()) return null;
+      IrOperationModel label = operations.get(index);
+      if (!"LABEL".equals(label.kind()) || label.operands().isEmpty()) return null;
+      String name = labelKey(label.operands().get(0));
+      if (context.isActiveLoop(name)) return name;
+      int next = index + 1;
+      while (next < operations.size()
+          && "LABEL".equals(operations.get(next).kind())) next++;
+      if (next >= operations.size()) return null;
+      IrOperationModel jump = operations.get(next);
+      if (!"JUMP".equals(jump.kind()) || jump.operands().isEmpty()) return null;
+      String jumpLabel = labelKey(jump.operands().get(0));
+      if (context.isActiveLoop(jumpLabel)) return jumpLabel;
+      Integer jumpIndex = labels.get(jumpLabel);
+      if (jumpIndex == null || jumpIndex <= index) return null;
+      index = jumpIndex;
+    }
+    return null;
   }
 
   /**
@@ -2544,9 +2633,11 @@ public final class JavaTranslator {
     // operation ends the chain work.
     List<Integer> conditionals = new java.util.ArrayList<>();
     int scan = branchIndex;
+    int lastLabel = -1;
     while (scan < end) {
       IrOperationModel operation = operations.get(scan);
       if ("LABEL".equals(operation.kind())) {
+        lastLabel = scan;
         scan++;
         continue;
       }
@@ -2565,21 +2656,41 @@ public final class JavaTranslator {
       break;
     }
     if (conditionals.isEmpty() || conditionals.get(0) != branchIndex) return null;
-    // The chain has to fall through into its "then" block, so it cannot end in
-    // a control transfer of its own.
     if (scan >= end) return null;
+
+    int thenIndex;
     if (List.of("JUMP", "RETURN", "THROW", "TABLE_SWITCH", "LOOKUP_SWITCH",
         "TRY_BEGIN", "TRY_END", "CATCH_BEGIN").contains(operations.get(scan).kind())) {
-      return null;
-    }
-
-    int thenIndex = scan - 1;
-    while (thenIndex > branchIndex
-        && !"LABEL".equals(operations.get(thenIndex).kind())) {
-      thenIndex--;
-    }
-    if (thenIndex <= branchIndex || !"LABEL".equals(operations.get(thenIndex).kind())) {
-      return null;
+      // The scan can run past the "then" label into a value-producing
+      // conditional at the start of that arm. If the control transfer ends at
+      // the last label and some condition targets it, that label is the then
+      // block; conditions after it belong to the arm, not to the chain.
+      boolean thenTargeted = false;
+      if (lastLabel > branchIndex) {
+        for (int conditional : conditionals) {
+          Integer target = labels.get(labelKey(
+              operations.get(conditional).operands().get(1)));
+          if (target != null && target == lastLabel) {
+            thenTargeted = true;
+            break;
+          }
+        }
+      }
+      if (!thenTargeted) return null;
+      thenIndex = lastLabel;
+      final int thenBlock = thenIndex;
+      conditionals.removeIf(index -> index >= thenBlock);
+      if (conditionals.isEmpty() || conditionals.get(0) != branchIndex) return null;
+    } else {
+      thenIndex = scan - 1;
+      while (thenIndex > branchIndex
+          && !"LABEL".equals(operations.get(thenIndex).kind())) {
+        thenIndex--;
+      }
+      if (thenIndex <= branchIndex
+          || !"LABEL".equals(operations.get(thenIndex).kind())) {
+        return null;
+      }
     }
 
     Integer elseIndex = null;
@@ -5186,21 +5297,31 @@ public final class JavaTranslator {
       Map<String, Integer> labels) {
     String loopLabel = labelKey(operations.get(loopHeaderIndex).operands().get(0));
     String exitLabel = labelKey(operations.get(loop.exitIndex()).operands().get(0));
+    boolean farExit = loop.exitIndex() > loop.backEdgeIndex() + 1 && loop.exitIndex() < end;
+    String skipLabel = farExit ? "_loopExit" + loopHeaderIndex : null;
     boolean labeled = needsLoopLabel(
         operations, loopHeaderIndex + 1, loop.backEdgeIndex(), loopLabel)
         || needsExitBreakLabel(
             operations, loopHeaderIndex + 1, loop.backEdgeIndex(), exitLabel);
     context.enterLoop(loopLabel, labeled);
-    context.enterLoopExit(exitLabel);
+    if (farExit) context.enterSkipExit(exitLabel, skipLabel);
+    else context.enterLoopExit(exitLabel);
     RenderResult body;
     try {
       body = renderRange(
           operations, loopHeaderIndex + 1, loop.backEdgeIndex(), indent + 1, context, labels);
     } finally {
-      context.exitLoopExit();
+      if (farExit) context.exitSkipExit();
+      else context.exitLoopExit();
       context.exitLoop();
     }
+    RenderResult continuation = null;
+    if (farExit) {
+      continuation = renderRange(
+          operations, loop.backEdgeIndex() + 1, loop.exitIndex(), indent + 1, context, labels);
+    }
     StringBuilder source = new StringBuilder();
+    if (farExit) source.append(indent(indent)).append(jsLabel(skipLabel)).append(": {\n");
     source.append(indent(indent));
     if (labeled) source.append(jsLabel(loopLabel)).append(": ");
     source.append("while (true) {\n")
@@ -5209,7 +5330,13 @@ public final class JavaTranslator {
       source.append(indent(indent + 1)).append("break;\n");
     }
     source.append(indent(indent)).append("}\n");
-    return new ConditionalRender(source.toString(), body.complete(), loop.backEdgeIndex());
+    if (continuation != null) {
+      source.append(continuation.source());
+      source.append(indent(indent)).append("}\n");
+    }
+    boolean complete = body.complete() && (continuation == null || continuation.complete());
+    int lastIndex = farExit ? loop.exitIndex() - 1 : loop.backEdgeIndex();
+    return new ConditionalRender(source.toString(), complete, lastIndex);
   }
 
   /**

@@ -35,8 +35,9 @@ Current evidence:
   methods, and exits `0`.
 - [x] Xaero's Minimap alone exits `2` and reports the missing `xaerolib`
   dependency.
-- [x] Xaero's Minimap + XaeroLib exits `2`, reports both coremod plugins, and
-  names the one incomplete `DropDownWidget.drawSlot` method.
+- [x] Xaero's Minimap + XaeroLib exits `2` and reports both coremod plugins;
+  all 1748 classes translate with zero incomplete methods, including
+  `DropDownWidget.drawSlot`.
 - [x] The generated HTML contains no external `<script src>` or non-`data:`
   stylesheet link, and loads in a headless Chromium browser.
 - [x] Embedded files are readable through
@@ -164,14 +165,17 @@ The profile injector prefers this file when present and emits a classic
   0 incomplete; Mixin/coremod blockers), Biomes O' Plenty (551 classes,
   0 incomplete; ready lifecycle), Universal Tweaks (1191 classes, 0 incomplete;
   Mixin/coremod and missing dependency blockers), Xaero's Minimap
-  (1280 classes, 1 incomplete; coremod and missing `xaerolib` blockers), and
+  (1280 classes, 0 incomplete; coremod and missing `xaerolib` blockers), and
   MixinBooter (1305 classes, 1 incomplete; no `@Mod` entry plus Mixin/coremod
-  blockers). Each single-file bundle passed `node --check` and loaded in a Node
-  `vm` sandbox exposing `GoldClientForge` with the expected mod IDs and class
-  counts (for example Biomes O' Plenty: 551 classes, 0 blockers). FancyMenu and
-  Konkrete loaded together (901 classes) clear the missing-dependency blocker;
-  only the Mixin/coremod blockers remain. These are structural translation
-  results, not proof that the mods run without real Minecraft/Forge bindings.
+  blockers). Xaero's Minimap plus XaeroLib translates 1748 classes and 8815
+  methods with 0 incomplete methods; both coremod loading plugins remain
+  explicit blockers. Each single-file bundle passed `node --check` and loaded
+  in a Node `vm` sandbox exposing `GoldClientForge` with the expected mod IDs
+  and class counts (for example Biomes O' Plenty: 551 classes, 0 blockers).
+  FancyMenu and Konkrete loaded together (901 classes) clear the
+  missing-dependency blocker; only the Mixin/coremod blockers remain. These are
+  structural translation results, not proof that the mods run without real
+  Minecraft/Forge bindings.
 - [x] Loop/exception structuring now keeps a protected region outside a loop
   that exits onto the region's start, keeps a loop header that is also the
   start of a protected range, keeps a try's catch handler inside the
@@ -204,17 +208,23 @@ The profile injector prefers this file when present and emits a classic
   label is registered as a break target; this fixed
   `JsonReader.nextUnquotedValue`. A constructor's `DUP` stack plumbing is now
   ignored when folding a conditional into a value expression, so the method
-  materializes one ternary instead of empty branches. The remaining
-  incompletes are explicit rather than guessed:
+  materializes one ternary instead of empty branches. A trailing switch whose
+  cases jump back to the loop header and whose default is a straight-line
+  return now lowers to `switch`/`continue`/`default`, and a break loop with
+  continuation code before its exit uses a labeled skip so an early exit no
+  longer falls into the switch-default block; this removed MixinBooter's
+  `ExprProcessor.nextMeaningfulOffset`. A condition chain whose scan runs into
+  a value-producing conditional inside the then arm now rewinds to the last
+  targeted label, so XaeroLib's `DropDownWidget.drawSlot` renders both arms as
+  one if/else; Xaero's Minimap and Xaero's Minimap plus XaeroLib now have no
+  incomplete methods. A decision tree that feeds a field write is materialized
+  as one nested ternary, which removed `GuiAddWaypoint.updateMutual`,
+  `GuiWorldTpCommand.func_73876_c`, `RadarRenderer.setupRenderForList`, and
+  `RadarRenderProvider.setupContextForList`. The remaining incomplete is
+  explicit rather than guessed:
   - MixinBooter (1): `LazyLoader.loadBytecode`. Its loop back edge sits after
     the protected region containing the header, so the try/loop structuring
     currently renders the iteration as a plain conditional.
-  - Xaero's Minimap (1): `MinimapWriter.writeChunk`, a loop/switch value
-    merge that also carries an exception-stack value. A decision tree that
-    feeds a field write is now materialized as one nested ternary, which
-    removed `GuiAddWaypoint.updateMutual`, `GuiWorldTpCommand.func_73876_c`,
-    `RadarRenderer.setupRenderForList`, and
-    `RadarRenderProvider.setupContextForList`.
   - Biomes O' Plenty, Konkrete, and Universal Tweaks: no incomplete methods.
     A guard chain whose join is a protected region's start label now keeps the
     `TRY_BEGIN` marker with that label, so `ValueNode.isJson` and

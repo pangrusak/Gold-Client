@@ -32,6 +32,7 @@ node --test bridge-proof/test-injector.cjs
 - CLI entry: `src/main/java/com/goldclient/Main.java`.
 - `ModAnalyzer` builds `ModAnalysis` / `ClassModel`; `IntermediateRepresentationAnalyzer` and `ControlFlowAnalyzer` produce the IR.
 - `JavaScriptTranslator` and `JavaTranslator` lower that IR; `JavaScriptModTranslationExporter` writes class modules, `mod-index.js`, manifests, runtime resources, and diagnostics.
+- `JavaScriptBundleExporter` packs that module tree into one classic script; `EaglerForgeModExporter` adds the pinned member map, the EaglerForge binding adapter, and auto-start metadata for the Mod Manager upload file.
 - `planner/` handles multi-JAR selection (`MultiJarPlanner`), byte-preserving staging (`PlanJarStager`), pinned inputs (`TranslationPipeline`), and the `pipeline` subcommand.
 
 CLI distinctions that are easy to get wrong:
@@ -42,10 +43,11 @@ java -jar target/gold-client-1.jar mod.jar --translate --output-dir out
 java -jar target/gold-client-1.jar mod.jar --class a.b.C --method m --translate
 java -jar target/gold-client-1.jar mod.jar --to-js out --main-class a.b.C
 java -jar target/gold-client-1.jar pipeline --input a.jar --root a.b.C --report report.json
-java -jar target/gold-client-1.jar loader --input a.jar --input b.jar --output out/ --report out/loader-plan.json [--single-file --compact]
+java -jar target/gold-client-1.jar loader --input a.jar --input b.jar --output out/ --report out/loader-plan.json [--single-file] [--mod-file out/gold-client-mod.js] [--compact]
 ```
 
 - `pipeline` and `loader` are first-argument subcommands; everything else takes the mod JAR as first argument. `loader` builds one shared JS bundle from multiple JARs and exits `2` on blockers while still writing the bundle and plan.
+- `--mod-file` is the Mod Manager upload artifact: one classic script with the translated bundle, member map, binding adapter, and auto-start. It is packaging evidence, not proof that an upload or the mod's game APIs work. The adapter/member-map sources are classpath resources copied from `client-profiles/shared/`, so keep those inputs in the Maven resource configuration.
 - `--translate-js` is the custom whole-mod JavaScript exporter; `--to-js` is TeaVM compilation.
 - `--translate` needs both `--class` and `--method`, or a whole-mod export with `--output-dir`.
 - TeaVM requires a real `public static void main(String[])` selected via `--main-class`. Forge/Fabric loader entrypoints are never auto-selected.

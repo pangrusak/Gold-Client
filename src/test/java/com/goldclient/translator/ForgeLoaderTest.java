@@ -161,6 +161,7 @@ class ForgeLoaderTest {
     org.junit.jupiter.api.Assumptions.assumeTrue(Files.isRegularFile(jar),
         "AppleSkin fixture is missing");
     Path output = tempDir.resolve("cli-loader");
+    Path modFile = output.resolve(EaglerForgeModExporter.DEFAULT_FILE_NAME);
     ByteArrayOutputStream stdout = new ByteArrayOutputStream();
     ByteArrayOutputStream stderr = new ByteArrayOutputStream();
     int code;
@@ -168,7 +169,7 @@ class ForgeLoaderTest {
          PrintStream err = new PrintStream(stderr, true, StandardCharsets.UTF_8)) {
       code = LoaderCommand.run(new String[] {
           "--input", jar.toString(), "--output", output.toString(),
-          "--single-file", "--compact"
+          "--single-file", "--mod-file", modFile.toString(), "--compact"
       }, out, err);
     }
     String log = stdout.toString(StandardCharsets.UTF_8)
@@ -177,6 +178,7 @@ class ForgeLoaderTest {
     assertTrue(log.contains("Translation complete: yes"), log);
     assertTrue(log.contains("Lifecycle status: READY_FOR_REAL_FORGE_HOST"), log);
     assertTrue(log.contains("Single-file bundle:"), log);
+    assertTrue(log.contains("EaglerForge mod file:"), log);
     assertTrue(Files.isRegularFile(output.resolve("loader-plan.json")));
     assertTrue(Files.isRegularFile(output.resolve("forge-lifecycle.js")));
     Path singleFile = output.resolve(JavaScriptBundleExporter.DEFAULT_FILE_NAME);
@@ -184,10 +186,21 @@ class ForgeLoaderTest {
     String singleSource = Files.readString(singleFile);
     assertFalse(singleSource.contains("import "), "single file must not use ESM imports");
     assertTrue(singleSource.contains("global.GoldClientForge"), singleSource);
+    assertFalse(singleSource.contains("GoldClientModFile"),
+        "the plain single-file bundle must not include the upload wrapper");
+    assertTrue(Files.isRegularFile(modFile));
+    String modSource = Files.readString(modFile);
+    assertTrue(modSource.contains("GoldClientModFile"), modSource.substring(0, 300));
+    assertTrue(modSource.contains("goldClientForgeMemberMap"));
+    assertTrue(modSource.contains("goldClientForgeBindings"));
     String plan = Files.readString(output.resolve("loader-plan.json"));
     assertTrue(plan.contains("\"translationComplete\": true"));
     assertTrue(plan.contains("\"singleFile\""));
     assertTrue(plan.contains("\"singleFileModuleCount\""));
+    assertTrue(plan.contains("\"modFile\""));
+    assertTrue(plan.contains("\"modFileMemberMapEntries\""));
+    assertTrue(plan.contains("\"modFileAdapterIncluded\": true"));
+    assertTrue(plan.contains("\"modFileAutoStart\": true"));
   }
 
   @Test

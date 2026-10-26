@@ -51,23 +51,56 @@ public final class JavaScriptBundleExporter {
 
   public static BundleSummary write(Path bundleDirectory, Path outputFile, boolean compact)
       throws IOException {
+    return write(bundleDirectory, outputFile, compact, Set.of());
+  }
+
+  /**
+   * Writes the classic-script bundle while ignoring any generated files that
+   * already exist in the bundle directory. Callers that write several
+   * self-contained files into one directory must pass every sibling output so
+   * a previous file is not nested into the next one.
+   */
+  public static BundleSummary write(Path bundleDirectory, Path outputFile, boolean compact,
+      Set<Path> additionalExcludedOutputs) throws IOException {
     Path bundle = bundleDirectory.toAbsolutePath().normalize();
     Path output = outputFile.toAbsolutePath().normalize();
-    String source = bundle(bundle, output, compact);
+    Set<Path> excluded = normalizedExclusions(bundle, additionalExcludedOutputs);
+    String source = bundle(bundle, excluded, compact);
     Files.createDirectories(output.getParent());
     Files.writeString(output, source, StandardCharsets.UTF_8);
-    return new BundleSummary(countModules(bundle, output), source.getBytes(StandardCharsets.UTF_8).length,
+    return new BundleSummary(countModulesExcluded(bundle, excluded), source.getBytes(StandardCharsets.UTF_8).length,
         ENTRY_MODULE);
   }
 
   public static String bundle(Path bundleDirectory, boolean compact) throws IOException {
-    Path bundle = bundleDirectory.toAbsolutePath().normalize();
-    return bundle(bundle, null, compact);
+    return bundle(bundleDirectory, compact, Set.of());
   }
 
-  private static String bundle(Path bundle, Path excludedOutput, boolean compact)
+  public static String bundle(Path bundleDirectory, boolean compact,
+      Set<Path> additionalExcludedOutputs) throws IOException {
+    Path bundle = bundleDirectory.toAbsolutePath().normalize();
+    return bundle(bundle, normalizedExclusions(bundle, additionalExcludedOutputs), compact);
+  }
+
+  public static int countModules(Path bundleDirectory, Set<Path> additionalExcludedOutputs)
       throws IOException {
-    Map<String, String> modules = readModules(bundle, excludedOutput);
+    Path bundle = bundleDirectory.toAbsolutePath().normalize();
+    return countModulesExcluded(bundle, normalizedExclusions(bundle, additionalExcludedOutputs));
+  }
+
+  private static Set<Path> normalizedExclusions(Path bundle, Set<Path> paths) {
+    Set<Path> excluded = new LinkedHashSet<>();
+    for (Path path : paths) {
+      if (path == null) continue;
+      Path normalized = path.toAbsolutePath().normalize();
+      if (normalized.startsWith(bundle)) excluded.add(normalized);
+    }
+    return excluded;
+  }
+
+  private static String bundle(Path bundle, Set<Path> excludedOutputs, boolean compact)
+      throws IOException {
+    Map<String, String> modules = readModules(bundle, excludedOutputs);
     if (!modules.containsKey(ENTRY_MODULE)) {
       throw new IOException("Bundle is missing " + ENTRY_MODULE);
     }
@@ -157,14 +190,13 @@ public final class JavaScriptBundleExporter {
     return json.toString();
   }
 
-  private static Map<String, String> readModules(Path bundle, Path excludedOutput)
+  private static Map<String, String> readModules(Path bundle, Set<Path> excludedOutputs)
       throws IOException {
     List<Path> files;
     try (Stream<Path> stream = Files.walk(bundle)) {
       files = stream.filter(Files::isRegularFile)
           .filter(path -> path.getFileName().toString().endsWith(".js"))
-          .filter(path -> excludedOutput == null
-              || !path.toAbsolutePath().normalize().equals(excludedOutput))
+          .filter(path -> !excludedOutputs.contains(path.toAbsolutePath().normalize()))
           .sorted(Comparator.comparing(path -> relativeKey(bundle, path)))
           .toList();
     }
@@ -176,8 +208,8 @@ public final class JavaScriptBundleExporter {
     return modules;
   }
 
-  private static int countModules(Path bundle, Path excludedOutput) throws IOException {
-    return readModules(bundle, excludedOutput).size();
+  private static int countModulesExcluded(Path bundle, Set<Path> excludedOutputs) throws IOException {
+    return readModules(bundle, excludedOutputs).size();
   }
 
   private static String relativeKey(Path root, Path file) {
@@ -322,3 +354,4 @@ public final class JavaScriptBundleExporter {
         .replace("\n", "\\n").replace("\r", "\\r") + "\"";
   }
 }
+

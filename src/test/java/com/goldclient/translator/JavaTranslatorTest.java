@@ -530,6 +530,60 @@ class JavaTranslatorTest {
   }
 
   @Test
+  void translatesTrailingLoopSwitchWhoseCasesContinueAndDefaultReturns() {
+    IrMethodModel method = new IrMethodModel(
+        "nextMeaningfulOffset",
+        "(Lorg/jetbrains/java/decompiler/code/cfg/BasicBlock;I)I",
+        List.of(
+            new IrOperationModel("LOCAL_READ", List.of("local0"), 0),
+            new IrOperationModel("CALL_VALUE", List.of("local0.getSeq()"), 1),
+            new IrOperationModel("LOCAL_WRITE", List.of("local2", "local0.getSeq()"), 2),
+            new IrOperationModel("LABEL", List.of("L0"), 3),
+            new IrOperationModel("LOCAL_WRITE",
+                List.of("local1", "GoldClientRuntime.toInt32(local1 + (1))"), 4),
+            new IrOperationModel("LOCAL_READ", List.of("local1"), 5),
+            new IrOperationModel("LOCAL_READ", List.of("local2"), 6),
+            new IrOperationModel("CALL_VALUE", List.of("local2.length()"), 7),
+            new IrOperationModel("CONDITIONAL_BRANCH",
+                List.of("local1 >= local2.length()", "L1"), 8),
+            new IrOperationModel("LOCAL_READ", List.of("local2"), 9),
+            new IrOperationModel("LOCAL_READ", List.of("local1"), 10),
+            new IrOperationModel("CALL_VALUE", List.of("local2.getInstr(local1)"), 11),
+            new IrOperationModel("FIELD_READ",
+                List.of("local2.getInstr(local1)",
+                    "org.jetbrains.java.decompiler.code.Instruction.opcode",
+                    "local2.getInstr(local1).opcode"), 12),
+            new IrOperationModel("LOOKUP_SWITCH",
+                List.of("local2.getInstr(local1).opcode", "L2", "0", "L3", "54", "L3",
+                    "55", "L3", "56", "L3", "57", "L3", "58", "L3"), 13),
+            new IrOperationModel("LABEL", List.of("L3"), 14),
+            new IrOperationModel("JUMP", List.of("L0"), 15),
+            new IrOperationModel("LABEL", List.of("L2"), 16),
+            new IrOperationModel("LOCAL_READ", List.of("local0"), 17),
+            new IrOperationModel("LOCAL_READ", List.of("local1"), 18),
+            new IrOperationModel("CALL_VALUE", List.of("local0.getOldOffset(local1)"), 19),
+            new IrOperationModel("CALL_VALUE",
+                List.of("GoldClientRuntime.invokeInstance(local0.getOldOffset(local1), \"intValue\")"), 20),
+            new IrOperationModel("RETURN",
+                List.of("GoldClientRuntime.invokeInstance(local0.getOldOffset(local1), \"intValue\")"), 21),
+            new IrOperationModel("LABEL", List.of("L1"), 22),
+            new IrOperationModel("CONSTANT", List.of("-1"), 23),
+            new IrOperationModel("RETURN", List.of("-1"), 24)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("switch (local2.getInstr(local1).opcode)"), result.source());
+    assertTrue(result.source().contains("case 0:"), result.source());
+    assertTrue(result.source().contains("case 58:"), result.source());
+    assertTrue(result.source().contains("continue;"), result.source());
+    assertTrue(result.source().contains("default:"), result.source());
+    assertTrue(result.source().contains("break _loopExit"), result.source());
+    assertTrue(result.source().contains("return GoldClientRuntime.invokeInstance("), result.source());
+    assertFalse(result.source().contains("unsupported(\"LOOKUP_SWITCH\""), result.source());
+  }
+
+  @Test
   void rendersArrayStoreStatements() {
     IrMethodModel method = new IrMethodModel("write", "([III)V", List.of(
         new IrOperationModel("ARRAY_WRITE", List.of("array", "index", "value"), 0),
@@ -1080,6 +1134,46 @@ class JavaTranslatorTest {
     assertTrue(result.complete(), result.source());
     assertTrue(result.source().contains(
         "var local4 = (isOutput == 0 ? Focus.Mode.OUTPUT : Focus.Mode.INPUT);"), result.source());
+    assertTrue(!result.source().contains("<unknown>"), result.source());
+    assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
+  }
+
+  @Test
+  void mergesConditionChainWhenEachArmAssignsTheSameLocal() {
+    IrMethodModel method = new IrMethodModel("drawSlot", "()V", List.of(
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("outer == 0", "Lelse"), 0),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("inner == 0", "Lthen"), 1),
+        new IrOperationModel("LABEL", List.of("Lmid"), 2),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("other == 0", "Lelse"), 3),
+        new IrOperationModel("LABEL", List.of("Lthen"), 4),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("pickA == 0", "LvalueA"), 5),
+        new IrOperationModel("FIELD_READ", List.of("local0.a", "Example.a", "local0.a"), 6),
+        new IrOperationModel("JUMP", List.of("LmergeA"), 7),
+        new IrOperationModel("LABEL", List.of("LvalueA"), 8),
+        new IrOperationModel("CONSTANT", List.of("-1"), 9),
+        new IrOperationModel("LABEL", List.of("LmergeA"), 10),
+        new IrOperationModel("LOCAL_WRITE", List.of("local9", "<unknown>"), 11),
+        new IrOperationModel("JUMP", List.of("Ljoin"), 12),
+        new IrOperationModel("LABEL", List.of("Lelse"), 13),
+        new IrOperationModel("CONDITIONAL_BRANCH", List.of("pickB == 0", "LvalueB"), 14),
+        new IrOperationModel("FIELD_READ", List.of("local0.b", "Example.b", "local0.b"), 15),
+        new IrOperationModel("JUMP", List.of("LmergeB"), 16),
+        new IrOperationModel("LABEL", List.of("LvalueB"), 17),
+        new IrOperationModel("CONSTANT", List.of("-2"), 18),
+        new IrOperationModel("LABEL", List.of("LmergeB"), 19),
+        new IrOperationModel("LOCAL_WRITE", List.of("local9", "<unknown>"), 20),
+        new IrOperationModel("LABEL", List.of("Ljoin"), 21),
+        new IrOperationModel("RETURN", List.of(), 22)));
+
+    TranslationResult result = new JavaTranslator().translate(method);
+
+    assertTrue(result.complete(), result.source());
+    assertTrue(result.source().contains("if ("), result.source());
+    assertTrue(result.source().contains("} else {"), result.source());
+    assertTrue(result.source().contains("local9 = (pickA == 0 ? -1 : local0.a);"),
+        result.source());
+    assertTrue(result.source().contains("local9 = (pickB == 0 ? -2 : local0.b);"),
+        result.source());
     assertTrue(!result.source().contains("<unknown>"), result.source());
     assertTrue(!result.source().contains("unsupported(\"JUMP\""), result.source());
   }

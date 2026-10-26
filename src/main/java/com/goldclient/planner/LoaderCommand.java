@@ -6,6 +6,7 @@ import com.goldclient.model.AnnotationData;
 import com.goldclient.model.ClassModel;
 import com.goldclient.translator.ForgeDependencyGraph;
 import com.goldclient.translator.ForgeLifecycleExporter;
+import com.goldclient.translator.EaglerForgeModExporter;
 import com.goldclient.translator.ForgeTransformationInspector;
 import com.goldclient.translator.JavaScriptBundleExporter;
 import com.goldclient.translator.JavaScriptModTranslationExporter;
@@ -44,6 +45,7 @@ public final class LoaderCommand {
     List<Path> libraryDirectories = new ArrayList<>();
     Path output = null;
     Path reportFile = null;
+    Path modFile = null;
     boolean singleFile = false;
     boolean compact = false;
     try {
@@ -75,6 +77,10 @@ public final class LoaderCommand {
           case "--report" -> {
             if (reportFile != null) throw new IllegalArgumentException("Duplicate --report");
             reportFile = Path.of(value).toAbsolutePath().normalize();
+          }
+          case "--mod-file" -> {
+            if (modFile != null) throw new IllegalArgumentException("Duplicate --mod-file");
+            modFile = Path.of(value).toAbsolutePath().normalize();
           }
           default -> throw new IllegalArgumentException("Unknown loader option: " + flag);
         }
@@ -252,12 +258,6 @@ public final class LoaderCommand {
       JavaScriptModTranslationExporter.ExportReport export =
           new JavaScriptModTranslationExporter().export(allInputs, classes, metadataModIds,
               libraryClasses, libraryModIds, destination);
-      Path singleFileOutput = null;
-      JavaScriptBundleExporter.BundleSummary singleFileSummary = null;
-      if (singleFile) {
-        singleFileOutput = destination.resolve(JavaScriptBundleExporter.DEFAULT_FILE_NAME);
-        singleFileSummary = JavaScriptBundleExporter.write(destination, singleFileOutput, compact);
-      }
       JsonObject lifecycle = JsonParser.parseString(Files.readString(
           destination.resolve("forge-lifecycle-plan.json"), StandardCharsets.UTF_8))
           .getAsJsonObject();
@@ -267,6 +267,29 @@ public final class LoaderCommand {
         for (JsonElement mod : mods) {
           modIds.add(mod.getAsJsonObject().get("modId").getAsString());
         }
+      }
+      Path singleFileOutput = null;
+      JavaScriptBundleExporter.BundleSummary singleFileSummary = null;
+      if (singleFile) {
+        singleFileOutput = destination.resolve(JavaScriptBundleExporter.DEFAULT_FILE_NAME);
+        Set<Path> exclusions = new LinkedHashSet<>();
+        exclusions.add(singleFileOutput);
+        if (modFile != null) exclusions.add(modFile);
+        exclusions.add(destination.resolve(EaglerForgeModExporter.DEFAULT_FILE_NAME));
+        singleFileSummary = JavaScriptBundleExporter.write(
+            destination, singleFileOutput, compact, exclusions);
+      }
+      Path eaglerForgeModOutput = null;
+      EaglerForgeModExporter.ModFileSummary eaglerForgeModSummary = null;
+      if (modFile != null) {
+        eaglerForgeModOutput = modFile;
+        Set<Path> exclusions = new LinkedHashSet<>();
+        exclusions.add(eaglerForgeModOutput);
+        if (singleFileOutput != null) exclusions.add(singleFileOutput);
+        exclusions.add(destination.resolve(JavaScriptBundleExporter.DEFAULT_FILE_NAME));
+        exclusions.add(destination.resolve(EaglerForgeModExporter.DEFAULT_FILE_NAME));
+        eaglerForgeModSummary = EaglerForgeModExporter.write(
+            destination, eaglerForgeModOutput, compact, modIds, exclusions);
       }
       Set<String> blockerSet = new LinkedHashSet<>();
       JsonArray blockers = lifecycle.getAsJsonArray("blockers");
@@ -327,6 +350,14 @@ public final class LoaderCommand {
         report.put("singleFileModuleCount", singleFileSummary.moduleCount());
         report.put("singleFileBytes", singleFileSummary.bytes());
       }
+      if (eaglerForgeModSummary != null) {
+        report.put("modFile", eaglerForgeModSummary.path().toString());
+        report.put("modFileBytes", eaglerForgeModSummary.bytes());
+        report.put("modFileModuleCount", eaglerForgeModSummary.moduleCount());
+        report.put("modFileMemberMapEntries", eaglerForgeModSummary.memberMapEntries());
+        report.put("modFileAdapterIncluded", true);
+        report.put("modFileAutoStart", eaglerForgeModSummary.autoStart());
+      }
       Files.createDirectories(reportFile.getParent());
       Files.writeString(reportFile,
           new GsonBuilder().setPrettyPrinting().create().toJson(report) + System.lineSeparator(),
@@ -364,6 +395,13 @@ public final class LoaderCommand {
         out.println("Single-file bundle: " + singleFileOutput);
         out.println("Single-file modules: " + singleFileSummary.moduleCount());
       }
+      if (eaglerForgeModSummary != null) {
+        out.println("EaglerForge mod file: " + eaglerForgeModOutput);
+        out.println("EaglerForge mod file modules: " + eaglerForgeModSummary.moduleCount());
+        out.println("EaglerForge mod file member mappings: "
+            + eaglerForgeModSummary.memberMapEntries());
+        out.println("EaglerForge mod file auto-start: yes");
+      }
       out.println("Report: " + reportFile);
       out.println("Note: a loader bundle is not proof that every Forge/Minecraft API is bound.");
       return blockerList.isEmpty() && export.incompleteCount() == 0 ? 0 : 2;
@@ -377,7 +415,7 @@ public final class LoaderCommand {
     out.println("""
         Usage: gold-client loader --input <mod.jar> [--input <dependency-mod.jar> ...] \
         [--library <api-provider.jar> ...] [--library-dir <directory> ...] \
-        --output <directory> [--report <file>] [--single-file [--compact]]
+        --output <directory> [--report <file>] [--single-file] [--mod-file <file>] [--compact]
           Builds one shared JavaScript Forge loader bundle from several mod JARs.
           --input may be repeated. Duplicate class definitions are rejected.
           --library repeats an API/dependency JAR whose classes are bundled but
@@ -385,7 +423,10 @@ public final class LoaderCommand {
           --library-dir scans JAR metadata and adds only the required dependency
           closure as libraries; optional dependencies are not selected.
           --single-file writes gold-client-forge.js as one classic-script file.
-          --compact strips full-line comments and blank lines from that file.
+          --mod-file writes one EaglerForge Mod Manager upload file containing
+          the member map, binding adapter, translated bundle, and auto-start.
+          --compact strips full-line comments and blank lines from generated
+          module sources.
           Exits 2 when lifecycle blockers or incomplete methods remain.
         """);
   }

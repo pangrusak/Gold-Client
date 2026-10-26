@@ -20,7 +20,9 @@ The latest recorded AppleSkin + JEI loader build translates 393 classes and 2,28
 
 The current `loader --single-file --compact` smoke matrix covers 12 tracked JARs, including Biomes O' Plenty, Clumps, EnchantmentDescriptions, FancyMenu, Konkrete, MixinBooter, Universal Tweaks, and Xaero's Minimap. Every generated `gold-client-forge.js` passes `node --check`; per-input class counts, incomplete methods, and explicit blockers are recorded in `docs/mod-compatibility-roadmap.md`.
 
-**Build/CI status:** the current checkpoint passed `mvn --batch-mode test` (292 tests, 0 failures, 0 errors, 3 optional skips), `mvn --batch-mode verify`, and the standalone Node suites. The older `5e7ef56` failure note is historical.
+**Build/CI status:** the current checkpoint passed `mvn --batch-mode test` (327 tests, 0 failures, 0 errors, 3 optional skips), `mvn --batch-mode verify`, and the standalone Node suites. The older `5e7ef56` failure note is historical.
+
+The loader also has a packaging path for the actual upload flow: `loader --mod-file <file>` writes one classic-script file that embeds the translated bundle, the pinned SRG-to-MCP member map, the EaglerForge binding adapter, and the browser entrypoint. On an EaglerForge-injected client the embedded adapter installs `goldClientForgeBindings` and auto-starts the Forge lifecycle when the client exposes its game settings. This is a packaging and Node-VM load result, not browser-upload or mod-execution evidence; unsupported platform operations still fail explicitly.
 
 ## Usage
 
@@ -111,7 +113,7 @@ java -jar target/gold-client-1.jar loader \
   --input test-mods/jei1.12.2.jar \
   --output output/forge-loader \
   --report output/forge-loader/loader-plan.json \
-  --single-file --compact
+  --single-file --mod-file output/forge-loader/gold-client-mod.js --compact
 ```
 
 `--input` may be repeated. `--library <dependency.jar>` repeats an API or
@@ -148,10 +150,21 @@ bundle that inlines every generated module plus the JAR resources under
 `globalThis.GoldClientResources`, and exposes
 `globalThis.GoldClientForge` (`start`, `stop`, `status`, `mods`, `blockers`,
 `runtime`, `classes`, `getClass`). `--compact` strips full-line comments and
-blank lines from that file. The Eaglercraft profile injector prefers this file
-when present and emits a classic `<script src="...">` instead of the ES-module
-entrypoint. The bundle is self-contained JavaScript, but it still needs
-`window.goldClientForgeBindings` from a real host before `start()`.
+blank lines from generated module sources. The Eaglercraft profile injector
+prefers this file when present and emits a classic `<script src="...">` instead
+of the ES-module entrypoint. The bundle is self-contained JavaScript, but it
+still needs `window.goldClientForgeBindings` from a real host before `start()`.
+
+`--mod-file <file>` writes the file intended for EaglerForge's Mod Manager
+"Upload Mod (.js)" flow. It embeds the same translated bundle plus the pinned
+SRG-to-MCP member map and the EaglerForge binding adapter, installs
+`goldClientForgeBindings`, and auto-starts the Forge lifecycle once the injected
+client exposes its game settings. The generated `gold-client-mod.js` can be
+uploaded without a separate adapter `<script>` tag. This is packaging evidence
+only: it does not prove that a browser upload succeeds or that the mod's game
+APIs are implemented. `loader-plan.json` records `modFile`, `modFileBytes`,
+`modFileModuleCount`, `modFileMemberMapEntries`, `modFileAdapterIncluded`, and
+`modFileAutoStart`.
 
 A successful loader build is still only a translated bundle. It is not proof
 that the mods run. The command exits with status `2` when lifecycle blockers
@@ -212,12 +225,12 @@ that extend native Minecraft classes still fail explicitly with
 
 `test-mods/xaeros.jar` is a legacy Xaero's Minimap 26.6.0 Forge mod targeting
 Minecraft 1.12.2. Its metadata declares `xaerolib` as a required dependency;
-`test-mods/xaerolib.jar` is tracked so the pair can be analyzed together. A
-`--create-client` build of the pair still exits `2`: both JARs contain coremod
-plugins and ASM class transformers that Gold Client does not execute, and one
-`DropDownWidget.drawSlot` method has an unresolved control-flow jump. This is
-analysis/blocker evidence, not evidence that Xaero can currently be translated
-or run.
+`test-mods/xaerolib.jar` is tracked so the pair can be analyzed together. The
+pair now translates 1748 classes and 8815 methods with zero incomplete methods,
+including `DropDownWidget.drawSlot`. A `--create-client` build still exits `2`
+because both JARs contain coremod plugins and ASM class transformers that Gold
+Client does not execute. This is analysis/blocker evidence, not evidence that
+Xaero can currently be run.
 
 ## Design
 
