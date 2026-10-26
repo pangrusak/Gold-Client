@@ -26,6 +26,8 @@ jobs:
         run: mvn --batch-mode --no-transfer-progress clean package
       - name: Export JEI 1.12.2 and regenerate diagnostics
         run: java -jar target/gold-client-1.jar test-mods/jei1.12.2.jar --translate-js output/jei-js
+      - name: Check generated JavaScript syntax
+        run: find output/jei-js -type f -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Print compatibility summary
         if: always()
         run: |
