@@ -27,6 +27,8 @@ jobs:
           node-version: '22'
       - name: Run Maven tests and package
         run: mvn --batch-mode --no-transfer-progress clean package
+      - name: Test EaglerForge binding adapters
+        run: node --test client-profiles/shared/eaglerforge-bindings.test.cjs
       - name: Test generic Eaglercraft injector
         run: node --test client-profiles/eaglercraft-1.12-js/inject-gold-client.test.cjs
       - name: Test live player-stat bridge injection
