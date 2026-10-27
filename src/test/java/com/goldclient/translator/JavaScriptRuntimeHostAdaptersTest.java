@@ -23,6 +23,45 @@ class JavaScriptRuntimeHostAdaptersTest {
   Path tempDir;
 
   @Test
+  void dispatchesThisConstructorDelegationOnTheExistingReceiver() throws Exception {
+    Path output = tempDir.resolve("constructor-delegation");
+    new JavaScriptModTranslationExporter().export(List.of(), output);
+    Path runner = output.resolve("constructor-delegation.mjs");
+    Files.writeString(runner, """
+        import { GoldClientRuntime as runtime } from "./gold-client-runtime.js";
+
+        function Delegating() {}
+        const methods = new Map([["<init>", [
+          {
+            descriptor: "()V", arity: 0, isStatic: false,
+            fn: function () {
+              runtime.invokeDelegatingConstructor(this, ["delegated"]);
+            }
+          },
+          {
+            descriptor: "(Ljava/lang/String;)V", arity: 1, isStatic: false,
+            fn: function (value) { this.value = value; }
+          }
+        ]]]);
+        runtime.registerClass("fixture.Delegating", Delegating, null, { methods });
+        const receiver = Object.create(Delegating.prototype);
+        runtime.invokeNamedConstructor(receiver, "fixture.Delegating");
+        if (receiver.value !== "delegated") {
+          throw new Error("this(...) did not initialize the original receiver");
+        }
+        console.log("true");
+        """, StandardCharsets.UTF_8);
+
+    Process process = new ProcessBuilder("node", runner.toString())
+        .redirectErrorStream(true).start();
+    assertTrue(process.waitFor(10, TimeUnit.SECONDS), "constructor delegation test timed out");
+    String outputText = new String(
+        process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    assertEquals(0, process.exitValue(), outputText);
+    assertEquals("true", outputText);
+  }
+
+  @Test
   void routesFileLoggingGuavaAndPlatformSuperConstructorsThroughBindings() throws Exception {
     Path output = tempDir.resolve("runtime-host-adapters");
     new JavaScriptModTranslationExporter().export(List.of(), output);

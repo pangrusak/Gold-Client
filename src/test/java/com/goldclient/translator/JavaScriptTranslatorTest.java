@@ -872,8 +872,9 @@ class JavaScriptTranslatorTest {
     assertFalse(lowered.contains("new mezz.jei.collect.Table"), lowered);
     assertFalse(lowered.contains("this();"), lowered);
     assertTrue(lowered.contains(
-        "GoldClientRuntime.unsupported(\"constructor-delegation\", \"this()\")"),
+        "GoldClientRuntime.invokeDelegatingConstructor(this, [])"),
         lowered);
+    assertFalse(lowered.contains("constructor-delegation"), lowered);
     assertFalse(lowered.contains(", )"), lowered);
   }
 

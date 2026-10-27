@@ -5757,6 +5757,16 @@ export const GoldClientRuntime = Object.freeze({
   // Runs a specific class's constructor against an existing receiver. This is
   // needed because generated classes have no JavaScript `extends` chain, so a
   // translated constructor cannot call `super(...)` directly.
+  currentConstructorOwner: null,
+  invokeDelegatingConstructor(receiver, args = []) {
+    const className = this.currentConstructorOwner
+      ?? receiver?.constructor?.__goldClassName
+      ?? receiver?.__goldClassName;
+    if (!className) {
+      return this.unsupported("constructor-delegation", "cannot resolve the current constructor owner");
+    }
+    return this.invokeNamedConstructor(receiver, className, ...Array.from(args ?? []));
+  },
   invokeNamedConstructor(receiver, className, ...args) {
     if (receiver === null || receiver === undefined) {
       throw new GoldClientJavaThrowable("java.lang.NullPointerException", "<init>");
@@ -5794,7 +5804,13 @@ export const GoldClientRuntime = Object.freeze({
     if (!target) {
       return this.unsupported("missing-super-constructor", className + "/" + args.length);
     }
-    return target.fn.apply(receiver, args);
+    const previousOwner = this.currentConstructorOwner;
+    this.currentConstructorOwner = className;
+    try {
+      return target.fn.apply(receiver, args);
+    } finally {
+      this.currentConstructorOwner = previousOwner;
+    }
   },
   initializeJavaThrowable(receiver, className, args) {
     if (receiver.javaThrowable) return receiver;
