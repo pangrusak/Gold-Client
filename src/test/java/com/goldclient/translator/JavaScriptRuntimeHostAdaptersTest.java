@@ -31,6 +31,7 @@ class JavaScriptRuntimeHostAdaptersTest {
         import { GoldClientRuntime as runtime } from "./gold-client-runtime.js";
 
         function Delegating() {}
+        function Child() {}
         const methods = new Map([["<init>", [
           {
             descriptor: "()V", arity: 0, isStatic: false,
@@ -44,7 +45,8 @@ class JavaScriptRuntimeHostAdaptersTest {
           }
         ]]]);
         runtime.registerClass("fixture.Delegating", Delegating, null, { methods });
-        const receiver = Object.create(Delegating.prototype);
+        runtime.registerClass("fixture.Child", Child, "fixture.Delegating", { methods: new Map() });
+        const receiver = Object.create(Child.prototype);
         runtime.invokeNamedConstructor(receiver, "fixture.Delegating");
         if (receiver.value !== "delegated") {
           throw new Error("this(...) did not initialize the original receiver");
