@@ -2703,11 +2703,10 @@
             }
         }
         if (typeof value[Symbol.iterator] === "function") {
-            try {
-                for (const item of value) values.push(item);
-            } catch {
-                return values;
-            }
+            // A broken native iterator must not look like a valid, partially
+            // populated resource list. Propagate the original failure so the
+            // caller can identify the host incompatibility.
+            for (const item of value) values.push(item);
         }
         return values;
     }
