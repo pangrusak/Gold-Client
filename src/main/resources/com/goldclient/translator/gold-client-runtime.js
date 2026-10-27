@@ -3535,9 +3535,9 @@ class GoldClientJavaByteBuffer {
 // equality checks and lets EVENT_BUS.unregister(SomeClass.class) find its entry.
 const goldClientClassLiterals = new Map();
 
-export let goldCurrentConstructorOwner = null;
+let goldCurrentConstructorOwner = null;
 
-const GoldClientRuntime = Object.freeze({
+export const GoldClientRuntime = Object.freeze({
   resourceStore() {
     const files = globalThis.GoldClientResources?.files;
     return files && typeof files === "object" ? files : Object.create(null);
