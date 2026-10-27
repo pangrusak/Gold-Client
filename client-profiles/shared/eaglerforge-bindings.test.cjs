@@ -396,6 +396,7 @@ test("merges native TeaVM resource lists and domain iterators", () => {
     assert.equal(domains.contains("demo"), true);
     assert.equal(domains.contains("vanilla"), true);
     assert.equal(domains.contains("forge"), true);
+    assert.deepEqual([...domains], ["demo", "vanilla", "forge"]);
 });
 
 test("resolves SRG static methods through ModAPI", () => {
@@ -416,6 +417,20 @@ test("native proxies expose mapped fields and methods without leaking $ names", 
     client.field_71441_e = null;
     assert.equal(client.$theWorld, null);
     assert.throws(() => client.func_999999_z(), /missing-native-member/);
+});
+
+test("iterates native size/get collections", () => {
+    const { bindings } = installFixture();
+    const list = bindings.adapt({
+        $size: () => 2,
+        $get: index => ({ value: index })
+    });
+    const iterator = list.iterator();
+    assert.equal(iterator.hasNext(), true);
+    assert.deepEqual(iterator.next(), { value: 0 });
+    assert.equal(iterator.hasNext(), true);
+    assert.deepEqual(iterator.next(), { value: 1 });
+    assert.equal(iterator.hasNext(), false);
 });
 
 test("localizes a native KeyBinding display name", () => {

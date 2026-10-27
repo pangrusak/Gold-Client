@@ -467,7 +467,9 @@
     function nativeListIterator(raw) {
         const sizeFn = typeof raw.$tagCount === "function" ? raw.$tagCount
             : typeof raw.tagCount === "function" ? raw.tagCount
-            : () => raw.$tagCount ?? raw.tagCount;
+            : typeof raw.$size === "function" ? raw.$size
+            : typeof raw.size === "function" ? raw.size
+            : () => raw.$tagCount ?? raw.tagCount ?? raw.$size ?? raw.size;
         const getFn = typeof raw.$get === "function" ? raw.$get : raw.get;
         let index = 0;
         return {
