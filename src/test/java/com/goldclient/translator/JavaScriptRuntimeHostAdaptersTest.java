@@ -45,7 +45,7 @@ class JavaScriptRuntimeHostAdaptersTest {
           }
         ]]]);
         runtime.registerClass("fixture.Delegating", Delegating, null, { methods });
-        runtime.registerClass("fixture.Child", Child, "fixture.Delegating", { methods: new Map() });
+        runtime.registerClass("fixture.Child", Child, null, { superName: "fixture.Delegating", methods: new Map() });
         const receiver = Object.create(Child.prototype);
         runtime.invokeNamedConstructor(receiver, "fixture.Delegating");
         if (receiver.value !== "delegated") {
