@@ -3535,7 +3535,9 @@ class GoldClientJavaByteBuffer {
 // equality checks and lets EVENT_BUS.unregister(SomeClass.class) find its entry.
 const goldClientClassLiterals = new Map();
 
-export const GoldClientRuntime = Object.freeze({
+export let goldCurrentConstructorOwner = null;
+
+const GoldClientRuntime = Object.freeze({
   resourceStore() {
     const files = globalThis.GoldClientResources?.files;
     return files && typeof files === "object" ? files : Object.create(null);
@@ -5757,9 +5759,8 @@ export const GoldClientRuntime = Object.freeze({
   // Runs a specific class's constructor against an existing receiver. This is
   // needed because generated classes have no JavaScript `extends` chain, so a
   // translated constructor cannot call `super(...)` directly.
-  currentConstructorOwner: null,
   invokeDelegatingConstructor(receiver, args = []) {
-    const className = this.currentConstructorOwner
+    const className = goldCurrentConstructorOwner
       ?? receiver?.constructor?.__goldClassName
       ?? receiver?.__goldClassName;
     if (!className) {
@@ -5804,12 +5805,12 @@ export const GoldClientRuntime = Object.freeze({
     if (!target) {
       return this.unsupported("missing-super-constructor", className + "/" + args.length);
     }
-    const previousOwner = this.currentConstructorOwner;
-    this.currentConstructorOwner = className;
+    const previousOwner = goldCurrentConstructorOwner;
+    goldCurrentConstructorOwner = className;
     try {
       return target.fn.apply(receiver, args);
     } finally {
-      this.currentConstructorOwner = previousOwner;
+      goldCurrentConstructorOwner = previousOwner;
     }
   },
   initializeJavaThrowable(receiver, className, args) {
