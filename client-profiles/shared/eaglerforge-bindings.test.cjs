@@ -399,6 +399,25 @@ test("merges native TeaVM resource lists and domain iterators", () => {
     assert.deepEqual([...domains], ["demo", "vanilla", "forge"]);
 });
 
+test("propagates native resource iterator failures instead of returning partial data", () => {
+    const { bindings } = installFixture();
+    const failure = new Error("native resource domain iterator failed");
+    const manager = bindings.adapt({
+        $mcResourceManager: {
+            $getResourceDomains() {
+                return {
+                    *[Symbol.iterator]() {
+                        yield "vanilla";
+                        throw failure;
+                    }
+                };
+            }
+        }
+    }).getResourceManager();
+
+    assert.throws(() => manager.getResourceDomains(), error => error === failure);
+});
+
 test("resolves SRG static methods through ModAPI", () => {
     const { bindings, minecraft } = installFixture();
     const result = bindings.minecraft.call("net.minecraft.client.Minecraft", "func_71410_x", []);
