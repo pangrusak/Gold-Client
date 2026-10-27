@@ -2707,8 +2707,10 @@
             // populated resource list. Propagate the original failure so the
             // caller can identify the host incompatibility.
             for (const item of value) values.push(item);
+            return values;
         }
-        return values;
+        fail("resource-manager",
+            "native collection has no supported array, list, iterator, or iterable interface");
     }
 
     function virtualResourceManager(nativeManager) {
