@@ -860,7 +860,7 @@ class JavaScriptTranslatorTest {
           Object table = new mezz.jei.collect.Table(
               GoldClientRuntime.createJava("java.util.HashMap"),
               () -> GoldClientRuntime.createJava("java.util.IdentityHashMap"));
-          this();
+          this("a;b", nested(1, 2));
           Object empty = mezz.jei.Internal.getRuntime();
         }
         """);
@@ -872,7 +872,7 @@ class JavaScriptTranslatorTest {
     assertFalse(lowered.contains("new mezz.jei.collect.Table"), lowered);
     assertFalse(lowered.contains("this();"), lowered);
     assertTrue(lowered.contains(
-        "GoldClientRuntime.invokeDelegatingConstructor(this, [])"),
+        "GoldClientRuntime.invokeDelegatingConstructor(this, [\"a;b\", nested(1, 2)])"),
         lowered);
     assertFalse(lowered.contains("constructor-delegation"), lowered);
     assertFalse(lowered.contains(", )"), lowered);
