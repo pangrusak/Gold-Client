@@ -418,6 +418,20 @@ test("propagates native resource iterator failures instead of returning partial 
     assert.throws(() => manager.getResourceDomains(), error => error === failure);
 });
 
+test("rejects unknown native resource collection shapes instead of treating them as empty", () => {
+    const { bindings } = installFixture();
+    const manager = bindings.adapt({
+        $mcResourceManager: {
+            $getResourceDomains() {
+                return { domains: ["vanilla", "forge"] };
+            }
+        }
+    }).getResourceManager();
+
+    assert.throws(() => manager.getResourceDomains(),
+        /resource-manager.*native collection has no supported array, list, iterator, or iterable interface/);
+});
+
 test("resolves SRG static methods through ModAPI", () => {
     const { bindings, minecraft } = installFixture();
     const result = bindings.minecraft.call("net.minecraft.client.Minecraft", "func_71410_x", []);
