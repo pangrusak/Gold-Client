@@ -1085,6 +1085,17 @@ class JavaScriptTranslatorTest {
   }
 
   @Test
+  void routesStringFormatThroughJavaRuntimeAdapter() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax(
+        "String.format(\\"%d-%s-%.2f\\", new Object[] { 5, \\"x\\", 1.5 });");
+
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.invokeJavaStatic(\\"java.lang.String\\", \\"format\\""),
+        lowered);
+    assertTrue(lowered.contains("%d-%s-%.2f"), lowered);
+  }
+
+  @Test
   void lowersSimpleJavaStringConstructorThroughRuntime() {
     String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
         void sample() {
