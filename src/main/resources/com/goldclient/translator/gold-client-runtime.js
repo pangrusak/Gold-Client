@@ -4721,7 +4721,7 @@ export const GoldClientRuntime = Object.freeze({
       }
       if (method === "format") {
         let index = 1;
-        return String(args[0]).replace(/%(?:(\\d+)\\$)?([-#+ 0,(]*)?(\\d+)?(?:\\.(\\d+))?([sdif%])/g,
+        return String(args[0]).replace(/%(?:(\d+)\$)?([-#+ 0,(]*)?(\d+)?(?:\.(\d+))?([sdif%])/g,
           (match, explicitIndex, flags = "", width, precision, specifier) => {
             if (specifier === "%") return "%";
             const valueIndex = explicitIndex ? Number(explicitIndex) : index++;
@@ -4729,7 +4729,7 @@ export const GoldClientRuntime = Object.freeze({
             let formatted;
             if (specifier === "d" || specifier === "i") {
               formatted = String(Number(value) | 0);
-              if (flags.includes(",")) formatted = formatted.replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",");
+              if (flags.includes(",")) formatted = formatted.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
             } else if (specifier === "f") {
               const number = Number(value);
               formatted = Number.isFinite(number)
