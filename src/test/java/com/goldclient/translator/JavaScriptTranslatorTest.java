@@ -1097,6 +1097,19 @@ class JavaScriptTranslatorTest {
     assertFalse(lowered.contains("new String("), lowered);
   }
 
+  @Test
+  void lowersSimpleJavaStringConstructorThroughRuntime() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          String value = new String("ab");
+        }
+        """);
+
+    assertTrue(lowered.contains("GoldClientRuntime.createJava(\\"java.lang.String\\", \\"ab\\")"),
+        lowered);
+    assertFalse(lowered.contains("new String("), lowered);
+  }
+
   private static int countOccurrences(String text, String needle) {
     int count = 0;
     int index = 0;
