@@ -4724,7 +4724,7 @@ export const GoldClientRuntime = Object.freeze({
         return String(args[0]).replace(/%(?:(\\d+)\\$)?([-#+ 0,(]*)?(\\d+)?(?:\\.(\\d+))?([sdif%])/g,
           (match, explicitIndex, flags = "", width, precision, specifier) => {
             if (specifier === "%") return "%";
-            const valueIndex = explicitIndex ? Number(explicitIndex) - 1 : index++;
+            const valueIndex = explicitIndex ? Number(explicitIndex) : index++;
             const value = args[valueIndex];
             let formatted;
             if (specifier === "d" || specifier === "i") {
