@@ -4720,12 +4720,18 @@ export const GoldClientRuntime = Object.freeze({
         return values.map(value => value == null ? "" : this.javaString(value)).join(delimiter);
       }
       if (method === "format") {
+        // The JVM descriptor is String.format(String, Object...), so bytecode
+        // commonly supplies the varargs as one Object[] rather than N JS args.
+        const values = args.length === 2
+            && (Array.isArray(args[1]) || ArrayBuffer.isView(args[1]))
+          ? [args[0], ...Array.from(args[1])]
+          : args;
         let index = 1;
-        return String(args[0]).replace(/%(?:(\d+)\$)?([-#+ 0,(]*)?(\d+)?(?:\.(\d+))?([sdif%])/g,
+        return String(values[0]).replace(/%(?:(\d+)\$)?([-#+ 0,(]*)?(\d+)?(?:\.(\d+))?([sdif%])/g,
           (match, explicitIndex, flags = "", width, precision, specifier) => {
             if (specifier === "%") return "%";
             const valueIndex = explicitIndex ? Number(explicitIndex) : index++;
-            const value = args[valueIndex];
+            const value = values[valueIndex];
             let formatted;
             if (specifier === "d" || specifier === "i") {
               formatted = String(Number(value) | 0);
