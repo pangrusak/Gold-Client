@@ -688,6 +688,11 @@ public final class JavaScriptTranslator {
         else break;
       }
       String className = source.substring(nameStart, nameEnd);
+      // javac/IR reconstruction may emit java.lang classes by their simple name.
+      // Resolve String explicitly before the qualified-class guard so `new String(x)`
+      // is routed through the Java constructor compatibility layer, not left as a
+      // reference to a nonexistent JavaScript global.
+      if ("String".equals(className)) className = "java.lang.String";
       if (className.indexOf('.') < 0 || nameEnd >= source.length()
           || source.charAt(nameEnd) != '('
           || !Character.isUpperCase(className.charAt(className.lastIndexOf('.') + 1))) {
