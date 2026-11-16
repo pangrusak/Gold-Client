@@ -173,6 +173,22 @@ class JavaScriptRuntimeHostAdaptersTest {
         }
         new StaticFieldProbe();
 
+        const formatted = runtime.invokeJavaStatic(
+          "java.lang.String", "format", "%d-%s-%.2f", 5, "x", 1.5);
+        if (formatted !== "5-x-1.50") {
+          throw new Error("String.format precision/varargs: " + formatted);
+        }
+        const packed = runtime.invokeJavaStatic(
+          "java.lang.String", "format", "%d-%s-%.2f", [5, "x", 1.5]);
+        if (packed !== "5-x-1.50") {
+          throw new Error("String.format packed Object[] varargs: " + packed);
+        }
+        const indexed = runtime.invokeJavaStatic(
+          "java.lang.String", "format", "%2$s:%1$d", 7, "value");
+        if (indexed !== "value:7") {
+          throw new Error("String.format indexed arguments: " + indexed);
+        }
+
         const fixed = runtime.createJava("java.text.DecimalFormat", "0.00");
         if (runtime.invokeInstance(fixed, "format", 3.5) !== "3.50") {
           throw new Error("DecimalFormat fixed pattern: " + fixed.format(3.5));

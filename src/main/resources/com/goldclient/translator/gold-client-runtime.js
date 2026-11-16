@@ -4720,14 +4720,40 @@ export const GoldClientRuntime = Object.freeze({
         return values.map(value => value == null ? "" : this.javaString(value)).join(delimiter);
       }
       if (method === "format") {
+        // The JVM descriptor is String.format(String, Object...), so bytecode
+        // commonly supplies the varargs as one Object[] rather than N JS args.
+        const values = args.length === 2
+            && (Array.isArray(args[1]) || ArrayBuffer.isView(args[1]))
+          ? [args[0], ...Array.from(args[1])]
+          : args;
         let index = 1;
-        return String(args[0]).replace(/%([sdif%])/g, (match, specifier) => {
-          if (specifier === "%") return "%";
-          const value = args[index++];
-          if (specifier === "d" || specifier === "i") return String(Number(value) | 0);
-          if (specifier === "f") return String(Number(value));
-          return this.javaString(value);
-        });
+        return String(values[0]).replace(/%(?:(\d+)\$)?([-#+ 0,(]*)?(\d+)?(?:\.(\d+))?([sdif%])/g,
+          (match, explicitIndex, flags = "", width, precision, specifier) => {
+            if (specifier === "%") return "%";
+            const valueIndex = explicitIndex ? Number(explicitIndex) : index++;
+            const value = values[valueIndex];
+            let formatted;
+            if (specifier === "d" || specifier === "i") {
+              formatted = String(Number(value) | 0);
+              if (flags.includes(",")) formatted = formatted.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+            } else if (specifier === "f") {
+              const number = Number(value);
+              formatted = Number.isFinite(number)
+                ? (precision === undefined ? String(number) : number.toFixed(Number(precision)))
+                : String(number);
+            } else {
+              formatted = this.javaString(value);
+            }
+            if (precision !== undefined && specifier === "s") {
+              formatted = Array.from(formatted).slice(0, Number(precision)).join("");
+            }
+            if (width !== undefined && formatted.length < Number(width)) {
+              const fill = flags.includes("0") && !flags.includes("-") ? "0" : " ";
+              const padding = fill.repeat(Number(width) - formatted.length);
+              formatted = flags.includes("-") ? formatted + padding : padding + formatted;
+            }
+            return formatted;
+          });
       }
     }
     if (owner === "java.lang.Integer" || owner === "java.lang.Short"

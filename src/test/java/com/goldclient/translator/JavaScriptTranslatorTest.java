@@ -1084,6 +1084,30 @@ class JavaScriptTranslatorTest {
         lowered);
   }
 
+  @Test
+  void routesStringFormatThroughJavaRuntimeAdapter() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax(
+        "String.format(\\"%d-%s-%.2f\\", new Object[] { 5, \\"x\\", 1.5 });");
+
+    assertTrue(lowered.contains(
+        "GoldClientRuntime.invokeJavaStatic(\\"java.lang.String\\", \\"format\\""),
+        lowered);
+    assertTrue(lowered.contains("%d-%s-%.2f"), lowered);
+  }
+
+  @Test
+  void lowersSimpleJavaStringConstructorThroughRuntime() {
+    String lowered = new JavaScriptTranslator().lowerJavaSyntax("""
+        void sample() {
+          String value = new String("ab");
+        }
+        """);
+
+    assertTrue(lowered.contains("GoldClientRuntime.createJava(\"java.lang.String\", \"ab\")"),
+        lowered);
+    assertFalse(lowered.contains("new String("), lowered);
+  }
+
   private static int countOccurrences(String text, String needle) {
     int count = 0;
     int index = 0;
